@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Public onboarding: README/GETTING-STARTED match real Docker mounts, approval gate, and agents.toml keys
+- Maintainer-only PRODUCT/DESIGN notes no longer shipped in the public tree
+
 ## [0.1.0] - 2026-07-15
 
 First cut of Svärm: self-hosted Symphony-compatible orchestrator with a LiveView board, pluggable adapters, and per-ticket usage tracking.
