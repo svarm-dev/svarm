@@ -1,0 +1,20 @@
+# Svärm provider registry.
+# Each provider is keyed by name. Auth tokens come from the operator's
+# environment — never hardcode secrets here.
+
+[provider.openrouter]
+auth_env = "OPENROUTER_API_KEY"
+base_url = "https://openrouter.ai/api/v1"
+default_model = "openrouter/free"
+
+# Future providers (uncomment when ready):
+#
+# [provider.anthropic]
+# auth_env = "ANTHROPIC_API_KEY"
+# base_url = "https://api.anthropic.com/v1"
+# default_model = "claude-sonnet-4-20250514"
+#
+# [provider.openai]
+# auth_env = "OPENAI_API_KEY"
+# base_url = "https://api.openai.com/v1"
+# default_model = "gpt-5.1"

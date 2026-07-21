@@ -1,0 +1,120 @@
+<Layouts.app flash={@flash}>
+  <div class="relative mx-auto max-w-xl py-10 sm:py-16">
+    <svg
+      class="swarm-flock-svg pointer-events-none absolute -right-8 -top-6 w-[min(100%,28rem)] select-none opacity-[0.6] sm:-right-16 sm:w-[32rem] dark:opacity-[0.5]"
+      viewBox="0 0 720 280"
+      fill="none"
+      aria-hidden="true"
+    >
+      <defs>
+        <symbol id="swarm-bird" viewBox="0 0 12 8">
+          <path d="M6 1.2 L10.5 5.2 L6 4 L1.5 5.2 Z" />
+        </symbol>
+      </defs>
+      <g fill="#3d8f6a">
+        <use
+          href="#swarm-bird"
+          class="swarm-bird swarm-bird--1"
+          x="520"
+          y="28"
+          width="10"
+          height="7"
+          opacity="0.25"
+        />
+        <use
+          href="#swarm-bird"
+          class="swarm-bird swarm-bird--2"
+          x="445"
+          y="62"
+          width="15"
+          height="10"
+          opacity="0.45"
+        />
+        <use
+          href="#swarm-bird"
+          class="swarm-bird swarm-bird--3"
+          x="275"
+          y="105"
+          width="20"
+          height="13"
+          opacity="0.65"
+        />
+        <use
+          href="#swarm-bird"
+          class="swarm-bird swarm-bird--4"
+          x="340"
+          y="118"
+          width="17"
+          height="11"
+          opacity="0.58"
+        />
+        <use
+          href="#swarm-bird"
+          class="swarm-bird swarm-bird--5"
+          x="200"
+          y="110"
+          width="18"
+          height="12"
+          opacity="0.55"
+        />
+        <use
+          href="#swarm-bird"
+          class="swarm-bird swarm-bird--6"
+          x="380"
+          y="70"
+          width="14"
+          height="9"
+          opacity="0.4"
+        />
+        <use
+          href="#swarm-bird"
+          class="swarm-bird swarm-bird--7"
+          x="150"
+          y="175"
+          width="13"
+          height="9"
+          opacity="0.28"
+        />
+        <use
+          href="#swarm-bird"
+          class="swarm-bird swarm-bird--8"
+          x="530"
+          y="100"
+          width="12"
+          height="8"
+          opacity="0.34"
+        />
+      </g>
+      <g fill="#347a5b">
+        <use
+          href="#swarm-bird"
+          class="swarm-bird swarm-bird--3"
+          x="295"
+          y="95"
+          width="22"
+          height="14"
+          opacity="0.7"
+        />
+      </g>
+    </svg>
+    <div class="relative">
+      <p class="text-sm opacity-70">Svärm</p>
+      <h1 class="mt-2 text-3xl font-semibold tracking-tight text-balance">
+        Your AI teammates, governed
+      </h1>
+      <p class="mt-4 text-base opacity-80 leading-relaxed">
+        Self-hosted control plane for a blended engineering team — dispatch coding agents
+        to tickets, gate with approvals, and keep auditable cost on the work.
+      </p>
+      <div class="mt-8 flex flex-wrap gap-3">
+        <a href={~p"/board"} class="btn btn-primary">Open team board</a>
+        <a href={~p"/approvals"} class="btn btn-outline">Approvals</a>
+      </div>
+      <p class="mt-10 text-sm opacity-60">
+        Configure agents in
+        <code class="font-mono text-xs rounded bg-base-200 px-1">priv/agents.toml</code>
+        and workflow in <code class="font-mono text-xs rounded bg-base-200 px-1">WORKFLOW.md</code>.
+      </p>
+    </div>
+  </div>
+</Layouts.app>

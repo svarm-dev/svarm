@@ -1,0 +1,21 @@
+# Svärm — Docker Compose
+# 1. cp .env.example .env  →  fill in your keys
+# 2. mkdir -p svarm-config  →  cp priv/workflow_template.md svarm-config/WORKFLOW.md  →  edit owner/repo
+# 3. docker compose up --build  →  http://localhost:4000
+
+services:
+  svarm:
+    build: .
+    ports:
+      - "4000:4000"
+    env_file:
+      - .env
+    environment:
+      - SVARM_DB_PATH=/app/data/kanban.db
+      - SVARM_WORKFLOW_PATH=/app/config/WORKFLOW.md
+      - SVARM_AGENTS_PATH=/app/config/agents.toml
+    volumes:
+      - ./data:/app/data
+      - ./svarm-config/WORKFLOW.md:/app/config/WORKFLOW.md:ro
+      - ./svarm-config/agents.toml:/app/config/agents.toml:ro
+    restart: unless-stopped

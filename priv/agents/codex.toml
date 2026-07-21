@@ -1,0 +1,4 @@
+# Codex (OpenAI) — one-shot CLI dispatch.
+[agent]
+command = "codex"
+args = ["exec", "--skip-git-repo-check"]

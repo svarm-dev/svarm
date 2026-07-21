@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="svarm-bee">
+  <defs>
+    <radialGradient id="bg" cx="42%" cy="38%" r="68%">
+      <stop offset="0%" stop-color="#3d8f6a"/>
+      <stop offset="70%" stop-color="#2f7a58"/>
+      <stop offset="100%" stop-color="#276549"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <!-- companions: part of the swarm -->
+  <g fill="#f4faf7" opacity="0.35">
+    <path d="M150 300 L178 324 L150 316 L122 324 Z"/>
+    <path d="M360 310 L384 330 L360 324 L336 330 Z"/>
+  </g>
+  <!-- primary bee/bird — low-poly chevron, flight upper-right -->
+  <g fill="#f4faf7">
+    <path d="M256 150 L360 280 L256 248 L152 280 Z"/>
+  </g>
+</svg>

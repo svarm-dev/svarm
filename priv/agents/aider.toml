@@ -1,0 +1,4 @@
+# Aider — one-shot CLI dispatch.
+[agent]
+command = "aider"
+args = ["--message", "--yes-always"]

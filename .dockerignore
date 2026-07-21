@@ -1,0 +1,32 @@
+# Docker ignore — exclude dev/build artifacts
+
+# Git
+.git/
+.gitignore
+
+# Elixir build artifacts
+_build/
+deps/
+.elixir_ls/
+
+# Node modules
+assets/node_modules/
+
+# Environment files (secrets)
+.env
+.env.*
+
+# Tests, docs, and dev files not needed in container
+test/
+internal/
+doc/
+*.md
+!README.md
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db

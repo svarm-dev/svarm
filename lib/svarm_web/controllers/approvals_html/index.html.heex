@@ -1,0 +1,67 @@
+<Layouts.app flash={@flash}>
+  <div class="mx-auto max-w-3xl space-y-6">
+    <div class="flex flex-wrap items-start justify-between gap-4">
+      <div>
+        <h1 class="text-2xl font-semibold tracking-tight">Approvals</h1>
+        <p class="mt-1 text-sm opacity-70 max-w-xl">
+          Gates before dispatch. Prefer the board for day-to-day approve/reject; this list is for
+          bulk review. Configure
+          <code class="rounded bg-base-200 px-1 font-mono text-xs">approval.mode</code>
+          in WORKFLOW.md.
+        </p>
+      </div>
+      <a href={~p"/board"} class="btn btn-sm btn-primary">Team board</a>
+    </div>
+
+    <%= if @pending == [] do %>
+      <div class="rounded-lg border border-base-300 bg-base-200/60 px-6 py-10 text-center">
+        <p class="font-medium">Nothing waiting for approval</p>
+        <p class="mt-1 text-sm opacity-70">
+          Pending tasks also appear in the <span class="font-medium">Needs approval</span> column
+          on the board.
+        </p>
+      </div>
+    <% else %>
+      <ul class="divide-y divide-base-300 rounded-lg border border-base-300 bg-base-100">
+        <%= for task <- @pending do %>
+          <li class="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div class="min-w-0">
+              <p class="font-medium truncate">{task.title || task.id}</p>
+              <p class="text-xs opacity-60 font-mono">
+                {task.id} · {task.assignee || "—"} · {task.type}
+              </p>
+              <%= if task.body do %>
+                <p class="mt-1 text-sm opacity-70 line-clamp-2">{task.body}</p>
+              <% end %>
+              <p class="mt-2">
+                <a href={~p"/board?task=#{task.id}"} class="link link-hover text-sm opacity-70">
+                  Open on board
+                </a>
+              </p>
+            </div>
+            <div class="flex shrink-0 gap-2">
+              <form
+                id={"approval-approve-#{task.id}"}
+                action={~p"/approvals/#{task.id}/approve"}
+                method="post"
+                class="inline"
+              >
+                <input type="hidden" name="_csrf_token" value={get_csrf_token()} />
+                <button type="submit" class="btn btn-primary btn-sm">Approve</button>
+              </form>
+              <form
+                id={"approval-reject-#{task.id}"}
+                action={~p"/approvals/#{task.id}/reject"}
+                method="post"
+                class="inline"
+              >
+                <input type="hidden" name="_csrf_token" value={get_csrf_token()} />
+                <button type="submit" class="btn btn-ghost btn-sm">Reject</button>
+              </form>
+            </div>
+          </li>
+        <% end %>
+      </ul>
+    <% end %>
+  </div>
+</Layouts.app>

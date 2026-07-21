@@ -1,0 +1,56 @@
+# Svärm agent registry — agent-agnostic dispatch.
+# Each agent is keyed by name; the ProfileRouter maps a task to a name.
+#
+# Fields:
+#   name         — display name shown in the dashboard (optional, defaults to the key)
+#   role         — short specialization label on the board (optional)
+#   avatar       — emoji or short label for the agent badge (optional)
+#   command      — executable (required)
+#   adapter      — runner adapter: pi_rpc (v1), cli (fallback)
+#   provider     — LLM provider: openrouter
+#   model        — model ID, e.g. "openrouter/free" (free), "claude-sonnet-4-20250514" (paid)
+#   env          — extra environment variables (optional)
+#   args         — CLI arguments (only used by cli adapter)
+
+# v1 default: pi RPC via OpenRouter
+[agent.default]
+name = "Pi"
+role = "Backend"
+command = "pi"
+adapter = "pi_rpc"
+provider = "openrouter"
+model = "openrouter/free"
+env = { GITHUB_TOKEN = "$GITHUB_TOKEN" }
+
+# CLI fallback (uncomment if pi RPC isn't available):
+# [agent.fallback]
+# name = "Fallback"
+# command = "claude"
+# adapter = "cli"
+# args = ["-p", "--output-format", "text"]
+# provider = "openrouter"
+# model = "openrouter/free"
+
+# Demo pipeline (mock decompose): research → code → docs; use max_concurrent 1 when seeding.
+[agent.demo_research]
+name = "Demo Research"
+role = "Research"
+command = "sh"
+args = ["DEMO_SCRIPT", "research"]
+
+[agent.demo_code]
+name = "Demo Code"
+role = "Implementation"
+command = "sh"
+args = ["DEMO_SCRIPT", "code"]
+
+[agent.demo_docs]
+name = "Demo Docs"
+role = "Documentation"
+command = "sh"
+args = ["DEMO_SCRIPT", "docs"]
+
+[agent.demo]
+name = "Demo"
+command = "sh"
+args = ["DEMO_SCRIPT", "code"]

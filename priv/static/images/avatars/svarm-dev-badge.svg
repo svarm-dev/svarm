@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <g fill="#f4faf7" transform="translate(256 256) scale(9.2) translate(-20 -20)">
+    <path d="M20 7.5 L24.2 12.2 L20 10.6 L15.8 12.2 Z"/>
+    <path d="M11 15 L15 19 L11 17.6 L7 19 Z"/>
+    <path d="M29 14.5 L33 18.5 L29 17.1 L25 18.5 Z"/>
+    <path d="M17 17.5 L20.5 21 L17 19.6 L13.5 21 Z"/>
+    <path d="M24.5 19 L27.8 22.2 L24.5 20.9 L21.2 22.2 Z"/>
+    <path d="M9.5 24 L12.8 27 L9.5 25.7 L6.2 27 Z" opacity="0.92"/>
+    <path d="M15.5 25.5 L18.5 28.3 L15.5 27.1 L12.5 28.3 Z" opacity="0.9"/>
+    <path d="M22.5 24.5 L25.8 27.5 L22.5 26.2 L19.2 27.5 Z" opacity="0.92"/>
+    <path d="M30 23 L33.2 26 L30 24.7 L26.8 26 Z" opacity="0.88"/>
+    <path d="M19 30 L21.5 32.4 L19 31.4 L16.5 32.4 Z" opacity="0.8"/>
+  </g>
+</svg>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- safe margin for circular crop -->
+  <g fill="#f4faf7" opacity="0.4">
+    <path d="M150 300 L178 324 L150 316 L122 324 Z"/>
+    <path d="M360 310 L384 330 L360 324 L336 330 Z"/>
+  </g>
+  <g fill="#f4faf7">
+    <path d="M256 150 L360 280 L256 248 L152 280 Z"/>
+  </g>
+</svg>
