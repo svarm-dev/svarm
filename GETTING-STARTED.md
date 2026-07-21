@@ -16,7 +16,7 @@ A zero-to-running guide for GitHub Issues, pi, and OpenRouter.
 ## 1. Clone and configure
 
 ```bash
-git clone https://github.com/YOUR_ORG/svarm.git
+git clone https://github.com/svarm-dev/svarm.git
 cd svarm
 ```
 
