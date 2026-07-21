@@ -26,6 +26,8 @@ defmodule SvarmWeb.BoardLive do
       |> assign(:now_mono, System.monotonic_time(:millisecond))
       |> assign(:workload, %{})
       |> assign(:dev_routes, Application.get_env(:svarm, :dev_routes, false))
+      |> assign(:demo_routes, Svarm.Demo.routes_enabled?())
+      |> assign(:checklist, Svarm.Board.instance_status())
 
     socket =
       if connected?(socket) do
@@ -207,7 +209,7 @@ defmodule SvarmWeb.BoardLive do
               Refresh
             </button>
             <a href={~p"/approvals"} class="btn btn-sm btn-outline">Approvals</a>
-            <%= if @dev_routes do %>
+            <%= if @demo_routes do %>
               <.link
                 href={~p"/dev/demo/seed?goal=create+a+cool+app"}
                 method="post"
@@ -220,7 +222,7 @@ defmodule SvarmWeb.BoardLive do
         </div>
 
         <%= if @task_count == 0 do %>
-          <.board_empty dev_routes={@dev_routes} />
+          <.board_empty demo_routes={@demo_routes} checklist={@checklist} />
         <% else %>
           <.orchestrator_bar
             orchestrator={@orchestrator}
@@ -407,9 +409,22 @@ defmodule SvarmWeb.BoardLive do
     |> Enum.find(&(&1.id == id))
   end
 
-  attr :dev_routes, :boolean, default: false
+  attr :demo_routes, :boolean, default: false
+  attr :checklist, :map, default: %{}
 
   defp board_empty(assigns) do
+    c = assigns.checklist || %{}
+
+    assigns =
+      assign(assigns,
+        workflow_ok?: Map.get(c, :workflow_loaded?, false),
+        workflow_path: Map.get(c, :workflow_path) || "—",
+        tracker_label: Map.get(c, :tracker_label) || "local",
+        agent_count: Map.get(c, :agent_count) || 0,
+        approval_mode: Map.get(c, :approval_mode) || "untrusted",
+        approvals_auth?: Map.get(c, :approvals_auth?, false)
+      )
+
     ~H"""
     <section
       class="rounded-lg border border-base-300 bg-base-200/70 px-6 py-8 sm:px-8"
@@ -422,19 +437,60 @@ defmodule SvarmWeb.BoardLive do
         This board is the live view of your blended team. Tickets move through columns as agents
         claim work; select a card for streamed output and per-ticket cost.
       </p>
-      <ol class="mt-4 max-w-2xl list-decimal space-y-1 pl-5 text-sm opacity-80">
-        <li>
-          Dispatch (or seed demo tasks) so something lands in
-          <span class="font-mono text-xs">todo</span>
+
+      <ul class="mt-5 max-w-2xl space-y-2 text-sm" aria-label="First-run checklist">
+        <li class="flex gap-2">
+          <span class="font-mono text-xs opacity-60 w-5 shrink-0">{if @workflow_ok?,
+            do: "✓",
+            else: "○"}</span>
+          <span>
+            Workflow loaded <span class="font-mono text-xs opacity-60">({@workflow_path})</span>
+          </span>
         </li>
-        <li>Watch an agent pick up work — name, status, and running pulse on the card</li>
-        <li>
-          Open the card: live log + dollar cost (or <span class="font-mono text-xs">est.</span>
-          when approximate)
+        <li class="flex gap-2">
+          <span class="font-mono text-xs opacity-60 w-5 shrink-0">✓</span>
+          <span>
+            Tracker: <span class="font-mono text-xs">{@tracker_label}</span>
+          </span>
         </li>
-      </ol>
+        <li class="flex gap-2">
+          <span class="font-mono text-xs opacity-60 w-5 shrink-0">{if @agent_count > 0,
+            do: "✓",
+            else: "○"}</span>
+          <span>Agents registered ({@agent_count})</span>
+        </li>
+        <li class="flex gap-2">
+          <span class="font-mono text-xs opacity-60 w-5 shrink-0">{if @approvals_auth? or
+                                                                        @approval_mode == "off",
+                                                                      do: "✓",
+                                                                      else: "○"}</span>
+          <span>
+            Approvals: <span class="font-mono text-xs">mode: {@approval_mode}</span>
+            <%= if @approvals_auth? do %>
+              · auth OK
+            <% else %>
+              · set <code class="rounded bg-base-300 px-1 font-mono text-xs">APPROVALS_USER</code>
+              / <code class="rounded bg-base-300 px-1 font-mono text-xs">APPROVALS_PASSWORD</code>
+              for /approvals
+            <% end %>
+          </span>
+        </li>
+        <li class="flex gap-2">
+          <span class="font-mono text-xs opacity-60 w-5 shrink-0">○</span>
+          <span>
+            <%= if @demo_routes do %>
+              Seed demo (below) or create a labeled issue on your tracker
+            <% else %>
+              Seed via Docker
+              <code class="rounded bg-base-300 px-1 font-mono text-xs">--profile demo</code>
+              or create a labeled issue
+            <% end %>
+          </span>
+        </li>
+      </ul>
+
       <div class="mt-6 flex flex-wrap items-center gap-3">
-        <%= if @dev_routes do %>
+        <%= if @demo_routes do %>
           <.link
             href={~p"/dev/demo/seed?goal=create+a+cool+app"}
             method="post"
@@ -446,8 +502,8 @@ defmodule SvarmWeb.BoardLive do
         <% else %>
           <p class="text-sm opacity-70">
             Point WORKFLOW.md at your tracker and open eligible issues — or run
-            <code class="rounded bg-base-300 px-1 font-mono text-xs">mix svarm.demo</code>
-            from the CLI.
+            Docker with <code class="rounded bg-base-300 px-1 font-mono text-xs">--profile demo</code>
+            for a zero-key board.
           </p>
         <% end %>
       </div>

@@ -32,7 +32,33 @@ defmodule Svarm.Application do
         ]
 
     opts = [strategy: :one_for_one, name: Svarm.Supervisor]
-    Supervisor.start_link(children, opts)
+
+    case Supervisor.start_link(children, opts) do
+      {:ok, pid} ->
+        maybe_seed_demo()
+        {:ok, pid}
+
+      other ->
+        other
+    end
+  end
+
+  # SVARM_SEED_DEMO=1 → queue mock tasks when the board is empty (Docker demo path).
+  defp maybe_seed_demo do
+    if Application.get_env(:svarm, :seed_demo_on_boot, false) do
+      case Svarm.Demo.seed_if_empty() do
+        {:ok, count} ->
+          require Logger
+          Logger.info("SVARM_SEED_DEMO: queued #{count} demo tasks on the board")
+
+        :already_has_tasks ->
+          :ok
+
+        {:error, reason} ->
+          require Logger
+          Logger.warning("SVARM_SEED_DEMO failed: #{inspect(reason)}")
+      end
+    end
   end
 
   # Start Repo, run migrations, stop Repo — so the supervisor starts it cleanly.

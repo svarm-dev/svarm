@@ -106,14 +106,72 @@
         Self-hosted control plane for a blended engineering team — dispatch coding agents
         to tickets, gate with approvals, and keep auditable cost on the work.
       </p>
+
+      <section
+        class="mt-8 rounded-lg border border-base-300 bg-base-200/60 px-4 py-4 text-sm"
+        aria-label="This instance"
+      >
+        <h2 class="text-xs font-semibold uppercase tracking-wide opacity-60">This instance</h2>
+        <dl class="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
+          <dt class="opacity-60">Tracker</dt>
+          <dd class="font-mono text-xs">{@instance.tracker_label}</dd>
+          <dt class="opacity-60">Workflow</dt>
+          <dd class="font-mono text-xs truncate" title={@instance.workflow_path || "—"}>
+            {@instance.workflow_path || "—"}
+          </dd>
+          <dt class="opacity-60">Agents</dt>
+          <dd>{@instance.agent_count} registered</dd>
+          <dt class="opacity-60">Board</dt>
+          <dd>
+            <%= if @instance.empty? do %>
+              empty
+            <% else %>
+              {@instance.task_count} ticket{if @instance.task_count == 1, do: "", else: "s"}
+            <% end %>
+          </dd>
+          <dt class="opacity-60">Approvals</dt>
+          <dd class="font-mono text-xs">mode: {@instance.approval_mode}</dd>
+        </dl>
+
+        <%= if @instance.empty? do %>
+          <p class="mt-3 text-xs opacity-70">
+            Board is empty —
+            <%= if @instance.demo_routes do %>
+              seed a zero-key demo, or connect a tracker.
+            <% else %>
+              run Docker with
+              <code class="rounded bg-base-300 px-1 font-mono">--profile demo</code>
+              or open eligible issues on your tracker.
+            <% end %>
+          </p>
+        <% end %>
+      </section>
+
       <div class="mt-8 flex flex-wrap gap-3">
         <a href={~p"/board"} class="btn btn-primary">Open team board</a>
-        <a href={~p"/approvals"} class="btn btn-outline">Approvals</a>
+        <%= if @instance.approvals_auth? or @instance.approval_mode == "off" do %>
+          <a href={~p"/approvals"} class="btn btn-outline">Approvals</a>
+        <% end %>
+        <%= if @instance.demo_routes and @instance.empty? do %>
+          <.link
+            href={~p"/dev/demo/seed?goal=create+a+cool+app"}
+            method="post"
+            class="btn btn-ghost"
+          >
+            Seed demo
+          </.link>
+        <% end %>
       </div>
       <p class="mt-10 text-sm opacity-60">
-        Configure agents in
-        <code class="font-mono text-xs rounded bg-base-200 px-1">priv/agents.toml</code>
-        and workflow in <code class="font-mono text-xs rounded bg-base-200 px-1">WORKFLOW.md</code>.
+        Docs:
+        <a
+          href="https://github.com/svarm-dev/svarm/blob/main/GETTING-STARTED.md"
+          class="underline underline-offset-2 hover:opacity-100"
+        >
+          GETTING-STARTED
+        </a>
+        · config in <code class="font-mono text-xs rounded bg-base-200 px-1">WORKFLOW.md</code>
+        + <code class="font-mono text-xs rounded bg-base-200 px-1">agents.toml</code>
       </p>
     </div>
   </div>

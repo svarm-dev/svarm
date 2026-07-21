@@ -2,6 +2,10 @@ defmodule Svarm.Workflow.Watcher do
   @moduledoc "Watches `WORKFLOW.md` and tells Workflow.Store to reload."
   use GenServer
 
+  def start_link(opts) do
+    GenServer.start_link(__MODULE__, opts)
+  end
+
   @impl true
   def init(opts) do
     path = Keyword.fetch!(opts, :path)

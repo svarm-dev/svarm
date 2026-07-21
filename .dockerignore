@@ -16,12 +16,13 @@ assets/node_modules/
 .env
 .env.*
 
-# Tests, docs, and dev files not needed in container
+# Tests and internal notes (keep priv templates for image)
 test/
 internal/
 doc/
 *.md
 !README.md
+!priv/**/*.md
 
 # IDE
 .vscode/

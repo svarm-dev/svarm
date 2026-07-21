@@ -24,6 +24,27 @@ config :svarm, SvarmWeb.Endpoint, http: [port: String.to_integer(System.get_env(
 
 config :svarm, :console_base_url, System.get_env("SVARM_BASE_URL")
 
+# Approvals Basic Auth (Docker/prod). Local Mix uses dev_routes instead.
+approvals_user = System.get_env("APPROVALS_USER")
+approvals_pass = System.get_env("APPROVALS_PASSWORD")
+
+if is_binary(approvals_user) and approvals_user != "" and is_binary(approvals_pass) and
+     approvals_pass != "" do
+  config :svarm, :approvals_auth, %{username: approvals_user, password: approvals_pass}
+end
+
+# Seed demo routes + boot seed (no API keys). Docker demo profile sets these.
+seed_demo? = System.get_env("SVARM_SEED_DEMO") in ~w(1 true TRUE yes YES on ON)
+demo_routes? = System.get_env("SVARM_DEMO_ROUTES") in ~w(1 true TRUE yes YES on ON)
+
+if seed_demo? or demo_routes? do
+  config :svarm, :demo_routes, true
+end
+
+if seed_demo? do
+  config :svarm, :seed_demo_on_boot, true
+end
+
 if config_env() == :dev do
   # Reload browser tabs when matching files change.
   config :svarm, SvarmWeb.Endpoint,

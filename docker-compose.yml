@@ -1,12 +1,19 @@
 # Svärm — Docker Compose
-# 1. cp .env.example .env  →  set SECRET_KEY_BASE (openssl rand -base64 48) + API keys
-# 2. mkdir -p svarm-config
-#    cp priv/workflow_template.md svarm-config/WORKFLOW.md
-#    cp priv/agents.toml svarm-config/agents.toml
-#    → edit WORKFLOW owner/repo (and kind: github for real issues)
-# 3. docker compose up --build  →  http://localhost:4000/board
-# 4. Approve once at http://localhost:4000/approvals (default approval.mode: untrusted)
 #
+# A) 60-second demo (no API keys):
+#    cp .env.example .env  →  set SECRET_KEY_BASE (openssl rand -base64 48)
+#    docker compose --profile demo up --build
+#    → http://localhost:4000/board  (seeded automatically)
+#
+# B) Real loop (GitHub + pi + OpenRouter):
+#    cp .env.example .env  →  SECRET_KEY_BASE + GITHUB_TOKEN + OPENROUTER_API_KEY
+#    docker compose up --build
+#    Edit svarm-config/WORKFLOW.md (created on first boot): kind: github, owner, repo
+#    → http://localhost:4000/board · approve once at /approvals
+#
+# Config dir is mounted as a directory (not individual files) so missing host
+# files never become Docker-created directories named WORKFLOW.md.
+
 services:
   svarm:
     build: .
@@ -16,10 +23,37 @@ services:
       - .env
     environment:
       - SVARM_DB_PATH=/app/data/kanban.db
+      - SVARM_CONFIG_DIR=/app/config
       - SVARM_WORKFLOW_PATH=/app/config/WORKFLOW.md
       - SVARM_AGENTS_PATH=/app/config/agents.toml
+      - PHX_HOST=localhost
+      - SVARM_BASE_URL=http://localhost:4000
     volumes:
       - ./data:/app/data
-      - ./svarm-config/WORKFLOW.md:/app/config/WORKFLOW.md:ro
-      - ./svarm-config/agents.toml:/app/config/agents.toml:ro
+      - ./svarm-config:/app/config
+    restart: unless-stopped
+
+  # Zero-key path: same image, auto-seed + Seed demo button, no GitHub/OpenRouter.
+  svarm-demo:
+    profiles: ["demo"]
+    build: .
+    ports:
+      - "4000:4000"
+    env_file:
+      - .env
+    environment:
+      - SVARM_DB_PATH=/app/data/kanban.db
+      - SVARM_CONFIG_DIR=/app/config
+      - SVARM_WORKFLOW_PATH=/app/config/WORKFLOW.md
+      - SVARM_AGENTS_PATH=/app/config/agents.toml
+      - PHX_HOST=localhost
+      - SVARM_BASE_URL=http://localhost:4000
+      - SVARM_SEED_DEMO=1
+      - SVARM_DEMO_ROUTES=1
+      # Demo agents are trusted; Basic Auth still unlocks /approvals for exploration.
+      - APPROVALS_USER=${APPROVALS_USER:-svarm}
+      - APPROVALS_PASSWORD=${APPROVALS_PASSWORD:-svarm}
+    volumes:
+      - ./data:/app/data
+      - ./svarm-config:/app/config
     restart: unless-stopped

@@ -1,5 +1,10 @@
 # AGENTS.md
 
+> **Audience:** AI coding agents **editing this repository**, and humans reviewing those changes.  
+> **Operators trying Svärm:** start at [GETTING-STARTED.md](GETTING-STARTED.md) / [README.md](README.md).  
+> “Agent” here means the coding tool (pi, Claude Code, …) changing this codebase — not a swarm member on the board.
+
+
 Instructions for coding agents working in **Svärm** (`svarm`). Human-oriented docs: [README.md](README.md), [GETTING-STARTED.md](GETTING-STARTED.md).
 
 ## Project overview

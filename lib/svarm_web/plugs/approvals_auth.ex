@@ -2,9 +2,10 @@ defmodule SvarmWeb.Plugs.ApprovalsAuth do
   @moduledoc """
   Gates `/approvals` — agent runs are high trust.
 
-  - With `config :svarm, approvals_auth: %{username: ..., password: ...}` → HTTP Basic Auth.
+  - With `config :svarm, approvals_auth: %{username: ..., password: ...}` → HTTP Basic Auth
+    (set via `APPROVALS_USER` / `APPROVALS_PASSWORD` env in Docker/prod).
   - Else only when `config :svarm, dev_routes: true` (local dev).
-  - Otherwise 404 (not advertised in production).
+  - Otherwise 404 with setup hints (not a silent empty page).
   """
   import Plug.Conn
 
@@ -25,7 +26,18 @@ defmodule SvarmWeb.Plugs.ApprovalsAuth do
         conn
 
       true ->
-        conn |> send_resp(404, "Not found") |> halt()
+        conn
+        |> put_resp_content_type("text/plain")
+        |> send_resp(404, """
+        Approvals UI is disabled.
+
+        Set APPROVALS_USER and APPROVALS_PASSWORD in .env (Docker/prod Basic Auth),
+        or use dev_routes in local Mix, or set approval.mode: off in WORKFLOW.md for a
+        throwaway smoke box (not for real repos).
+
+        See GETTING-STARTED.md.
+        """)
+        |> halt()
     end
   end
 

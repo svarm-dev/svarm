@@ -54,6 +54,65 @@ defmodule Svarm.Board do
     Orchestrator.status()
   end
 
+  @doc """
+  Snapshot of this install for homepage and first-run checklist.
+
+  Returns a plain map: tracker, workflow path, agents, tasks, approvals.
+  """
+  def instance_status do
+    workflow = Workflow.Store.get()
+    cfg = if workflow, do: WorkflowConfig.from(workflow), else: %{}
+    tracker = cfg[:tracker_config] || %{}
+    agents = safe_agents()
+    tasks = safe_list_tasks()
+    approval = approval_mode(workflow)
+
+    %{
+      tracker_kind: tracker[:kind] || :local,
+      tracker_label: tracker_label(tracker),
+      workflow_path: workflow && workflow.path,
+      workflow_loaded?: match?(%Workflow{}, workflow),
+      agent_count: map_size(agents),
+      task_count: length(tasks),
+      approval_mode: approval,
+      approvals_auth?: approvals_auth_configured?(),
+      demo_routes: Svarm.Demo.routes_enabled?(),
+      empty?: tasks == []
+    }
+  end
+
+  defp tracker_label(%{kind: :github} = t),
+    do: "github:#{t[:owner] || "?"}/#{t[:repo] || "?"}"
+
+  defp tracker_label(_), do: "local"
+
+  defp approval_mode(%Workflow{config: config}) when is_map(config),
+    do: get_in(config, ["approval", "mode"]) || "untrusted"
+
+  defp approval_mode(_), do: "untrusted"
+
+  defp approvals_auth_configured? do
+    match?(
+      %{username: u, password: p} when is_binary(u) and u != "" and is_binary(p) and p != "",
+      Application.get_env(:svarm, :approvals_auth)
+    ) or Application.get_env(:svarm, :dev_routes, false)
+  end
+
+  defp safe_agents do
+    case Svarm.AgentRunner.load_agents() do
+      agents when is_map(agents) -> agents
+      _ -> %{}
+    end
+  end
+
+  defp safe_list_tasks do
+    list_tasks()
+  rescue
+    e in [DBConnection.ConnectionError, ErlangError, ArgumentError] ->
+      _ = e
+      []
+  end
+
   @doc "Column ids in display order (workflow active + terminal, de-duplicated)."
   def column_ids do
     wf = Workflow.Store.get()

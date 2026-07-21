@@ -1,4 +1,4 @@
-# Svärm agent registry — agent-agnostic dispatch.
+# Svärm agent registry — dispatch by name (pi RPC + CLI today).
 # Each agent is keyed by name; the ProfileRouter maps a task to a name.
 #
 # Fields:

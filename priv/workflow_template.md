@@ -1,21 +1,25 @@
 ---
 # tracker: where tickets live
+# Default is local (SQLite board) — zero-key demo works out of the box.
 tracker:
-  kind: local                    # local | github (Linear, Jira: Pro/Team)
+  kind: local                    # local | github
   active_states: ["todo", "in_progress"]
   # review is terminal for dispatch — human closes/merges after PR review
   terminal_states: ["done", "failed", "review"]
 
-  # GitHub tracker config (kind: github):
+  # ═══════════════════════════════════════════════════════════════════
+  # UNCOMMENT FOR GITHUB — set kind: github above, fill owner/repo,
+  # and put GITHUB_TOKEN in .env. Leave kind: local for path A demo.
+  # ═══════════════════════════════════════════════════════════════════
   # owner: my-org
   # repo: my-project
   # auth: token                   # token (PAT) | app (GitHub App → {slug}[bot])
   # api_key: $GITHUB_TOKEN        # PAT mode; never a literal key
-  # # App mode (recommended — bot identity; name the App anything free, e.g. svarm-bee):
+  # # App mode (bot identity; see docs/github-app.md):
   # # auth: app
   # # app_id: $SVARM_GITHUB_APP_ID
-  # # installation_id: $SVARM_GITHUB_INSTALLATION_ID   # optional; resolved via API
-  # # private_key_path: $SVARM_GITHUB_APP_KEY_PATH     # path to PEM
+  # # installation_id: $SVARM_GITHUB_INSTALLATION_ID
+  # # private_key_path: $SVARM_GITHUB_APP_KEY_PATH
   # required_labels: ["ai-task"]  # only issues with these labels are eligible
 
 polling:

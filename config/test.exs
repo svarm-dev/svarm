@@ -24,7 +24,10 @@ config :phoenix,
 # Allow /approvals in ConnCase without production Basic Auth
 config :svarm, dev_routes: true
 
+# Force local tracker — dogfood .env may set SVARM_WORKFLOW_PATH to GitHub.
+config :svarm, :workflow_path, Path.expand("../priv/workflow_template.md", __DIR__)
+
 config :svarm, Svarm.Repo,
-  database: Path.join(System.tmp_dir!(), "svarm_test_\#{System.system_time(:second)}.db"),
+  database: Path.join(System.tmp_dir!(), "svarm_test_#{System.system_time(:second)}.db"),
   pool_size: 1,
   show_sensitive_data_on_connection_error: true

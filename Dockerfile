@@ -44,23 +44,33 @@ WORKDIR /app
 # Copy the release from builder
 COPY --from=builder /app/_build/prod/rel/svarm/ ./
 
+# Templates for first-boot config (entrypoint copies into mounted /app/config)
+COPY --from=builder /app/priv/workflow_template.md /app/templates/WORKFLOW.md
+COPY --from=builder /app/priv/agents.toml /app/templates/agents.toml
+COPY docker/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 # Runtime configuration
 ENV PHX_SERVER=true
 ENV MIX_ENV=prod
 ENV PORT=4000
 ENV HOME=/app
 ENV RELEASE_TMP=/app/tmp
+ENV SVARM_CONFIG_DIR=/app/config
+ENV SVARM_TEMPLATES_DIR=/app/templates
 
 # Install pi so agents can be spawned inside the container
 RUN curl -fsSL https://pi.dev/install.sh | sh
 
-# Create data and tmp directories for SQLite and BEAM
-RUN mkdir -p /app/data /app/tmp
+# Create data, config, and tmp directories for SQLite and BEAM
+RUN mkdir -p /app/data /app/tmp /app/config
 VOLUME /app/data
+VOLUME /app/config
 
 EXPOSE 4000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:4000/ || exit 1
+    CMD curl -f http://localhost:4000/health || exit 1
 
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["bin/svarm", "start"]
