@@ -124,6 +124,8 @@ defmodule Svarm.Runner.Cli do
            model: Map.get(cfg, "model")
          }}
       end)
+    else
+      _ -> %{}
     end
   end
 
