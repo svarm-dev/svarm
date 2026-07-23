@@ -28,16 +28,18 @@ defmodule SvarmWeb.BoardLive do
       |> assign(:dev_routes, Application.get_env(:svarm, :dev_routes, false))
       |> assign(:demo_routes, Svarm.Demo.routes_enabled?())
       |> assign(:checklist, Svarm.Board.instance_status())
+      |> assign(:connected, false)
 
     socket =
       if connected?(socket) do
         Events.subscribe()
         Phoenix.PubSub.subscribe(Svarm.PubSub, "approvals")
-        load_board(socket)
+        socket
+        |> load_board()
+        |> assign(:connected, true)
       else
         socket
       end
-
     {:ok, socket}
   end
 
@@ -221,9 +223,12 @@ defmodule SvarmWeb.BoardLive do
           </div>
         </div>
 
-        <%= if @task_count == 0 do %>
-          <.board_empty demo_routes={@demo_routes} checklist={@checklist} />
-        <% else %>
+        <%= cond do %>
+          <% not @connected -> %>
+            <.board_skeleton />
+          <% @task_count == 0 -> %>
+            <.board_empty demo_routes={@demo_routes} checklist={@checklist} />
+          <% true -> %>
           <.orchestrator_bar
             orchestrator={@orchestrator}
             agents={@agents}
@@ -411,6 +416,40 @@ defmodule SvarmWeb.BoardLive do
 
   attr :demo_routes, :boolean, default: false
   attr :checklist, :map, default: %{}
+  defp board_skeleton(assigns) do
+    ~H"""
+    <div class="space-y-6 animate-pulse">
+      <div class="rounded-lg border border-base-300 bg-base-200/60 px-4 py-3">
+        <div class="flex flex-wrap gap-4">
+          <div>
+            <div class="h-3 w-16 rounded bg-base-300 mb-1" />
+            <div class="h-5 w-8 rounded bg-base-300" />
+          </div>
+          <div>
+            <div class="h-3 w-16 rounded bg-base-300 mb-1" />
+            <div class="h-5 w-8 rounded bg-base-300" />
+          </div>
+          <div>
+            <div class="h-3 w-20 rounded bg-base-300 mb-1" />
+            <div class="h-5 w-12 rounded bg-base-300" />
+          </div>
+        </div>
+      </div>
+      <div class="flex gap-4 overflow-x-auto pb-4">
+        <%= for _ <- 1..5 do %>
+          <div class="flex-shrink-0 w-64 bg-base-200 rounded-lg p-3">
+            <div class="h-4 w-16 rounded bg-base-300 mb-3" />
+            <div class="space-y-2">
+              <div class="h-14 rounded-md bg-base-300/50" />
+              <div class="h-14 rounded-md bg-base-300/50" />
+            </div>
+          </div>
+        <% end %>
+      </div>
+    </div>
+    """
+  end
+
 
   defp board_empty(assigns) do
     c = assigns.checklist || %{}
