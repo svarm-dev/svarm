@@ -1,7 +1,5 @@
 # Svärm
 
-*Pronounced "svˈɛrm" (rhymes with "farm"). Swedish for "swarm."*
-
 <p align="center">
   <img src="priv/static/images/swarm-hero.svg" alt="Svärm" width="280" />
 </p>
