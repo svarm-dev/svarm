@@ -18,7 +18,7 @@ services:
   svarm:
     build: .
     ports:
-      - "4000:4000"
+      - "${SVARM_PORT:-4000}:4000"
     env_file:
       - .env
     environment:
@@ -26,8 +26,8 @@ services:
       - SVARM_CONFIG_DIR=/app/config
       - SVARM_WORKFLOW_PATH=/app/config/WORKFLOW.md
       - SVARM_AGENTS_PATH=/app/config/agents.toml
-      - PHX_HOST=localhost
-      - SVARM_BASE_URL=http://localhost:4000
+      - PHX_HOST=${PHX_HOST:-localhost}
+      - SVARM_BASE_URL=${SVARM_BASE_URL:-http://localhost:${SVARM_PORT:-4000}}
     volumes:
       - ./data:/app/data
       - ./svarm-config:/app/config
@@ -38,7 +38,7 @@ services:
     profiles: ["demo"]
     build: .
     ports:
-      - "4000:4000"
+      - "${SVARM_PORT:-4000}:4000"
     env_file:
       - .env
     environment:
@@ -46,10 +46,10 @@ services:
       - SVARM_CONFIG_DIR=/app/config
       - SVARM_WORKFLOW_PATH=/app/config/WORKFLOW.md
       - SVARM_AGENTS_PATH=/app/config/agents.toml
-      - PHX_HOST=localhost
-      - SVARM_BASE_URL=http://localhost:4000
+      - PHX_HOST=${PHX_HOST:-localhost}
+      - SVARM_BASE_URL=${SVARM_BASE_URL:-http://localhost:${SVARM_PORT:-4000}}
       - SVARM_SEED_DEMO=1
-      - SVARM_DEMO_ROUTES=1
+      - FORCE_SSL=${FORCE_SSL:-true}
       # Demo agents are trusted; Basic Auth still unlocks /approvals for exploration.
       - APPROVALS_USER=${APPROVALS_USER:-svarm}
       - APPROVALS_PASSWORD=${APPROVALS_PASSWORD:-svarm}

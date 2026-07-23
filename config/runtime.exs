@@ -81,17 +81,26 @@ if config_env() == :prod do
 
   config :svarm, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
+  force_ssl_enabled? = System.get_env("FORCE_SSL", "true") == "true"
+
   config :svarm, SvarmWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
     check_origin: false,
     http: [
-      # Enable IPv6 and bind on all interfaces.
-      # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
-      # See the documentation on https://bandit.hexdocs.pm/Bandit.html#t:options/0
-      # for details about using IPv6 vs IPv4 and loopback vs public addresses.
       ip: {0, 0, 0, 0, 0, 0, 0, 0}
     ],
-    secret_key_base: secret_key_base
+    secret_key_base: secret_key_base,
+    force_ssl:
+      if(force_ssl_enabled?,
+        do: [
+          rewrite_on: [:x_forwarded_proto],
+          exclude: [
+            paths: ["/health"],
+            hosts: ["localhost", "127.0.0.1"]
+          ]
+        ],
+        else: false
+      )
 
   # ## SSL Support
   #

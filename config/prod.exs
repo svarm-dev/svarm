@@ -7,21 +7,10 @@ import Config
 # before starting your production server.
 config :svarm, SvarmWeb.Endpoint, cache_static_manifest: "priv/static/cache_manifest.json"
 
-# Force using SSL in production. This also sets the "strict-security-transport" header,
-# known as HSTS. If you have a health check endpoint, you may want to exclude it below.
-# Note `:force_ssl` is required to be set at compile-time.
-config :svarm, SvarmWeb.Endpoint,
-  force_ssl: [
-    rewrite_on: [:x_forwarded_proto],
-    exclude: [
-      # HEALTHCHECK and local Docker hit http://localhost — skip SSL redirect.
-      paths: ["/health"],
-      hosts: ["localhost", "127.0.0.1"]
-    ]
-  ]
-
 # Do not print debug messages in production
 config :logger, level: :info
+
+# Force SSL is configured in runtime.exs (needs env var control).
 
 # Runtime production configuration, including reading
 # of environment variables, is done on config/runtime.exs.
