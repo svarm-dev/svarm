@@ -2,17 +2,19 @@
 
 *Pronounced "svˈɛrm" (rhymes with "farm"). Swedish for "swarm."*
 
-The platform where engineering teams manage their human and AI members together, with auditable cost on every ticket.
-
-Self-hosted, open source (MIT), built in Elixir. Working today: local board + GitHub Issues + pi + OpenRouter.
-
 <p align="center">
   <img src="priv/static/images/swarm-hero.svg" alt="Svärm" width="280" />
 </p>
 
----
+**The platform where engineering teams manage their human and AI members together, with auditable cost on every ticket.**
 
-## What Svärm does
+Self-hosted, open source (MIT), built in Elixir.
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Elixir](https://img.shields.io/badge/Elixir-1.20+-6e4a7e?logo=elixir&logoColor=white)](https://elixir-lang.org)
+[![OTP](https://img.shields.io/badge/OTP-29-blue)](https://www.erlang.org)
+
+## Why Svärm?
 
 Your developers are already using AI coding agents: pi, Claude Code, Cursor, Copilot. They're writing code, submitting PRs, fixing bugs. But you can't see them, govern them, or prove they're worth it.
 
@@ -24,19 +26,9 @@ GitHub Issues → Svärm orchestrator → pi / Claude Code / any agent → PR wi
                                    OpenRouter / your LLM provider
 ```
 
-It solves two problems. First, agents are invisible team members. They read issues, edit code, run tests, submit PRs, but no tool treats them as team members. Svärm gives them identity on a shared board, routes work to them by skill, and tracks their output alongside human work. Second, AI spend is ungoverned. Enterprises burn $500–$2,000 per engineer per month on AI tools with zero per-ticket visibility. Svärm enforces governance at the provisioning layer, controlling which agent, which model, which budget, before tokens flow. Every ticket gets a cost receipt.
-
----
-
-## Status
-
-Working now: local board + GitHub Issues + pi/CLI agents + OpenRouter, with approvals and per-ticket cost receipts.
-
-Not shipped yet: Linear/Jira trackers, multi-provider LLM abstraction, managed hosting. Don't read "adapter-ready" as "all adapters exist."
-
-First public release: v0.1.1. See [docs/release.md](docs/release.md).
-
----
+- **Watch agents work.** Tasks show up as cards on a board, with live logs and per-ticket cost.
+- **Governance before dispatch.** Which agent, which model, which budget, approved by whom.
+- **Auditable cost.** Every ticket gets a cost receipt with tokens, model, and dollar amount.
 
 ## Quick start
 
@@ -48,7 +40,7 @@ cd svarm
 docker compose --profile demo up --build
 ```
 
-SECRET_KEY_BASE is auto-generated on first run. Set it in `.env` for persistence across restarts.
+`SECRET_KEY_BASE` is auto-generated on first run. Set it in `.env` for persistence across restarts.
 
 ### Elixir (if you have 1.20+ / OTP 29)
 
@@ -61,39 +53,39 @@ mix setup
 mix phx.server
 ```
 
-### 3. Open the board
+### Open the board
 
-- [/board](http://localhost:4000/board): team board with demo tasks already moving
-- [/](http://localhost:4000/): instance overview (tracker, agents, workflow)
-- [/approvals](http://localhost:4000/approvals): first-run gates (Basic Auth: `svarm` / `svarm` in demo)
+| Route | What it shows |
+|-------|---------------|
+| [`/board`](http://localhost:4000/board) | Team board with demo tasks already moving |
+| [`/dashboard`](http://localhost:4000/dashboard) | Operational overview: agent roster, cost, task distribution |
+| [`/`](http://localhost:4000/) | Instance overview (tracker, agents, workflow) |
+| [`/approvals`](http://localhost:4000/approvals) | First-run gates (Basic Auth: `svarm` / `svarm` in demo) |
 
 Demo agents run without API keys. They simulate work so you can see the board in action. Click **Seed demo** on `/board` to re-seed after clearing.
 
-Ready for real agents? [GETTING-STARTED.md](GETTING-STARTED.md) walks through GitHub + OpenRouter + pi in about 15 minutes.
-
----
+> [!TIP]
+> Ready for real agents? [GETTING-STARTED.md](GETTING-STARTED.md) walks through GitHub + OpenRouter + pi in about 15 minutes.
 
 ## How it works
 
 Svärm runs a governance loop on your tickets:
 
-1. Reconcile: sync running work with the tracker
-2. Preflight: config, capacity, and approval checks
-3. Fetch: eligible issues (labels / states)
-4. Dispatch: agent in an isolated workspace
-5. Receipt: usage comment on the issue; human reviews the PR
+1. **Reconcile** sync running work with the tracker
+2. **Preflight** config, capacity, and approval checks
+3. **Fetch** eligible issues (labels / states)
+4. **Dispatch** agent in an isolated workspace
+5. **Receipt** usage comment on the issue; human reviews the PR
 
 Successful runs land in `review`, not `done`. Agents never merge. Every ticket gets a cost receipt with tokens, model, and dollar amount.
 
 The poll loop follows the [Symphony](https://github.com/openai/symphony/blob/main/SPEC.md) specification for agent orchestration.
 
----
-
 ## Architecture
 
 ```
 Svarm.Orchestrator (GenServer poll loop)
-    ├── Svarm.Tracker  → Local (SQLite) | GitHub   (Linear/Jira: not shipped)
+    ├── Svarm.Tracker  → Local (SQLite) | GitHub
     ├── Svarm.Runner   → CLI | pi RPC
     └── Svarm.Provider → OpenRouter
              │
@@ -101,8 +93,6 @@ Svarm.Orchestrator (GenServer poll loop)
 ```
 
 Adapters are the extension point. Adding a new tracker, runner, or provider means one module and some config, not a fork of the orchestrator.
-
----
 
 ## Configuration
 
@@ -112,8 +102,6 @@ Docker mounts `./svarm-config/` as a directory. On first boot, missing files are
 |------|------|
 | `svarm-config/WORKFLOW.md` | Tracker, approvals mode, agent prompt |
 | `svarm-config/agents.toml` | Agent commands, adapters, models |
-
-Full walkthrough: [GETTING-STARTED.md](GETTING-STARTED.md)
 
 <details>
 <summary>Environment variables</summary>
@@ -130,18 +118,18 @@ Full walkthrough: [GETTING-STARTED.md](GETTING-STARTED.md)
 GitHub App identity (bot comments): [docs/github-app.md](docs/github-app.md).
 </details>
 
----
+## Documentation
+
+- [GETTING-STARTED.md](GETTING-STARTED.md) full setup walkthrough
+- [docs/agents.md](docs/agents.md) agent.toml copy-paste blocks
+- [AGENTS.md](AGENTS.md) for coding agents editing this repo
+
+## Status
+
+**Working now:** local board + GitHub Issues + pi/CLI agents + OpenRouter, with approvals and per-ticket cost receipts.
+
+**Not shipped yet:** Linear/Jira trackers, multi-provider LLM abstraction, managed hosting. Don't read "adapter-ready" as "all adapters exist."
 
 ## Why self-hosted?
 
-Your source code and API keys never leave your infrastructure. Local tracker and local models mean no cloud dependency. No SaaS middleman sees your code, keys, or token usage. You swap tracker, agent, and provider via files, not vendor portals.
-
----
-
-## Contributing
-
-MIT licensed. Issues and PRs welcome.
-
-- Try it: [GETTING-STARTED.md](GETTING-STARTED.md)
-- Agent configs: [docs/agents.md](docs/agents.md)
-- Developing this repo: [AGENTS.md](AGENTS.md)
+Your source code and API keys never leave your infrastructure. Local tracker and local models mean no cloud dependency. No SaaS middleman sees your code, keys, or token usage.
