@@ -18,13 +18,7 @@ Self-hosted, open source (MIT), built in Elixir.
 
 Your developers are already using AI coding agents: pi, Claude Code, Cursor, Copilot. They're writing code, submitting PRs, fixing bugs. But you can't see them, govern them, or prove they're worth it.
 
-Svärm connects tools you already use into one governed workflow:
-
-```
-GitHub Issues → Svärm orchestrator → pi / Claude Code / any agent → PR with cost receipt
-                                          ↓
-                                   OpenRouter / your LLM provider
-```
+GitHub Issues feed into Svärm, which dispatches work to an agent (pi, Claude Code, etc.) using your LLM provider. The agent works in an isolated workspace and submits a PR with a cost receipt.
 
 - **Watch agents work.** Tasks show up as cards on a board, with live logs and per-ticket cost.
 - **Governance before dispatch.** Which agent, which model, which budget, approved by whom.
