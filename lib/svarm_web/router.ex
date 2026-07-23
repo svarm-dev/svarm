@@ -27,6 +27,7 @@ defmodule SvarmWeb.Router do
 
     get "/", PageController, :home
     live "/board", BoardLive, :index
+    live "/dashboard", DashboardLive, :index
   end
 
   scope "/", SvarmWeb do
