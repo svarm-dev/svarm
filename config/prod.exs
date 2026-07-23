@@ -7,10 +7,13 @@ import Config
 # before starting your production server.
 config :svarm, SvarmWeb.Endpoint, cache_static_manifest: "priv/static/cache_manifest.json"
 
-# Do not print debug messages in production
-config :logger, level: :info
-
-# Force SSL is configured in runtime.exs (needs env var control).
+# Force SSL removed — NPM Plus or Caddy handles SSL termination.
+# If you need app-level HTTPS redirect, uncomment and rebuild:
+# config :svarm, SvarmWeb.Endpoint,
+#   force_ssl: [
+#     rewrite_on: [:x_forwarded_proto],
+#     exclude: [paths: ["/health"], hosts: ["localhost", "127.0.0.1"]]
+#   ]
 
 # Runtime production configuration, including reading
 # of environment variables, is done on config/runtime.exs.

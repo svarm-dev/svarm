@@ -89,18 +89,7 @@ if config_env() == :prod do
     http: [
       ip: {0, 0, 0, 0, 0, 0, 0, 0}
     ],
-    secret_key_base: secret_key_base,
-    force_ssl:
-      if(force_ssl_enabled?,
-        do: [
-          rewrite_on: [:x_forwarded_proto],
-          exclude: [
-            paths: ["/health"],
-            hosts: ["localhost", "127.0.0.1"]
-          ]
-        ],
-        else: false
-      )
+    secret_key_base: secret_key_base
 
   # ## SSL Support
   #
