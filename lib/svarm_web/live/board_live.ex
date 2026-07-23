@@ -34,12 +34,14 @@ defmodule SvarmWeb.BoardLive do
       if connected?(socket) do
         Events.subscribe()
         Phoenix.PubSub.subscribe(Svarm.PubSub, "approvals")
+
         socket
         |> load_board()
         |> assign(:connected, true)
       else
         socket
       end
+
     {:ok, socket}
   end
 
@@ -231,51 +233,51 @@ defmodule SvarmWeb.BoardLive do
           <% true -> %>
             <.demo_bridge_banner columns={@columns} checklist={@checklist} />
             <.orchestrator_bar
-            orchestrator={@orchestrator}
-            agents={@agents}
-            now_mono={@now_mono}
-          />
+              orchestrator={@orchestrator}
+              agents={@agents}
+              now_mono={@now_mono}
+            />
 
-          <details class="text-xs opacity-60 group">
-            <summary class="cursor-pointer select-none list-none opacity-50 hover:opacity-80">
-              Keyboard
-            </summary>
-            <p class="mt-1 opacity-70">
-              <kbd class="font-mono rounded bg-base-200 px-1">j</kbd>/<kbd class="font-mono rounded bg-base-200 px-1">k</kbd>
-              select · <kbd class="font-mono rounded bg-base-200 px-1">Esc</kbd>
-              clear
-            </p>
-          </details>
+            <details class="text-xs opacity-60 group">
+              <summary class="cursor-pointer select-none list-none opacity-50 hover:opacity-80">
+                Keyboard
+              </summary>
+              <p class="mt-1 opacity-70">
+                <kbd class="font-mono rounded bg-base-200 px-1">j</kbd>/<kbd class="font-mono rounded bg-base-200 px-1">k</kbd>
+                select · <kbd class="font-mono rounded bg-base-200 px-1">Esc</kbd>
+                clear
+              </p>
+            </details>
 
-          <div class="flex gap-4 overflow-x-auto pb-4 min-h-[280px]">
-            <%= for col <- @column_ids do %>
-              <.column
-                id={col}
-                title={column_label(col)}
-                status_id={col}
-                tasks={Map.get(@columns, col, [])}
-                selected_task_id={@selected_task_id}
-                running_ids={Map.get(@orchestrator, :running_ids, [])}
-                retry_ids={Map.get(@orchestrator, :retry_ids, [])}
-                running_started={@running_started}
-                now_mono={@now_mono}
-                workload={@workload}
-                agents={@agents}
-                costs={@costs}
-              />
-            <% end %>
-          </div>
+            <div class="flex gap-4 overflow-x-auto pb-4 min-h-[280px]">
+              <%= for col <- @column_ids do %>
+                <.column
+                  id={col}
+                  title={column_label(col)}
+                  status_id={col}
+                  tasks={Map.get(@columns, col, [])}
+                  selected_task_id={@selected_task_id}
+                  running_ids={Map.get(@orchestrator, :running_ids, [])}
+                  retry_ids={Map.get(@orchestrator, :retry_ids, [])}
+                  running_started={@running_started}
+                  now_mono={@now_mono}
+                  workload={@workload}
+                  agents={@agents}
+                  costs={@costs}
+                />
+              <% end %>
+            </div>
 
-          <.run_panel
-            task_id={@selected_task_id}
-            task={selected_task(@columns, @selected_task_id)}
-            log={Map.get(@run_logs, @selected_task_id, "")}
-            meta={Map.get(@run_meta, @selected_task_id, %{})}
-            agents={@agents}
-            cost={Map.get(@task_costs, @selected_task_id)}
-            running_started={@running_started}
-            now_mono={@now_mono}
-          />
+            <.run_panel
+              task_id={@selected_task_id}
+              task={selected_task(@columns, @selected_task_id)}
+              log={Map.get(@run_logs, @selected_task_id, "")}
+              meta={Map.get(@run_meta, @selected_task_id, %{})}
+              agents={@agents}
+              cost={Map.get(@task_costs, @selected_task_id)}
+              running_started={@running_started}
+              now_mono={@now_mono}
+            />
         <% end %>
       </div>
     </Layouts.app>
@@ -417,6 +419,7 @@ defmodule SvarmWeb.BoardLive do
 
   attr :demo_routes, :boolean, default: false
   attr :checklist, :map, default: %{}
+
   defp board_skeleton(assigns) do
     ~H"""
     <div class="space-y-6 animate-pulse">
@@ -450,7 +453,6 @@ defmodule SvarmWeb.BoardLive do
     </div>
     """
   end
-
 
   attr :columns, :map, required: true
   attr :checklist, :map, default: %{}
@@ -738,7 +740,7 @@ defmodule SvarmWeb.BoardLive do
                 <% end %>
               </button>
 
-              <%= if card.pending_approval do %>
+              <%= if card.pending_approval and not demo_task?(task) do %>
                 <div class="mt-2 flex gap-1">
                   <button
                     type="button"
@@ -825,7 +827,7 @@ defmodule SvarmWeb.BoardLive do
             </div>
           <% end %>
 
-          <%= if @task.status == Approval.pending_status() do %>
+          <%= if @task.status == Approval.pending_status() and not demo_task?(@task) do %>
             <div class="flex flex-wrap items-center gap-2">
               <button
                 type="button"
@@ -1315,4 +1317,9 @@ defmodule SvarmWeb.BoardLive do
   end
 
   defp monogram(_), do: "?"
+
+  defp demo_task?(%{assignee: assignee}) when is_binary(assignee),
+    do: String.starts_with?(assignee, "demo_")
+
+  defp demo_task?(_), do: false
 end

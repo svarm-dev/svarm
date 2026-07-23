@@ -252,8 +252,10 @@ defmodule SvarmWeb.DashboardLive do
                       busy
                     </span>
                   <% end %>
-                  <span class="font-mono opacity-60"
-                        title={"#{agent.active_count} active / #{agent.completed_count} done / #{agent.failed_count} failed"}>
+                  <span
+                    class="font-mono opacity-60"
+                    title={"#{agent.active_count} active / #{agent.completed_count} done / #{agent.failed_count} failed"}
+                  >
                     {agent.active_count}a {agent.completed_count}d
                     <%= if agent.failed_count > 0 do %>
                       <span class="text-error">{agent.failed_count}f</span>
@@ -261,8 +263,10 @@ defmodule SvarmWeb.DashboardLive do
                   </span>
                 </div>
                 <%= if agent.running_task_title do %>
-                  <p class="text-[10px] opacity-50 truncate max-w-[180px]"
-                     title={agent.running_task_title}>
+                  <p
+                    class="text-[10px] opacity-50 truncate max-w-[180px]"
+                    title={agent.running_task_title}
+                  >
                     {agent.running_task_title}
                   </p>
                 <% end %>
@@ -377,27 +381,25 @@ defmodule SvarmWeb.DashboardLive do
   # -- Helpers --
 
   defp load_dashboard(socket) do
-    try do
-      snapshot = Dashboard.snapshot()
-      cost = Dashboard.cost_for_window(socket.assigns[:time_window] || "session")
+    snapshot = Dashboard.snapshot()
+    cost = Dashboard.cost_for_window(socket.assigns[:time_window] || "session")
 
+    assign(socket,
+      snapshot: snapshot,
+      window_cost: cost,
+      time_window: socket.assigns[:time_window] || "session",
+      error: nil,
+      connected: true
+    )
+  rescue
+    e in [DBConnection.ConnectionError, ErlangError, ArgumentError] ->
       assign(socket,
-        snapshot: snapshot,
-        window_cost: cost,
+        snapshot: empty_snapshot(),
+        window_cost: %{total_cost_usd: 0.0, record_count: 0},
         time_window: socket.assigns[:time_window] || "session",
-        error: nil,
+        error: Exception.message(e),
         connected: true
       )
-    rescue
-      e ->
-        assign(socket,
-          snapshot: empty_snapshot(),
-          window_cost: %{total_cost_usd: 0.0, record_count: 0},
-          time_window: socket.assigns[:time_window] || "session",
-          error: Exception.message(e),
-          connected: true
-        )
-    end
   end
 
   defp empty_snapshot do
