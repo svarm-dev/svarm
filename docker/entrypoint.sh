@@ -1,7 +1,12 @@
 #!/bin/sh
+# Auto-generate SECRET_KEY_BASE when not provided (demo/single-command quickstart).
 # Copy config templates into the mounted config dir when missing.
-# Prevents Docker file-mount footguns (missing host file → directory named WORKFLOW.md).
 set -e
+
+if [ -z "$SECRET_KEY_BASE" ]; then
+  export SECRET_KEY_BASE=$(openssl rand -base64 48)
+  echo "svarm: generated SECRET_KEY_BASE (set in .env for persistence across restarts)"
+fi
 
 CONFIG_DIR="${SVARM_CONFIG_DIR:-/app/config}"
 TEMPLATES_DIR="${SVARM_TEMPLATES_DIR:-/app/templates}"

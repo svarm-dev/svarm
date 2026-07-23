@@ -1,5 +1,7 @@
 # Svärm
 
+*Pronounced "svˈɛrm" (rhymes with "farm"). Swedish for "swarm."*
+
 The platform where engineering teams manage their human and AI members together, with auditable cost on every ticket.
 
 Self-hosted, open source (MIT), built in Elixir. Working today: local board + GitHub Issues + pi + OpenRouter.
@@ -38,29 +40,25 @@ First public release: v0.1.1. See [docs/release.md](docs/release.md).
 
 ## Quick start
 
-### 1. Clone and configure
+### Docker (3 commands)
+
+```bash
+git clone https://github.com/svarm-dev/svarm.git
+cd svarm
+docker compose --profile demo up --build
+```
+
+SECRET_KEY_BASE is auto-generated on first run. Set it in `.env` for persistence across restarts.
+
+### Elixir (if you have 1.20+ / OTP 29)
 
 ```bash
 git clone https://github.com/svarm-dev/svarm.git
 cd svarm
 cp .env.example .env
-# Set SECRET_KEY_BASE (required):
-#   openssl rand -base64 48
-```
-
-### 2. Run it
-
-Option A, Elixir (fastest if you have Elixir 1.20+ / OTP 29):
-
-```bash
+# set SECRET_KEY_BASE: openssl rand -base64 48
 mix setup
 mix phx.server
-```
-
-Option B, Docker (no Elixir install needed):
-
-```bash
-docker compose --profile demo up --build
 ```
 
 ### 3. Open the board

@@ -229,7 +229,8 @@ defmodule SvarmWeb.BoardLive do
           <% @task_count == 0 -> %>
             <.board_empty demo_routes={@demo_routes} checklist={@checklist} />
           <% true -> %>
-          <.orchestrator_bar
+            <.demo_bridge_banner columns={@columns} checklist={@checklist} />
+            <.orchestrator_bar
             orchestrator={@orchestrator}
             agents={@agents}
             now_mono={@now_mono}
@@ -450,6 +451,44 @@ defmodule SvarmWeb.BoardLive do
     """
   end
 
+
+  attr :columns, :map, required: true
+  attr :checklist, :map, default: %{}
+
+  defp demo_bridge_banner(assigns) do
+    has_demo_tasks =
+      assigns.columns
+      |> Map.values()
+      |> List.flatten()
+      |> Enum.any?(fn t ->
+        assignee = t.assignee || ""
+        String.starts_with?(assignee, "demo_")
+      end)
+
+    tracker_kind = get_in(assigns.checklist, [:tracker_kind]) || :local
+
+    assigns =
+      assign(assigns,
+        show?: has_demo_tasks and tracker_kind == :local,
+        has_demo_tasks: has_demo_tasks
+      )
+
+    ~H"""
+    <%= if @show? do %>
+      <div class="rounded-lg border border-primary/20 bg-primary/5 px-4 py-2.5 text-sm flex items-center gap-3">
+        <span class="text-primary font-medium">Demo mode</span>
+        <span class="opacity-70">Running mock agents. Connect GitHub for real agent work.</span>
+        <a
+          href="https://github.com/svarm-dev/svarm/blob/main/GETTING-STARTED.md"
+          class="btn btn-xs btn-outline ml-auto shrink-0"
+          target="_blank"
+        >
+          Get started
+        </a>
+      </div>
+    <% end %>
+    """
+  end
 
   defp board_empty(assigns) do
     c = assigns.checklist || %{}

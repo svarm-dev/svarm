@@ -4,6 +4,7 @@ defmodule Svarm.Demo do
 
   Used by the Seed demo button, boot-time `SVARM_SEED_DEMO=1`, and tests.
   Creates mock tasks (research → code → docs) that run without API keys.
+  Seeds synthetic usage records so the cost receipt shows a real dollar amount.
   """
 
   @default_goal "Showcase the Svärm orchestrator loop"
@@ -18,6 +19,10 @@ defmodule Svarm.Demo do
 
     with {:ok, %{tasks: tasks}} <- Svarm.Decompose.run(%{goal: goal, research: ""}, mock: true),
          {:ok, %{created_count: count}} <- Svarm.Dispatch.run(%{tasks: tasks, goal: goal}) do
+      # Seed synthetic usage records so cost receipts show real dollar amounts
+      # Fetch created tasks with IDs (Dispatch assigns IDs during creation)
+      created_tasks = Svarm.Board.list_tasks()
+      seed_usage_records(created_tasks)
       # One task at a time: research → code → docs; faster poll between stages
       Application.put_env(:svarm, :orchestrator_max_concurrent, 1)
       Application.put_env(:svarm, :orchestrator_poll_interval_ms, 2_000)
@@ -57,4 +62,28 @@ defmodule Svarm.Demo do
   def truthy?(""), do: false
   def truthy?(v) when v in [true, "1", "true", "TRUE", "yes", "YES", "on", "ON"], do: true
   def truthy?(_), do: false
+
+  # Seed synthetic usage records for demo tasks so cost receipts show real amounts.
+  # Uses gpt-4.1 via openrouter at real market rates — clearly labeled as demo data.
+  defp seed_usage_records(tasks) do
+    run_id = "demo_run_" <> Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)
+
+    for task <- tasks do
+      # Realistic token counts for a coding task
+      prompt_tokens = Enum.random(800..2500)
+      completion_tokens = Enum.random(200..900)
+
+      Svarm.Usage.Ledger.append(%{
+        run_id: run_id,
+        task_id: task.id,
+        tenant: "demo",
+        source: "worker",
+        provider: "openrouter",
+        model_id: "gpt-4.1",
+        prompt_tokens: prompt_tokens,
+        completion_tokens: completion_tokens,
+        estimated: true
+      })
+    end
+  end
 end
