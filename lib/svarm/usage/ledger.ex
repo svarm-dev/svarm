@@ -58,6 +58,19 @@ defmodule Svarm.Usage.Ledger do
   end
 
   @doc """
+  Returns all records since a given monotonic timestamp (ms), newest first.
+  """
+  def records_since(since_mono) when is_integer(since_mono) do
+    import Ecto.Query, only: [from: 2]
+
+    from(r in Record,
+      where: r.recorded_at >= ^since_mono,
+      order_by: [desc: r.recorded_at]
+    )
+    |> Repo.all()
+  end
+
+  @doc """
   Returns all records for a given tenant (goal), newest first.
   """
   def for_tenant(tenant) do

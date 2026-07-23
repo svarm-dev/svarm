@@ -8,17 +8,16 @@ defmodule SvarmWeb.DevDemoController do
     goal = params["goal"] |> to_string() |> String.trim()
     goal = if goal == "", do: @default_goal, else: goal
 
-    {:ok, %{tasks: tasks}} = Svarm.Decompose.run(%{goal: goal, research: ""}, mock: true)
-    {:ok, %{created_count: count}} = Svarm.Dispatch.run(%{tasks: tasks, goal: goal})
+    case Svarm.Demo.seed(goal) do
+      {:ok, count} ->
+        conn
+        |> put_flash(:info, "Queued #{count} demo tasks on the board.")
+        |> redirect(to: ~p"/board")
 
-    # One task at a time: research → code → docs; faster poll between stages
-    Application.put_env(:svarm, :orchestrator_max_concurrent, 1)
-    Application.put_env(:svarm, :orchestrator_poll_interval_ms, 2_000)
-    send(Svarm.Orchestrator, {:workflow_reloaded, Svarm.Workflow.Store.get()})
-    Svarm.Orchestrator.kick()
-
-    conn
-    |> put_flash(:info, "Queued #{count} demo tasks on the board.")
-    |> redirect(to: ~p"/board")
+      {:error, reason} ->
+        conn
+        |> put_flash(:error, "Demo seed failed: #{inspect(reason)}")
+        |> redirect(to: ~p"/board")
+    end
   end
 end

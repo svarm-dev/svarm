@@ -1,4 +1,0 @@
-# Claude Code (Anthropic) — one-shot CLI dispatch.
-[agent]
-command = "claude"
-args = ["-p", "--output-format", "text"]

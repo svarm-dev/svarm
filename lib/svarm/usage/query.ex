@@ -99,6 +99,20 @@ defmodule Svarm.Usage.Query do
   end
 
   @doc """
+  Returns actual cost (USD) and count for records since a monotonic timestamp.
+  Uses model-specific pricing from Rates — no flat-rate estimation.
+  """
+  def cost_since(since_mono) when is_integer(since_mono) do
+    records = Ledger.records_since(since_mono)
+    cost = sum_usage_cost(records)
+
+    %{
+      total_cost_usd: Float.round(cost, 4),
+      record_count: length(records)
+    }
+  end
+
+  @doc """
   Returns aggregate spend grouped by model for a given time period.
   """
   def by_model(since_unix) when is_integer(since_unix) do

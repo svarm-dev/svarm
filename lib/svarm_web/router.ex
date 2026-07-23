@@ -19,11 +19,15 @@ defmodule SvarmWeb.Router do
     plug SvarmWeb.Plugs.ApprovalsAuth
   end
 
+  # Plain-text health — no browser pipeline (no CSRF/session); Docker HEALTHCHECK target.
+  get "/health", SvarmWeb.PageController, :health
+
   scope "/", SvarmWeb do
     pipe_through :browser
 
     get "/", PageController, :home
     live "/board", BoardLive, :index
+    live "/dashboard", DashboardLive, :index
   end
 
   scope "/", SvarmWeb do
@@ -39,20 +43,17 @@ defmodule SvarmWeb.Router do
   #   pipe_through :api
   # end
 
-  # Enable LiveDashboard in development
+  # Seed demo — always compiled; gated at runtime by SvarmWeb.Plugs.DemoRoutes
+  # (dev_routes or SVARM_DEMO_ROUTES / SVARM_SEED_DEMO).
+  scope "/dev", SvarmWeb do
+    pipe_through [:browser, SvarmWeb.Plugs.DemoRoutes]
+
+    post "/demo/seed", DevDemoController, :seed
+  end
+
+  # LiveDashboard only in Mix dev (compile-time)
   if Application.compile_env(:svarm, :dev_routes) do
-    # If you want to use the LiveDashboard in production, you should put
-    # it behind authentication and allow only admins to access it.
-    # If your application does not have an admins-only section yet,
-    # you can use Plug.BasicAuth to set up some basic authentication
-    # as long as you are also using SSL (which you should anyway).
     import Phoenix.LiveDashboard.Router
-
-    scope "/dev", SvarmWeb do
-      pipe_through :browser
-
-      post "/demo/seed", DevDemoController, :seed
-    end
 
     scope "/dev" do
       pipe_through :browser

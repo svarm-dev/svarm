@@ -10,6 +10,8 @@ defmodule SvarmWeb.BoardLiveTest do
 
     assert html =~ "All quiet"
     assert html =~ "per-ticket cost"
+    assert html =~ "First-run checklist"
+    assert html =~ "Workflow loaded"
     refute html =~ "Needs approval"
     refute html =~ "Run detail"
   end

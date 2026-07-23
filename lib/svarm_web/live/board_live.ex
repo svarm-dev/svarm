@@ -26,12 +26,18 @@ defmodule SvarmWeb.BoardLive do
       |> assign(:now_mono, System.monotonic_time(:millisecond))
       |> assign(:workload, %{})
       |> assign(:dev_routes, Application.get_env(:svarm, :dev_routes, false))
+      |> assign(:demo_routes, Svarm.Demo.routes_enabled?())
+      |> assign(:checklist, Svarm.Board.instance_status())
+      |> assign(:connected, false)
 
     socket =
       if connected?(socket) do
         Events.subscribe()
         Phoenix.PubSub.subscribe(Svarm.PubSub, "approvals")
-        load_board(socket)
+
+        socket
+        |> load_board()
+        |> assign(:connected, true)
       else
         socket
       end
@@ -207,7 +213,7 @@ defmodule SvarmWeb.BoardLive do
               Refresh
             </button>
             <a href={~p"/approvals"} class="btn btn-sm btn-outline">Approvals</a>
-            <%= if @dev_routes do %>
+            <%= if @demo_routes do %>
               <.link
                 href={~p"/dev/demo/seed?goal=create+a+cool+app"}
                 method="post"
@@ -219,55 +225,59 @@ defmodule SvarmWeb.BoardLive do
           </div>
         </div>
 
-        <%= if @task_count == 0 do %>
-          <.board_empty dev_routes={@dev_routes} />
-        <% else %>
-          <.orchestrator_bar
-            orchestrator={@orchestrator}
-            agents={@agents}
-            now_mono={@now_mono}
-          />
+        <%= cond do %>
+          <% not @connected -> %>
+            <.board_skeleton />
+          <% @task_count == 0 -> %>
+            <.board_empty demo_routes={@demo_routes} checklist={@checklist} />
+          <% true -> %>
+            <.demo_bridge_banner columns={@columns} checklist={@checklist} />
+            <.orchestrator_bar
+              orchestrator={@orchestrator}
+              agents={@agents}
+              now_mono={@now_mono}
+            />
 
-          <details class="text-xs opacity-60 group">
-            <summary class="cursor-pointer select-none list-none opacity-50 hover:opacity-80">
-              Keyboard
-            </summary>
-            <p class="mt-1 opacity-70">
-              <kbd class="font-mono rounded bg-base-200 px-1">j</kbd>/<kbd class="font-mono rounded bg-base-200 px-1">k</kbd>
-              select · <kbd class="font-mono rounded bg-base-200 px-1">Esc</kbd>
-              clear
-            </p>
-          </details>
+            <details class="text-xs opacity-60 group">
+              <summary class="cursor-pointer select-none list-none opacity-50 hover:opacity-80">
+                Keyboard
+              </summary>
+              <p class="mt-1 opacity-70">
+                <kbd class="font-mono rounded bg-base-200 px-1">j</kbd>/<kbd class="font-mono rounded bg-base-200 px-1">k</kbd>
+                select · <kbd class="font-mono rounded bg-base-200 px-1">Esc</kbd>
+                clear
+              </p>
+            </details>
 
-          <div class="flex gap-4 overflow-x-auto pb-4 min-h-[280px]">
-            <%= for col <- @column_ids do %>
-              <.column
-                id={col}
-                title={column_label(col)}
-                status_id={col}
-                tasks={Map.get(@columns, col, [])}
-                selected_task_id={@selected_task_id}
-                running_ids={Map.get(@orchestrator, :running_ids, [])}
-                retry_ids={Map.get(@orchestrator, :retry_ids, [])}
-                running_started={@running_started}
-                now_mono={@now_mono}
-                workload={@workload}
-                agents={@agents}
-                costs={@costs}
-              />
-            <% end %>
-          </div>
+            <div class="flex gap-4 overflow-x-auto pb-4 min-h-[280px]">
+              <%= for col <- @column_ids do %>
+                <.column
+                  id={col}
+                  title={column_label(col)}
+                  status_id={col}
+                  tasks={Map.get(@columns, col, [])}
+                  selected_task_id={@selected_task_id}
+                  running_ids={Map.get(@orchestrator, :running_ids, [])}
+                  retry_ids={Map.get(@orchestrator, :retry_ids, [])}
+                  running_started={@running_started}
+                  now_mono={@now_mono}
+                  workload={@workload}
+                  agents={@agents}
+                  costs={@costs}
+                />
+              <% end %>
+            </div>
 
-          <.run_panel
-            task_id={@selected_task_id}
-            task={selected_task(@columns, @selected_task_id)}
-            log={Map.get(@run_logs, @selected_task_id, "")}
-            meta={Map.get(@run_meta, @selected_task_id, %{})}
-            agents={@agents}
-            cost={Map.get(@task_costs, @selected_task_id)}
-            running_started={@running_started}
-            now_mono={@now_mono}
-          />
+            <.run_panel
+              task_id={@selected_task_id}
+              task={selected_task(@columns, @selected_task_id)}
+              log={Map.get(@run_logs, @selected_task_id, "")}
+              meta={Map.get(@run_meta, @selected_task_id, %{})}
+              agents={@agents}
+              cost={Map.get(@task_costs, @selected_task_id)}
+              running_started={@running_started}
+              now_mono={@now_mono}
+            />
         <% end %>
       </div>
     </Layouts.app>
@@ -407,9 +417,94 @@ defmodule SvarmWeb.BoardLive do
     |> Enum.find(&(&1.id == id))
   end
 
-  attr :dev_routes, :boolean, default: false
+  attr :demo_routes, :boolean, default: false
+  attr :checklist, :map, default: %{}
+
+  defp board_skeleton(assigns) do
+    ~H"""
+    <div class="space-y-6 animate-pulse">
+      <div class="rounded-lg border border-base-300 bg-base-200/60 px-4 py-3">
+        <div class="flex flex-wrap gap-4">
+          <div>
+            <div class="h-3 w-16 rounded bg-base-300 mb-1" />
+            <div class="h-5 w-8 rounded bg-base-300" />
+          </div>
+          <div>
+            <div class="h-3 w-16 rounded bg-base-300 mb-1" />
+            <div class="h-5 w-8 rounded bg-base-300" />
+          </div>
+          <div>
+            <div class="h-3 w-20 rounded bg-base-300 mb-1" />
+            <div class="h-5 w-12 rounded bg-base-300" />
+          </div>
+        </div>
+      </div>
+      <div class="flex gap-4 overflow-x-auto pb-4">
+        <%= for _ <- 1..5 do %>
+          <div class="flex-shrink-0 w-64 bg-base-200 rounded-lg p-3">
+            <div class="h-4 w-16 rounded bg-base-300 mb-3" />
+            <div class="space-y-2">
+              <div class="h-14 rounded-md bg-base-300/50" />
+              <div class="h-14 rounded-md bg-base-300/50" />
+            </div>
+          </div>
+        <% end %>
+      </div>
+    </div>
+    """
+  end
+
+  attr :columns, :map, required: true
+  attr :checklist, :map, default: %{}
+
+  defp demo_bridge_banner(assigns) do
+    has_demo_tasks =
+      assigns.columns
+      |> Map.values()
+      |> List.flatten()
+      |> Enum.any?(fn t ->
+        assignee = t.assignee || ""
+        String.starts_with?(assignee, "demo_")
+      end)
+
+    tracker_kind = get_in(assigns.checklist, [:tracker_kind]) || :local
+
+    assigns =
+      assign(assigns,
+        show?: has_demo_tasks and tracker_kind == :local,
+        has_demo_tasks: has_demo_tasks
+      )
+
+    ~H"""
+    <%= if @show? do %>
+      <div class="rounded-lg border border-primary/20 bg-primary/5 px-4 py-2.5 text-sm flex items-center gap-3">
+        <span class="text-primary font-medium">Demo mode</span>
+        <span class="opacity-70">Running mock agents. Connect GitHub for real agent work.</span>
+        <a
+          href="https://github.com/svarm-dev/svarm/blob/main/GETTING-STARTED.md"
+          class="btn btn-xs btn-outline ml-auto shrink-0"
+          target="_blank"
+        >
+          Get started
+        </a>
+      </div>
+    <% end %>
+    """
+  end
 
   defp board_empty(assigns) do
+    c = assigns.checklist || %{}
+
+    assigns =
+      assign(assigns,
+        workflow_ok?: Map.get(c, :workflow_loaded?, false),
+        workflow_path: Map.get(c, :workflow_path) || "—",
+        tracker_label: Map.get(c, :tracker_label) || "local",
+        agent_count: Map.get(c, :agent_count) || 0,
+        approval_mode: Map.get(c, :approval_mode) || "untrusted",
+        approvals_auth?: Map.get(c, :approvals_auth?, false)
+      )
+
     ~H"""
     <section
       class="rounded-lg border border-base-300 bg-base-200/70 px-6 py-8 sm:px-8"
@@ -422,19 +517,60 @@ defmodule SvarmWeb.BoardLive do
         This board is the live view of your blended team. Tickets move through columns as agents
         claim work; select a card for streamed output and per-ticket cost.
       </p>
-      <ol class="mt-4 max-w-2xl list-decimal space-y-1 pl-5 text-sm opacity-80">
-        <li>
-          Dispatch (or seed demo tasks) so something lands in
-          <span class="font-mono text-xs">todo</span>
+
+      <ul class="mt-5 max-w-2xl space-y-2 text-sm" aria-label="First-run checklist">
+        <li class="flex gap-2">
+          <span class="font-mono text-xs opacity-60 w-5 shrink-0">{if @workflow_ok?,
+            do: "✓",
+            else: "○"}</span>
+          <span>
+            Workflow loaded <span class="font-mono text-xs opacity-60">({@workflow_path})</span>
+          </span>
         </li>
-        <li>Watch an agent pick up work — name, status, and running pulse on the card</li>
-        <li>
-          Open the card: live log + dollar cost (or <span class="font-mono text-xs">est.</span>
-          when approximate)
+        <li class="flex gap-2">
+          <span class="font-mono text-xs opacity-60 w-5 shrink-0">✓</span>
+          <span>
+            Tracker: <span class="font-mono text-xs">{@tracker_label}</span>
+          </span>
         </li>
-      </ol>
+        <li class="flex gap-2">
+          <span class="font-mono text-xs opacity-60 w-5 shrink-0">{if @agent_count > 0,
+            do: "✓",
+            else: "○"}</span>
+          <span>Agents registered ({@agent_count})</span>
+        </li>
+        <li class="flex gap-2">
+          <span class="font-mono text-xs opacity-60 w-5 shrink-0">{if @approvals_auth? or
+                                                                        @approval_mode == "off",
+                                                                      do: "✓",
+                                                                      else: "○"}</span>
+          <span>
+            Approvals: <span class="font-mono text-xs">mode: {@approval_mode}</span>
+            <%= if @approvals_auth? do %>
+              · auth OK
+            <% else %>
+              · set <code class="rounded bg-base-300 px-1 font-mono text-xs">APPROVALS_USER</code>
+              / <code class="rounded bg-base-300 px-1 font-mono text-xs">APPROVALS_PASSWORD</code>
+              for /approvals
+            <% end %>
+          </span>
+        </li>
+        <li class="flex gap-2">
+          <span class="font-mono text-xs opacity-60 w-5 shrink-0">○</span>
+          <span>
+            <%= if @demo_routes do %>
+              Seed demo (below) or create a labeled issue on your tracker
+            <% else %>
+              Seed via Docker
+              <code class="rounded bg-base-300 px-1 font-mono text-xs">--profile demo</code>
+              or create a labeled issue
+            <% end %>
+          </span>
+        </li>
+      </ul>
+
       <div class="mt-6 flex flex-wrap items-center gap-3">
-        <%= if @dev_routes do %>
+        <%= if @demo_routes do %>
           <.link
             href={~p"/dev/demo/seed?goal=create+a+cool+app"}
             method="post"
@@ -446,8 +582,8 @@ defmodule SvarmWeb.BoardLive do
         <% else %>
           <p class="text-sm opacity-70">
             Point WORKFLOW.md at your tracker and open eligible issues — or run
-            <code class="rounded bg-base-300 px-1 font-mono text-xs">mix svarm.demo</code>
-            from the CLI.
+            Docker with <code class="rounded bg-base-300 px-1 font-mono text-xs">--profile demo</code>
+            for a zero-key board.
           </p>
         <% end %>
       </div>
@@ -604,7 +740,7 @@ defmodule SvarmWeb.BoardLive do
                 <% end %>
               </button>
 
-              <%= if card.pending_approval do %>
+              <%= if card.pending_approval and not demo_task?(task) do %>
                 <div class="mt-2 flex gap-1">
                   <button
                     type="button"
@@ -691,7 +827,7 @@ defmodule SvarmWeb.BoardLive do
             </div>
           <% end %>
 
-          <%= if @task.status == Approval.pending_status() do %>
+          <%= if @task.status == Approval.pending_status() and not demo_task?(@task) do %>
             <div class="flex flex-wrap items-center gap-2">
               <button
                 type="button"
@@ -1181,4 +1317,9 @@ defmodule SvarmWeb.BoardLive do
   end
 
   defp monogram(_), do: "?"
+
+  defp demo_task?(%{assignee: assignee}) when is_binary(assignee),
+    do: String.starts_with?(assignee, "demo_")
+
+  defp demo_task?(_), do: false
 end

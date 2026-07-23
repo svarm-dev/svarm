@@ -45,6 +45,9 @@ defmodule SvarmWeb.Layouts do
       <div class="flex-none">
         <ul class="flex flex-column px-1 space-x-4 items-center">
           <li>
+            <a href={~p"/dashboard"} class="btn btn-ghost">Dashboard</a>
+          </li>
+          <li>
             <a href={~p"/board"} class="btn btn-ghost">Board</a>
           </li>
           <li>

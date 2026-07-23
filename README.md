@@ -1,146 +1,79 @@
 # Svärm
 
-**The platform where engineering teams manage their human and AI members together — with auditable cost on every ticket.**
-
-Self-hosted. Open source (MIT). Agent-agnostic, tracker-agnostic, provider-agnostic. Built in Elixir.
+*Pronounced "svˈɛrm" (rhymes with "farm"). Swedish for "swarm."*
 
 <p align="center">
-  <img src="priv/static/images/swarm-hero.svg" alt="Svärm — a small flock of chevron birds" width="420" />
+  <img src="priv/static/images/swarm-hero.svg" alt="Svärm" width="280" />
 </p>
 
----
+**The platform where engineering teams manage their human and AI members together, with auditable cost on every ticket.**
 
-## What Svärm does
+Self-hosted, open source (MIT), built in Elixir.
 
-Your developers are already using AI coding agents — pi, Claude Code, Cursor, Copilot. They're writing code, submitting PRs, fixing bugs. But you can't see them, govern them, or prove they're worth it.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Elixir](https://img.shields.io/badge/Elixir-1.20+-6e4a7e?logo=elixir&logoColor=white)](https://elixir-lang.org)
+[![OTP](https://img.shields.io/badge/OTP-29-blue)](https://www.erlang.org)
 
-Svärm connects tools you already use into one governed workflow:
+## Why Svärm?
 
-```
-GitHub Issues → Svärm orchestrator → pi / Claude Code / any agent → PR with cost receipt
-                                          ↓
-                                   OpenRouter / your LLM provider
-```
+Your developers are already using AI coding agents: pi, Claude Code, Cursor, Copilot. They're writing code, submitting PRs, fixing bugs. But you can't see them, govern them, or prove they're worth it.
 
-**Governance at the provisioning layer.** Before a single token is spent, Svärm enforces: which agent, which model, which budget, approved by whom.
+GitHub Issues feed into Svärm, which dispatches work to an agent (pi, Claude Code, etc.) using your LLM provider. The agent works in an isolated workspace and submits a PR with a cost receipt.
 
-**Auditable cost on every ticket.** Every completed task carries a receipt — tokens consumed, model used, dollar cost — posted as a comment on the issue.
-
-**Agents as team members.** Agents have names and roles on the board. Work shows up as tickets, not chat history.
-
----
+- **Watch agents work.** Tasks show up as cards on a board, with live logs and per-ticket cost.
+- **Governance before dispatch.** Which agent, which model, which budget, approved by whom.
+- **Auditable cost.** Every ticket gets a cost receipt with tokens, model, and dollar amount.
 
 ## Quick start
 
-Full walkthrough (GitHub + pi + OpenRouter): **[GETTING-STARTED.md](GETTING-STARTED.md)**.
-
-### Docker (recommended)
+### Docker (3 commands)
 
 ```bash
 git clone https://github.com/svarm-dev/svarm.git
 cd svarm
-
-cp .env.example .env
-# SECRET_KEY_BASE — required (no Elixir needed):
-#   openssl rand -base64 48
-# Add GITHUB_TOKEN and OPENROUTER_API_KEY for the real GitHub path.
-
-mkdir -p svarm-config
-cp priv/workflow_template.md svarm-config/WORKFLOW.md
-cp priv/agents.toml svarm-config/agents.toml
-# Edit svarm-config/WORKFLOW.md: kind: github, owner, repo, required_labels
-
-docker compose up --build
-# → http://localhost:4000/board
+docker compose --profile demo up --build
 ```
 
-**Default safety:** `approval.mode: untrusted`. Real agents wait until you approve once at **http://localhost:4000/approvals**. Demo assignees skip the gate.
+`SECRET_KEY_BASE` is auto-generated on first run. Set it in `.env` for persistence across restarts.
 
-### Local (Elixir)
+### Elixir (if you have 1.20+ / OTP 29)
 
 ```bash
-mise install          # optional — pins Elixir 1.20.2 / OTP 29
-cp .env.example .env  # same keys as Docker
+git clone https://github.com/svarm-dev/svarm.git
+cd svarm
+cp .env.example .env
+# set SECRET_KEY_BASE: openssl rand -base64 48
 mix setup
 mix phx.server
-# → http://localhost:4000/board
 ```
 
-### Demo (no API keys)
-
-```bash
-mix svarm.demo
-# Or with the server running (dev only): open /board and use Seed demo
-```
-
----
-
-## Dashboard
+### Open the board
 
 | Route | What it shows |
 |-------|---------------|
-| [`/board`](http://localhost:4000/board) | Team board — status columns, live agent logs, per-ticket cost |
-| [`/approvals`](http://localhost:4000/approvals) | First-run gates — approve or reject before agents touch the repo |
+| [`/board`](http://localhost:4000/board) | Team board with demo tasks already moving |
+| [`/dashboard`](http://localhost:4000/dashboard) | Operational overview: agent roster, cost, task distribution |
+| [`/`](http://localhost:4000/) | Instance overview (tracker, agents, workflow) |
+| [`/approvals`](http://localhost:4000/approvals) | First-run gates (Basic Auth: `svarm` / `svarm` in demo) |
 
----
+Demo agents run without API keys. They simulate work so you can see the board in action. Click **Seed demo** on `/board` to re-seed after clearing.
 
-## Configuration
-
-### `WORKFLOW.md`
-
-Copy from `priv/workflow_template.md` to **`svarm-config/WORKFLOW.md`** (Docker) or the path in `SVARM_WORKFLOW_PATH`. Defines tracker, approvals, and the agent prompt.
-
-### `agents.toml`
-
-Copy from `priv/agents.toml` to **`svarm-config/agents.toml`** for Docker, or keep under `priv/` for local defaults.
-
-```toml
-[agent.default]
-name = "Pi"
-role = "Backend"
-command = "pi"
-adapter = "pi_rpc"
-provider = "openrouter"
-model = "openrouter/free"
-
-# Optional second agent (CLI harness):
-# [agent.claude]
-# name = "Claude"
-# command = "claude"
-# args = ["-p"]
-# adapter = "cli"
-# provider = "openrouter"
-# model = "anthropic/claude-sonnet-4"
-```
-
-### Secrets
-
-Never put keys in config files. Use `.env` (see `.env.example`):
-
-| Variable | Purpose |
-|----------|---------|
-| `SECRET_KEY_BASE` | Cookie signing — **required** for Docker/prod (`openssl rand -base64 48`) |
-| `GITHUB_TOKEN` | PAT mode for GitHub Issues (`repo` scope) |
-| `OPENROUTER_API_KEY` | LLM access for agents / decompose |
-| `SVARM_BASE_URL` | “Full run log” links in issue comments (e.g. `http://localhost:4000`) |
-
-GitHub App identity (bot comments): [docs/github-app.md](docs/github-app.md).
-
----
+> [!TIP]
+> Ready for real agents? [GETTING-STARTED.md](GETTING-STARTED.md) walks through GitHub + OpenRouter + pi in about 15 minutes.
 
 ## How it works
 
-Svärm follows the [Symphony](https://github.com/openai/symphony/blob/main/SPEC.md) poll loop:
+Svärm runs a governance loop on your tickets:
 
-1. **Reconcile** — sync running work with the tracker  
-2. **Preflight** — config + capacity checks  
-3. **Fetch** — eligible issues (labels / states)  
-4. **Dispatch** — agent in an isolated workspace  
-5. **Receipt** — usage comment on the issue; human reviews the PR  
+1. **Reconcile** sync running work with the tracker
+2. **Preflight** config, capacity, and approval checks
+3. **Fetch** eligible issues (labels / states)
+4. **Dispatch** agent in an isolated workspace
+5. **Receipt** usage comment on the issue; human reviews the PR
 
-Successful runs land in **`review`**, not `done`. Agents never merge.
+Successful runs land in `review`, not `done`. Agents never merge. Every ticket gets a cost receipt with tokens, model, and dollar amount.
 
----
+The poll loop follows the [Symphony](https://github.com/openai/symphony/blob/main/SPEC.md) specification for agent orchestration.
 
 ## Architecture
 
@@ -148,40 +81,49 @@ Successful runs land in **`review`**, not `done`. Agents never merge.
 Svarm.Orchestrator (GenServer poll loop)
     ├── Svarm.Tracker  → Local (SQLite) | GitHub
     ├── Svarm.Runner   → CLI | pi RPC
-    └── Svarm.Provider → OpenRouter | …
+    └── Svarm.Provider → OpenRouter
              │
         Svarm.Usage.Ledger (append-only cost tracking)
 ```
 
-New tracker, agent, or provider = one adapter module — not a fork of the orchestrator.
+Adapters are the extension point. Adding a new tracker, runner, or provider means one module and some config, not a fork of the orchestrator.
 
----
+## Configuration
 
-## Why self-hosted?
+Docker mounts `./svarm-config/` as a directory. On first boot, missing files are copied from templates. You don't need to mkdir or cp anything first.
 
-- **Data stays yours** — keys and source on your infrastructure  
-- **Air-gapped capable** — local tracker + local models  
-- **No lock-in** — change tracker, agent, or provider via config  
+| File | Role |
+|------|------|
+| `svarm-config/WORKFLOW.md` | Tracker, approvals mode, agent prompt |
+| `svarm-config/agents.toml` | Agent commands, adapters, models |
 
----
+<details>
+<summary>Environment variables</summary>
+
+| Variable | Purpose |
+|----------|---------|
+| `SECRET_KEY_BASE` | Cookie signing, required for Docker/prod (`openssl rand -base64 48`) |
+| `APPROVALS_USER` / `APPROVALS_PASSWORD` | Basic Auth for `/approvals` in Docker/prod |
+| `GITHUB_TOKEN` | PAT for GitHub Issues (`repo` scope) |
+| `OPENROUTER_API_KEY` | LLM access for agents |
+| `SVARM_BASE_URL` | Links in issue comments (e.g. `http://localhost:4000`) |
+| `SVARM_SEED_DEMO=1` | Boot-seed mock tasks when board is empty |
+
+GitHub App identity (bot comments): [docs/github-app.md](docs/github-app.md).
+</details>
+
+## Documentation
+
+- [GETTING-STARTED.md](GETTING-STARTED.md) full setup walkthrough
+- [docs/agents.md](docs/agents.md) agent.toml copy-paste blocks
+- [AGENTS.md](AGENTS.md) for coding agents editing this repo
 
 ## Status
 
-Working OSS path today: **local board + GitHub Issues + pi + OpenRouter**, with approvals and per-ticket cost receipts.
+**Working now:** local board + GitHub Issues + pi/CLI agents + OpenRouter, with approvals and per-ticket cost receipts.
 
-Additional trackers and managed hosting are planned; not required to try the product.
+**Not shipped yet:** Linear/Jira trackers, multi-provider LLM abstraction, managed hosting. Don't read "adapter-ready" as "all adapters exist."
 
----
+## Why self-hosted?
 
-## Contributing
-
-MIT licensed. Issues and PRs welcome. See [AGENTS.md](AGENTS.md) for conventions.
-
----
-
-## Learn more
-
-- [GETTING-STARTED.md](GETTING-STARTED.md) — full setup  
-- [docs/github-app.md](docs/github-app.md) — bot identity  
-- [Symphony SPEC](https://github.com/openai/symphony/blob/main/SPEC.md)  
-- [Phoenix Framework](https://www.phoenixframework.org/)  
+Your source code and API keys never leave your infrastructure. Local tracker and local models mean no cloud dependency. No SaaS middleman sees your code, keys, or token usage.
