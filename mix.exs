@@ -51,6 +51,7 @@ defmodule Svarm.MixProject do
       {:ex_dna, "~> 1.0", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.0", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.0", only: [:dev, :test], runtime: false},
+      {:ex_doc, "~> 0.40", only: :dev, runtime: false},
       {:vibe_kit, "~> 0.1"},
       {:phoenix, "~> 1.8.9"},
       {:phoenix_html, "~> 4.1"},
