@@ -85,7 +85,7 @@ Svärm runs a governance loop on your tickets:
 
 Successful runs land in `review`, not `done`. Agents never merge. Every ticket gets a cost receipt with tokens, model, and dollar amount.
 
-The poll loop is inspired by the [Symphony SPEC](https://github.com/openai/symphony/blob/main/SPEC.md). Symphony compatibility is a trust signal, not the product.
+The poll loop follows the [Symphony](https://github.com/openai/symphony/blob/main/SPEC.md) specification for agent orchestration.
 
 ---
 
