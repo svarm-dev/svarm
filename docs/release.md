@@ -8,10 +8,10 @@ Vault SoT for launch gates: `Projects/Svärm/Ops.md` (Launch checklist). Keep se
 |------|--------|
 | Product repo | `svarm-dev/svarm` |
 | Git remote (push tags/releases) | **`github`** → `https://github.com/svarm-dev/svarm.git` (`origin` is the Forge mirror) |
-| Visibility today | **private** (confirm with `gh repo view svarm-dev/svarm --json visibility`) |
-| `mix.exs` / app version | `0.1.0` |
-| Git tags / GitHub releases | **none yet** |
-| CHANGELOG | `[0.1.0]` = private first cut (2026-07-15); `[Unreleased]` = first-time UX (T1–T13) |
+| Visibility today | **private** until step 4 (confirm with `gh repo view svarm-dev/svarm --json visibility`) |
+| `mix.exs` / app version | `0.1.1` after the release commit |
+| Git tags / GitHub releases | **none until step 3** |
+| CHANGELOG | `[0.1.0]` private first cut; `[0.1.1]` first public try path |
 
 ## Version choice
 
@@ -33,7 +33,7 @@ Do **not** retcon everything into a new `0.1.0` tag unless you rewrite CHANGELOG
 - [ ] **T4** screenshots committed under `docs/screenshots/`:
   - `board-seeded.png`
   - `card-running.png`
-  - `cost-receipt.png` (dogfood receipt preferred)
+  - `dashboard.png` (in-app cost surface; dogfood GitHub cost-receipt still preferred when available)
   - capture notes: [screenshots/README.md](screenshots/README.md)
 
 ---
@@ -119,7 +119,7 @@ gh release create v0.1.1 \
   --notes-file docs/release-notes-v0.1.1.md \
   docs/screenshots/board-seeded.png \
   docs/screenshots/card-running.png \
-  docs/screenshots/cost-receipt.png
+  docs/screenshots/dashboard.png
 ```
 
 Generate notes file from the template below (copy → `docs/release-notes-v0.1.1.md`, fill date; **optional** to commit the notes file — `gh` only needs it locally).

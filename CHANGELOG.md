@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-First public try path (planned tag **v0.1.1**). See [docs/release.md](docs/release.md).
+## [0.1.1] - 2026-07-24
+
+First **public** try path: Docker demo profile, approvals env, journey docs, instance home, `/health`.
 
 ### Added
 
@@ -15,8 +17,8 @@ First public try path (planned tag **v0.1.1**). See [docs/release.md](docs/relea
 - `APPROVALS_USER` / `APPROVALS_PASSWORD` env → `/approvals` Basic Auth in Docker/prod (clear 404 hint when unset)
 - Compose **directory mount** `./svarm-config` + entrypoint copies WORKFLOW/agents templates when missing
 - Instance status on `/` (tracker, workflow path, agents, board emptiness)
-- README journey split: A demo / B GitHub loop / C harden; screenshot slots under `docs/screenshots/`
-- `GET /health` for Docker HEALTHCHECK (force_ssl path excluded)
+- README journey split: A demo / B GitHub loop / C harden; screenshots under `docs/screenshots/`
+- `GET /health` for Docker HEALTHCHECK
 - First-run checklist on empty board; homepage Approvals CTA only when auth is configured
 - `priv/workflow_template.github.md` + louder UNCOMMENT FOR GITHUB block on default template
 - Operator agent copy-paste guide `docs/agents.md`; public-cut runbook `docs/release.md`
@@ -28,6 +30,12 @@ First public try path (planned tag **v0.1.1**). See [docs/release.md](docs/relea
 - Seed demo available whenever `SVARM_DEMO_ROUTES`/`SVARM_SEED_DEMO` or Mix `dev_routes` is on
 - AGENTS.md banner for operators vs coding agents; honesty pass on shipped surface
 - Sample `priv/agents/*.toml` removed in favor of docs/agents.md
+- Compose **app** / **demo** profiles are mutually exclusive (no port 4000 clash)
+
+### Fixed
+
+- Orchestrator poll loop survives tracker `list_eligible` errors (e.g. GitHub rate limit) instead of MatchError crash
+- Path A Docker demo no longer starts the non-demo service on the same host port
 
 ## [0.1.0] - 2026-07-15
 
