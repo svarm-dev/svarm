@@ -29,3 +29,4 @@ Prefer a real dogfood receipt for `cost-receipt.png` when you have one (see vaul
 ## Dimensions
 
 ~1280px wide, light theme preferred for README contrast. Crop chrome if needed; keep Svärm UI readable.
+
