@@ -94,21 +94,19 @@ defmodule Svarm.Runner.PiRPC do
 
       parts ->
         rest = List.last(parts)
-
-        lines =
-          parts
-          |> Enum.drop(-1)
-          |> Enum.reject(&(&1 == ""))
-          |> Enum.flat_map(fn line ->
-            if byte_size(line) > @max_line_bytes do
-              Logger.warning("pi_rpc: dropping oversized JSONL line (#{byte_size(line)} bytes)")
-              []
-            else
-              [line]
-            end
-          end)
-
+        lines = parts |> Enum.drop(-1) |> Enum.flat_map(&keep_jsonl_line/1)
         {rest, lines}
+    end
+  end
+
+  defp keep_jsonl_line(""), do: []
+
+  defp keep_jsonl_line(line) do
+    if byte_size(line) > @max_line_bytes do
+      Logger.warning("pi_rpc: dropping oversized JSONL line (#{byte_size(line)} bytes)")
+      []
+    else
+      [line]
     end
   end
 
@@ -163,8 +161,7 @@ defmodule Svarm.Runner.PiRPC do
             session0,
             "",
             deadline,
-            abort_grace_ms,
-            settle_grace_ms
+            %{abort_grace_ms: abort_grace_ms, settle_grace_ms: settle_grace_ms}
           )
 
         ensure_dead(port)
@@ -201,14 +198,8 @@ defmodule Svarm.Runner.PiRPC do
   defp error_reason(%{reason: reason}) when not is_nil(reason), do: {:pi, reason}
   defp error_reason(_), do: {:pi, :agent_error}
 
-  defp board_error(task_id, reason) do
-    msg =
-      case reason do
-        {:pi, :not_on_path} -> "pi not found on PATH"
-        other -> "failed to start: #{inspect(other)}"
-      end
-
-    Events.broadcast_agent_line(task_id, "\n[pi_rpc: #{msg}]\n")
+  defp board_error(task_id, _reason) do
+    Events.broadcast_agent_line(task_id, "\n[pi_rpc: pi not found on PATH]\n")
   end
 
   # -- port lifecycle --
@@ -224,9 +215,7 @@ defmodule Svarm.Runner.PiRPC do
   defp start_port(nil, _args, _cwd, _env), do: {:error, {:pi, :not_on_path}}
 
   defp start_port(executable, args, cwd, env) do
-    if not File.regular?(executable) do
-      {:error, {:pi, :not_on_path}}
-    else
+    if File.regular?(executable) do
       # Raw binary (not :line) so we own JSONL framing across partial chunks.
       port_opts =
         [:binary, :exit_status, :use_stdio, :stderr_to_stdout, {:args, args}, {:cd, cwd}]
@@ -234,6 +223,8 @@ defmodule Svarm.Runner.PiRPC do
 
       port = Port.open({:spawn_executable, executable}, port_opts)
       {:ok, port}
+    else
+      {:error, {:pi, :not_on_path}}
     end
   end
 
@@ -259,22 +250,19 @@ defmodule Svarm.Runner.PiRPC do
 
   defp kill_tree(os_pid) when is_integer(os_pid) do
     case System.cmd("pgrep", ["-P", Integer.to_string(os_pid)], stderr_to_stdout: true) do
-      {out, 0} ->
-        out
-        |> String.split()
-        |> Enum.each(fn child ->
-          case Integer.parse(child) do
-            {cid, ""} -> kill_tree(cid)
-            _ -> :ok
-          end
-        end)
-
-      _ ->
-        :ok
+      {out, 0} -> Enum.each(String.split(out), &kill_parsed_child/1)
+      _ -> :ok
     end
 
     _ = System.cmd("kill", ["-KILL", Integer.to_string(os_pid)], stderr_to_stdout: true)
     :ok
+  end
+
+  defp kill_parsed_child(child) do
+    case Integer.parse(child) do
+      {cid, ""} -> kill_tree(cid)
+      _ -> :ok
+    end
   end
 
   # -- event loop (wall-clock deadlines) --
@@ -283,40 +271,18 @@ defmodule Svarm.Runner.PiRPC do
     max(0, deadline - System.monotonic_time(:millisecond))
   end
 
-  defp drain_events(
-         port,
-         task_id,
-         log,
-         usage,
-         session,
-         buffer,
-         deadline,
-         abort_grace_ms,
-         settle_grace_ms
-       ) do
+  defp drain_events(port, task_id, log, usage, session, buffer, deadline, grace) do
     receive do
       {^port, {:data, data}} ->
         binary = normalize_data(data)
         {buffer, lines} = take_lines(buffer <> binary)
         {log, usage, session} = process_lines(lines, task_id, log, usage, session)
 
-        cond do
-          session.settled ->
-            settle_deadline = System.monotonic_time(:millisecond) + settle_grace_ms
-            drain_after_settle(port, task_id, log, usage, session, buffer, settle_deadline)
-
-          true ->
-            drain_events(
-              port,
-              task_id,
-              log,
-              usage,
-              session,
-              buffer,
-              deadline,
-              abort_grace_ms,
-              settle_grace_ms
-            )
+        if session.settled do
+          settle_deadline = System.monotonic_time(:millisecond) + grace.settle_grace_ms
+          drain_after_settle(port, task_id, log, usage, session, buffer, settle_deadline)
+        else
+          drain_events(port, task_id, log, usage, session, buffer, deadline, grace)
         end
 
       {^port, {:exit_status, status}} ->
@@ -327,7 +293,7 @@ defmodule Svarm.Runner.PiRPC do
         Events.broadcast_agent_line(task_id, "\n[pi_rpc: timeout, aborting]\n")
 
         session = %{session | error: true, reason: session.reason || :timeout}
-        abort_deadline = System.monotonic_time(:millisecond) + abort_grace_ms
+        abort_deadline = System.monotonic_time(:millisecond) + grace.abort_grace_ms
 
         {log, usage, session, _buffer} =
           wait_abort(port, task_id, log, usage, session, buffer, abort_deadline)

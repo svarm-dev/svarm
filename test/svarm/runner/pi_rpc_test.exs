@@ -217,18 +217,15 @@ defmodule Svarm.Runner.PiRPCTest do
 
   defp list_fake_pids do
     case System.cmd("pgrep", ["-f", "fake_pi_rpc.sh"], stderr_to_stdout: true) do
-      {out, 0} ->
-        out
-        |> String.split()
-        |> Enum.flat_map(fn s ->
-          case Integer.parse(s) do
-            {n, ""} -> [n]
-            _ -> []
-          end
-        end)
+      {out, 0} -> out |> String.split() |> Enum.flat_map(&parse_pid/1)
+      _ -> []
+    end
+  end
 
-      _ ->
-        []
+  defp parse_pid(s) do
+    case Integer.parse(s) do
+      {n, ""} -> [n]
+      _ -> []
     end
   end
 
