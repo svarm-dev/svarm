@@ -1,32 +1,19 @@
 # Screenshots for README
 
-The README expects three stills (PNG). Capture them after path **A** (demo) works, then optionally replace with dogfood from a real GitHub run.
+Captured from a running local board (Playwright, light theme).
 
-## Required files
-
-| File | Capture |
+| File | Content |
 |------|---------|
-| `board-seeded.png` | `/board` after Seed demo or `SVARM_SEED_DEMO=1` — columns with 3 demo tasks |
-| `card-running.png` | Selected card with live log while a demo (or real) agent is running |
-| `cost-receipt.png` | GitHub issue comment with cost receipt (path **B**), or board cost chip + log if no GH yet |
+| `board-seeded.png` | `/board` with tasks and estimated per-ticket cost |
+| `card-running.png` | Selected card + run panel cost breakdown |
+| `cost-receipt.png` | `/dashboard` cost strip + recent runs (UI cost surface) |
+| `dashboard.png` | Agent roster, task distribution, recent runs |
 
-Optional: `demo.gif` (~20s) of seed → running → review.
+Prefer a real GitHub bot cost comment for `cost-receipt.png` when dogfooding (path B). Until then the dashboard shot documents in-app cost.
 
-## How to capture (local)
+## Recapture
 
 ```bash
-# Demo board
-docker compose --profile demo up --build
-# open http://localhost:4000/board — wait for motion, screenshot
-
-# Or Mix
-mix setup && mix phx.server
-# POST Seed demo from the board button
+mix phx.server   # or docker compose --profile demo up
+# then agent + Playwright MCP, or open browser at 1440×900 light theme
 ```
-
-Prefer a real dogfood receipt for `cost-receipt.png` when you have one (see vault Dogfooding). Until files exist, GitHub will show broken images — that’s intentional so the gap is obvious.
-
-## Dimensions
-
-~1280px wide, light theme preferred for README contrast. Crop chrome if needed; keep Svärm UI readable.
-

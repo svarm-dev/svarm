@@ -49,3 +49,6 @@ npm-debug.log
 .agents/
 .pi/
 .impeccable/
+
+# Playwright MCP local captures
+.playwright-mcp/

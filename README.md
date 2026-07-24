@@ -56,6 +56,22 @@ mix phx.server
 
 Demo agents run without API keys. They simulate work so you can see the board in action. Click **Seed demo** on `/board` to re-seed after clearing.
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/board-seeded.png" alt="Svärm board with tasks and per-ticket cost" width="900" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/card-running.png" alt="Selected task with cost breakdown" width="900" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/dashboard.png" alt="Dashboard with agent roster and cost" width="900" />
+</p>
+
+More captures under [`docs/screenshots/`](docs/screenshots/).
+
 > [!TIP]
 > Ready for real agents? [GETTING-STARTED.md](GETTING-STARTED.md) walks through GitHub + OpenRouter + pi in about 15 minutes.
 
