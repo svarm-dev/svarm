@@ -161,6 +161,63 @@ defmodule Svarm.Board do
     |> Map.new(fn {status, list} -> {status, length(list)} end)
   end
 
+  @doc """
+  Why this task is waiting — human gates first, then agent activity.
+
+  Returns `:approval | :review | :running | :failed | nil`.
+  """
+  def wait_reason(%{status: "pending_approval"}), do: :approval
+  def wait_reason(%{status: "review"}), do: :review
+  def wait_reason(%{status: "in_progress"}), do: :running
+  def wait_reason(%{status: "failed"}), do: :failed
+  def wait_reason(_), do: nil
+
+  @doc "Short UI label for `wait_reason/1`."
+  def wait_reason_label(:approval), do: "Needs approval"
+  def wait_reason_label(:review), do: "Needs review"
+  def wait_reason_label(:running), do: "Running"
+  def wait_reason_label(:failed), do: "Failed"
+  def wait_reason_label(_), do: nil
+
+  @doc """
+  Counts of tickets blocked on humans.
+
+  Returns `%{pending_approval: n, review: n, total: n}`.
+  """
+  def human_wait_summary(tasks) when is_list(tasks) do
+    pending = Enum.count(tasks, &(&1.status == "pending_approval"))
+    review = Enum.count(tasks, &(&1.status == "review"))
+    %{pending_approval: pending, review: review, total: pending + review}
+  end
+
+  @doc "PR URL from run meta or task map when known (no inventing)."
+  def pr_url(task, meta \\ %{}) do
+    [
+      meta_get(meta, :pr_url),
+      map_get(task, :pr_url),
+      map_get(task, :pull_request_url)
+    ]
+    |> Enum.find(&(is_binary(&1) and &1 != ""))
+  end
+
+  @doc "Reviewer login/name from task when tracker exposes it."
+  def reviewer(task) do
+    [map_get(task, :reviewer), map_get(task, :reviewer_login)]
+    |> Enum.find(&(is_binary(&1) and &1 != ""))
+  end
+
+  defp meta_get(meta, key) when is_map(meta) do
+    Map.get(meta, key) || Map.get(meta, Atom.to_string(key))
+  end
+
+  defp meta_get(_, _), do: nil
+
+  defp map_get(map, key) when is_map(map) do
+    Map.get(map, key) || Map.get(map, Atom.to_string(key))
+  end
+
+  defp map_get(_, _), do: nil
+
   def refresh_snapshot do
     tasks = list_tasks()
     Svarm.Events.broadcast_tasks_snapshot(tasks)

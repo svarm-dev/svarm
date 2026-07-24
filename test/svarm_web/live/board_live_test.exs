@@ -77,6 +77,92 @@ defmodule SvarmWeb.BoardLiveTest do
     assert updated.status == "todo"
   end
 
+  test "pending approval and review cards show wait chips", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    KanbanBridge.create_task(%{
+      title: "Gate chip",
+      status: Approval.pending_status(),
+      assignee: "demo"
+    })
+
+    KanbanBridge.create_task(%{
+      title: "Review chip",
+      status: "review",
+      assignee: "demo"
+    })
+
+    {:ok, _view, html} = live(conn, ~p"/board")
+
+    assert html =~ "Needs approval"
+    assert html =~ "Needs review"
+    assert html =~ "Gate chip"
+    assert html =~ "Review chip"
+  end
+
+  test "review run panel shows awaiting human callout and PR link", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Review me",
+        status: "review",
+        assignee: "demo"
+        # pr_url is not a schema field; BoardLive reads task maps + run meta
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/board")
+
+    render_click(view, "select_task", %{"id" => task.id})
+    html = render(view)
+
+    assert html =~ "Awaiting human review"
+    assert html =~ "Review on tracker/GitHub"
+    refute html =~ "Open PR"
+  end
+
+  test "review run panel links Open PR when meta has pr_url", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "PR ready",
+        status: "review",
+        assignee: "demo"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/board")
+
+    # Inject run meta with pr_url via PubSub (same path as run_started)
+    Phoenix.PubSub.broadcast(
+      Svarm.PubSub,
+      Events.topic(),
+      {:run_started, task.id,
+       %{
+         assignee: "demo",
+         display_name: "Demo",
+         attempt: 1,
+         pr_url: "https://github.com/example/repo/pull/9"
+       }}
+    )
+
+    :sys.get_state(view.pid)
+    render_click(view, "select_task", %{"id" => task.id})
+    html = render(view)
+
+    assert html =~ "Awaiting human review"
+    assert html =~ "Open PR"
+    assert html =~ "https://github.com/example/repo/pull/9"
+  end
+
+  test "review column empty hint names human review", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+    KanbanBridge.create_task(%{title: "Only todo", status: "todo", assignee: "demo"})
+
+    {:ok, _view, html} = live(conn, ~p"/board")
+    assert html =~ "No work waiting for human review"
+  end
+
   test "handles agent_line PubSub without crashing", %{conn: conn} do
     task =
       KanbanBridge.create_task(%{
@@ -100,6 +186,8 @@ defmodule SvarmWeb.BoardLiveTest do
     task = KanbanBridge.create_task(%{title: "Auto", status: "in_progress", assignee: "demo"})
 
     {:ok, view, _html} = live(conn, ~p"/board")
+    # Suite noise may auto-select via concurrent run_started; start from idle.
+    render_click(view, "clear_selection", %{})
 
     # Before broadcast: idle run panel
     assert render(view) =~ "Select a card"
