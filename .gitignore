@@ -52,3 +52,6 @@ npm-debug.log
 
 # Playwright MCP local captures
 .playwright-mcp/
+
+# pi-subagents local run artifacts
+.pi-subagents/

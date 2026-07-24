@@ -1,6 +1,6 @@
 # Svärm Docker Compose
 #
-# A) Demo (no API keys):
+# A) Demo (no API keys; .env optional):
 #    docker compose --profile demo up --build
 #    SECRET_KEY_BASE is auto-generated if unset; set .env to keep it across restarts
 #    -> http://localhost:4000/board  (seeded automatically)
@@ -20,7 +20,8 @@ services:
     ports:
       - "${SVARM_PORT:-4000}:4000"
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       - SVARM_DB_PATH=/app/data/kanban.db
       - SVARM_CONFIG_DIR=/app/config
@@ -40,7 +41,8 @@ services:
     ports:
       - "${SVARM_PORT:-4000}:4000"
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       - SVARM_DB_PATH=/app/data/kanban.db
       - SVARM_CONFIG_DIR=/app/config

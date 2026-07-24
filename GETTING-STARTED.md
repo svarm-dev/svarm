@@ -4,7 +4,7 @@ Three journeys. Pick one; do not interleave.
 
 | Path | Time | Needs |
 |------|------|--------|
-| **A** · feel the board | ~1 min | Docker or Elixir (demo auto-seeds; no API keys) |
+| **A** · feel the board | ~1 min | Docker (`--profile demo` auto-seeds) or Elixir + Seed demo; no API keys |
 | **B** · real GitHub loop | ~15 min | PAT, OpenRouter, pi (Docker installs pi) |
 | **C** · team hardening | after B | App auth, real approvals password, budgets |
 
@@ -19,7 +19,7 @@ docker compose --profile demo up --build
 # → http://localhost:4000/board  (auto-seeded demo tasks)
 ```
 
-`SECRET_KEY_BASE` is generated on first Docker boot if unset. Put one in `.env` if you want it stable across restarts.
+`.env` is optional for Path A. Entrypoint generates `SECRET_KEY_BASE` if unset; put one in `.env` if you want it stable across restarts.
 
 
 - Mock agents (`demo_*`) run without OpenRouter or GitHub.
@@ -143,7 +143,7 @@ Svärm tracks GitHub work with **labels**. Your eligibility label (e.g. `ai-task
 
 | Symptom | Check |
 |---------|-------|
-| Container exits immediately | `.env` has `SECRET_KEY_BASE` |
+| Container exits immediately | Check `docker compose logs`. `SECRET_KEY_BASE` is generated if unset; set it in `.env` only for stable sessions |
 | Config is a directory named `WORKFLOW.md` | Old file mounts. Use directory mount `./svarm-config:/app/config` (current compose) and delete the bogus dirs |
 | `/approvals` 404 text about APPROVALS_* | Set `APPROVALS_USER` and `APPROVALS_PASSWORD` in `.env` |
 | `/approvals` 401 | Wrong Basic Auth credentials |

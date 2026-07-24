@@ -6,6 +6,7 @@ defmodule SvarmWeb.PageControllerTest do
     body = html_response(conn, 200)
     assert body =~ "Governed agents on your tickets"
     assert body =~ "Open board"
+    assert body =~ "agents do not merge"
     assert body =~ "This instance"
     assert body =~ "Tracker"
     assert body =~ "Agents"

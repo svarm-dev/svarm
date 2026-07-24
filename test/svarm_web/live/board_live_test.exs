@@ -8,8 +8,9 @@ defmodule SvarmWeb.BoardLiveTest do
 
     {:ok, _view, html} = live(conn, ~p"/board")
 
-    assert html =~ "All quiet"
+    assert html =~ "All quiet. No tickets yet."
     assert html =~ "per-ticket cost"
+    assert html =~ "Approvals and review are the human steps"
     assert html =~ "First-run checklist"
     assert html =~ "Workflow loaded"
     refute html =~ "Needs approval"
@@ -21,10 +22,11 @@ defmodule SvarmWeb.BoardLiveTest do
 
     {:ok, view, html} = live(conn, ~p"/board")
 
-    assert html =~ "Board"
+    assert html =~ "Agent work"
     assert html =~ "LV test card"
     assert html =~ "Todo"
-    refute html =~ "All quiet — no tickets yet"
+    refute html =~ "All quiet"
+    refute html =~ "First-run checklist"
     assert has_element?(view, "button", "Refresh")
   end
 
