@@ -36,6 +36,7 @@ First **public** try path: Docker demo profile, approvals env, journey docs, ins
 
 - Orchestrator poll loop survives tracker `list_eligible` errors (e.g. GitHub rate limit) instead of MatchError crash
 - Path A Docker demo no longer starts the non-demo service on the same host port
+- **pi RPC** runner: wall-clock timeout, process-tree cleanup on abort, oversized JSONL line protection, clearer fail-fast when `pi` is missing; operator notes in GETTING-STARTED / `docs/agents.md`
 
 ## [0.1.0] - 2026-07-15
 
