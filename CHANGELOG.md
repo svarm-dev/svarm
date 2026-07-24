@@ -21,7 +21,7 @@ First **public** try path: Docker demo profile, approvals env, journey docs, ins
 - `GET /health` for Docker HEALTHCHECK
 - First-run checklist on empty board; homepage Approvals CTA only when auth is configured
 - `priv/workflow_template.github.md` + louder UNCOMMENT FOR GITHUB block on default template
-- Operator agent copy-paste guide `docs/agents.md`; public-cut runbook `docs/release.md`
+- Operator agent copy-paste guide `docs/agents.md`
 
 ### Changed
 
