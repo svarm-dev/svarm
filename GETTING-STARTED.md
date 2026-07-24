@@ -89,7 +89,7 @@ On your test repo, open an issue with label **`ai-task`**, for example:
 ### 4. Start Svärm
 
 ```bash
-docker compose up --build
+docker compose --profile app up --build
 # → http://localhost:4000/board
 # → http://localhost:4000/  shows tracker + agent count for this install
 ```

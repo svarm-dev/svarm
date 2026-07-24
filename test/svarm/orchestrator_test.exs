@@ -28,6 +28,32 @@ defmodule Svarm.OrchestratorTest do
     end
   end
 
+  describe "list_eligible failures" do
+    defmodule FailingTracker do
+      def list_eligible(_config),
+        do: {:error, %{type: :rate_limit, message: "rate limited", retry_after: 60}}
+
+      def get_issue(_config, _id), do: {:error, :not_found}
+    end
+
+    test "tick survives tracker list_eligible errors" do
+      original = :sys.get_state(Orchestrator)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{state | tracker: FailingTracker}
+      end)
+
+      try do
+        send(Orchestrator, :tick)
+        Process.sleep(80)
+        assert Process.whereis(Orchestrator)
+        assert is_map(Orchestrator.status())
+      after
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+  end
+
   describe "dispatch and approval" do
     test "does not spawn worker for tasks already pending_approval" do
       task =

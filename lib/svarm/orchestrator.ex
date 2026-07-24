@@ -393,11 +393,16 @@ defmodule Svarm.Orchestrator do
   end
 
   defp dispatch(state) do
-    {:ok, candidates} = state.tracker.list_eligible(state.tracker_config)
+    case state.tracker.list_eligible(state.tracker_config) do
+      {:ok, candidates} ->
+        Enum.reduce_while(candidates, state, fn task, acc ->
+          if slots_full?(acc), do: {:halt, acc}, else: process_candidate(acc, task)
+        end)
 
-    Enum.reduce_while(candidates, state, fn task, acc ->
-      if slots_full?(acc), do: {:halt, acc}, else: process_candidate(acc, task)
-    end)
+      {:error, reason} ->
+        Logger.warning("list_eligible failed: #{inspect(reason)}")
+        state
+    end
   end
 
   defp slots_full?(%{running: running, max_concurrent: mc}), do: map_size(running) >= mc

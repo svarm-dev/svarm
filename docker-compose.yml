@@ -7,15 +7,17 @@
 #
 # B) Real loop (GitHub + pi + OpenRouter):
 #    cp .env.example .env  ->  SECRET_KEY_BASE + GITHUB_TOKEN + OPENROUTER_API_KEY
-#    docker compose up --build
+#    docker compose --profile app up --build
 #    Edit svarm-config/WORKFLOW.md (created on first boot): kind: github, owner, repo
 #    -> http://localhost:4000/board ; approve once at /approvals
 #
 # Config dir is mounted as a directory (not individual files) so missing host
 # files never become Docker-created directories named WORKFLOW.md.
+# Profiles are mutually exclusive so demo and app never fight over port 4000.
 
 services:
   svarm:
+    profiles: ["app"]
     build: .
     ports:
       - "${SVARM_PORT:-4000}:4000"

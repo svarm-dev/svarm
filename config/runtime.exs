@@ -81,7 +81,6 @@ if config_env() == :prod do
 
   config :svarm, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
-
   config :svarm, SvarmWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
     check_origin: false,
