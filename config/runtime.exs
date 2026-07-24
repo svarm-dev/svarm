@@ -81,7 +81,6 @@ if config_env() == :prod do
 
   config :svarm, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
-  force_ssl_enabled? = System.get_env("FORCE_SSL", "true") == "true"
 
   config :svarm, SvarmWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
