@@ -155,13 +155,22 @@ For large outputs, use `ctx_execute` / `ctx_execute_file` instead of `bash`. For
 
 4. **Small edits → host `read` / `edit`**. **Final verification → shell**: `mix precommit`.
 
-### Skills
+### Skills and agent context
 
-Load skills on-demand by reading their `SKILL.md` when the task matches. Do not preload them all.
+Split of responsibilities (see [agents.md](https://agents.md) and [Agent Skills](https://agentskills.io/home)):
 
-**From pi-elixir (general):**
-- **`elixir`** — default for `.ex`/`.exs`, Mix, OTP, backend bugs.
-- **`elixir-web`** — LiveView, HEEx, assets, Tailwind, UI verification. Use when UI is the primary task.
+- **`AGENTS.md` (this file)** — always-on project memory: architecture, commands, boundaries, security, testing rules. Closest AGENTS.md wins; chat overrides all.
+- **Skills** — on-demand playbooks for specialized work (progressive disclosure: name/description always, full `SKILL.md` only when activated). Prefer reusable domain skills over repo-specific clones of the same material.
+
+Do **not** put Svärm architecture rules only in skills. If every edit should know it, it belongs here.
+
+**Tooling skills (global packages):**
+- **`elixir` / `elixir-web`** (pi-elixir) — BEAM runtime tools and default Elixir routing.
+- **`phx-*` / `ecto-*` / `lv-*` / domain refs** — from project package `claude-elixir-phoenix` (Iron Laws, review/investigate workflows). Invoke with `/skill:phx-review`, `/skill:phx-investigate`, etc.
+- **`impeccable`** — UI craft when the task is frontend.
+- **`ponytail`** — minimal diffs / YAGNI.
+
+Svärm product law always overrides generic Phoenix advice when they conflict (SQLite-only, KanbanBridge-only DB access, AgentRunner-only shell-out, no Postgres).
 
 ## Elixir conventions
 
@@ -193,6 +202,13 @@ mix test --only <tag>
 - **Add tests for new behaviour, not implementation details.** Test the GenServer API, not internal helper functions.
 - Use `SvarmWeb.ConnCase` for controller tests, `SvarmWeb.LiveCase` for LiveView tests.
 - The demo agent (`demo_*` assignees in `priv/agents.toml`) runs a shell script that simulates agent output — no API keys needed in tests.
+
+## Usage / governance
+
+- **Usage ledger is append-only** — never update or delete ledger rows; correct with new records.
+- **Store tokens + model_id; compute cost at query time** from rate tables (not a frozen dollar column as source of truth).
+- **Budget checks belong in preflight/dispatch**, not only on dashboards after spend.
+- **Flag estimates** — never present estimated costs as exact.
 
 ## Security
 
