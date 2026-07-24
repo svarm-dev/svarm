@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: mix ci
+    runs-on: ubuntu-latest
+    env:
+      MIX_ENV: test
+      # Phoenix / LiveView tests; value is not secret in CI
+      SECRET_KEY_BASE: "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.20.2"
+          otp-version: "29"
+
+      - name: Cache deps and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-
+
+      - name: Cache Dialyzer PLT
+        uses: actions/cache@v4
+        with:
+          path: _build/test/*_plt*
+          key: ${{ runner.os }}-plt-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-plt-
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Run mix ci
+        run: mix ci

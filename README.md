@@ -8,6 +8,7 @@
 
 Self-hosted, open source (MIT), built in Elixir.
 
+[![CI](https://github.com/svarm-dev/svarm/actions/workflows/ci.yml/badge.svg)](https://github.com/svarm-dev/svarm/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Elixir](https://img.shields.io/badge/Elixir-1.20+-6e4a7e?logo=elixir&logoColor=white)](https://elixir-lang.org)
 [![OTP](https://img.shields.io/badge/OTP-29-blue)](https://www.erlang.org)

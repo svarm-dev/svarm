@@ -4,7 +4,7 @@ Thanks for your interest in contributing. This document covers how to report bug
 
 ## Reporting bugs
 
-Open a [GitHub Issue](https://github.com/svarm-dev/svarm/issues/new?template=bug_report.md) with:
+Open a [GitHub Issue](https://github.com/svarm-dev/svarm/issues/new) with:
 
 - What you expected to happen
 - What actually happened
@@ -15,7 +15,7 @@ If the bug involves agent dispatch or cost tracking, include the output of `mix 
 
 ## Suggesting features
 
-Open a [GitHub Issue](https://github.com/svarm-dev/svarm/issues/new?template=feature_request.md) with the `enhancement` label. Describe:
+Open a [GitHub Issue](https://github.com/svarm-dev/svarm/issues/new) (label `enhancement` if you can). Describe:
 
 - The problem you're trying to solve
 - Your proposed solution (if you have one)
@@ -34,8 +34,10 @@ mix precommit    # compile, unused deps, format, full test suite
 For larger changes:
 
 ```bash
-mix ci           # precommit + credo --strict + dialyzer + ex_dna + reach
+mix ci           # compile, format check, test, credo, dialyzer, ex_dna, reach
 ```
+
+GitHub Actions runs the same `mix ci` on pushes to `main` and on pull requests.
 
 4. Submit the PR with a clear description of what changed and why
 
