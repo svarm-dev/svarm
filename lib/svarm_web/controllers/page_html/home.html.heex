@@ -100,12 +100,14 @@
     <div class="relative">
       <p class="text-sm opacity-70">Svärm</p>
       <h1 class="mt-2 text-3xl font-semibold tracking-tight text-balance">
-        Your AI teammates, governed
+        Governed agents on your tickets
       </h1>
       <p class="mt-4 text-base opacity-80 leading-relaxed">
-        Self-hosted control plane for a blended engineering team — dispatch coding agents
-        to tickets, gate with approvals, and keep auditable cost on the work.
+        Self-hosted control plane for coding agents. Dispatch work from your tracker,
+        gate it with approvals, stream the run on a board, and keep cost on the ticket.
+        Humans approve and review; agents do not merge.
       </p>
+
 
       <section
         class="mt-8 rounded-lg border border-base-300 bg-base-200/60 px-4 py-4 text-sm"
@@ -116,8 +118,8 @@
           <dt class="opacity-60">Tracker</dt>
           <dd class="font-mono text-xs">{@instance.tracker_label}</dd>
           <dt class="opacity-60">Workflow</dt>
-          <dd class="font-mono text-xs truncate" title={@instance.workflow_path || "—"}>
-            {@instance.workflow_path || "—"}
+          <dd class="font-mono text-xs truncate" title={@instance.workflow_path || "-"}>
+            {@instance.workflow_path || "-"}
           </dd>
           <dt class="opacity-60">Agents</dt>
           <dd>{@instance.agent_count} registered</dd>
@@ -135,7 +137,7 @@
 
         <%= if @instance.empty? do %>
           <p class="mt-3 text-xs opacity-70">
-            Board is empty —
+            Board is empty.
             <%= if @instance.demo_routes do %>
               seed a zero-key demo, or connect a tracker.
             <% else %>
@@ -161,7 +163,7 @@
       </section>
 
       <div class="mt-8 flex flex-wrap gap-3">
-        <a href={~p"/board"} class="btn btn-primary">Open team board</a>
+        <a href={~p"/board"} class="btn btn-primary">Open board</a>
         <%= if @instance.approvals_auth? or @instance.approval_mode == "off" do %>
           <a href={~p"/approvals"} class="btn btn-outline">Approvals</a>
         <% end %>

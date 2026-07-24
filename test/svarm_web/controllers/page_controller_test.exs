@@ -4,8 +4,8 @@ defmodule SvarmWeb.PageControllerTest do
   test "GET / shows marketing and this-instance status", %{conn: conn} do
     conn = get(conn, ~p"/")
     body = html_response(conn, 200)
-    assert body =~ "Your AI teammates, governed"
-    assert body =~ "Open team board"
+    assert body =~ "Governed agents on your tickets"
+    assert body =~ "Open board"
     assert body =~ "This instance"
     assert body =~ "Tracker"
     assert body =~ "Agents"

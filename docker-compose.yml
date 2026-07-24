@@ -1,15 +1,15 @@
-# Svärm — Docker Compose
+# Svärm Docker Compose
 #
-# A) 60-second demo (no API keys):
-#    cp .env.example .env  →  set SECRET_KEY_BASE (openssl rand -base64 48)
+# A) Demo (no API keys):
 #    docker compose --profile demo up --build
-#    → http://localhost:4000/board  (seeded automatically)
+#    SECRET_KEY_BASE is auto-generated if unset; set .env to keep it across restarts
+#    -> http://localhost:4000/board  (seeded automatically)
 #
 # B) Real loop (GitHub + pi + OpenRouter):
-#    cp .env.example .env  →  SECRET_KEY_BASE + GITHUB_TOKEN + OPENROUTER_API_KEY
+#    cp .env.example .env  ->  SECRET_KEY_BASE + GITHUB_TOKEN + OPENROUTER_API_KEY
 #    docker compose up --build
 #    Edit svarm-config/WORKFLOW.md (created on first boot): kind: github, owner, repo
-#    → http://localhost:4000/board · approve once at /approvals
+#    -> http://localhost:4000/board ; approve once at /approvals
 #
 # Config dir is mounted as a directory (not individual files) so missing host
 # files never become Docker-created directories named WORKFLOW.md.

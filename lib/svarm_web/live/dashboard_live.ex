@@ -67,7 +67,7 @@ defmodule SvarmWeb.DashboardLive do
         <div class="flex items-center justify-between">
           <div>
             <h1 class="text-2xl font-semibold tracking-tight">Dashboard</h1>
-            <p class="text-sm opacity-70">Your blended team at a glance</p>
+            <p class="text-sm opacity-70">Agents, cost, and work in flight</p>
           </div>
           <div class="flex gap-2 items-center">
             <button type="button" phx-click="refresh" class="btn btn-sm btn-ghost">

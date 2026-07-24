@@ -4,7 +4,7 @@
   <img src="priv/static/images/swarm-hero.svg" alt="Svärm" width="280" />
 </p>
 
-**The platform where engineering teams manage their human and AI members together, with auditable cost on every ticket.**
+**Governed coding agents on your tickets: identity, live board, approvals, and cost on every run.**
 
 Self-hosted, open source (MIT), built in Elixir.
 
@@ -14,13 +14,13 @@ Self-hosted, open source (MIT), built in Elixir.
 
 ## Why Svärm?
 
-Your developers are already using AI coding agents: pi, Claude Code, Cursor, Copilot. They're writing code, submitting PRs, fixing bugs. But you can't see them, govern them, or prove they're worth it.
+Your team already uses AI coding agents (pi, Claude Code, Cursor, Copilot). They open PRs and touch real code. Most of that work is hard to see, hard to approve, and hard to cost.
 
-GitHub Issues feed into Svärm, which dispatches work to an agent (pi, Claude Code, etc.) using your LLM provider. The agent works in an isolated workspace and submits a PR with a cost receipt.
+Svärm pulls work from GitHub Issues (or a local board), runs an agent in an isolated workspace, and leaves a PR plus a cost receipt for a human to review.
 
-- **Watch agents work.** Tasks show up as cards on a board, with live logs and per-ticket cost.
-- **Governance before dispatch.** Which agent, which model, which budget, approved by whom.
-- **Auditable cost.** Every ticket gets a cost receipt with tokens, model, and dollar amount.
+- **Watch agents work.** Cards on a board with live logs and per-ticket cost.
+- **Gate before dispatch.** Which agent, which model, approved by whom.
+- **Cost on the ticket.** Tokens, model, and dollar amount on the run.
 
 ## Quick start
 
@@ -49,7 +49,7 @@ mix phx.server
 
 | Route | What it shows |
 |-------|---------------|
-| [`/board`](http://localhost:4000/board) | Team board with demo tasks already moving |
+| [`/board`](http://localhost:4000/board) | Agent board with demo tasks already moving |
 | [`/dashboard`](http://localhost:4000/dashboard) | Operational overview: agent roster, cost, task distribution |
 | [`/`](http://localhost:4000/) | Instance overview (tracker, agents, workflow) |
 | [`/approvals`](http://localhost:4000/approvals) | First-run gates (Basic Auth: `svarm` / `svarm` in demo) |
@@ -61,7 +61,7 @@ Demo agents run without API keys. They simulate work so you can see the board in
 
 ## How it works
 
-Svärm runs a governance loop on your tickets:
+Svärm polls your tracker and runs a short loop:
 
 1. **Reconcile** sync running work with the tracker
 2. **Preflight** config, capacity, and approval checks
@@ -69,9 +69,9 @@ Svärm runs a governance loop on your tickets:
 4. **Dispatch** agent in an isolated workspace
 5. **Receipt** usage comment on the issue; human reviews the PR
 
-Successful runs land in `review`, not `done`. Agents never merge. Every ticket gets a cost receipt with tokens, model, and dollar amount.
+Successful runs land in `review`, not `done`. Agents never merge. Each finished run can post a cost receipt (tokens, model, dollars) on the issue.
 
-The poll loop follows the [Symphony](https://github.com/openai/symphony/blob/main/SPEC.md) specification for agent orchestration.
+The poll loop follows the [Symphony](https://github.com/openai/symphony/blob/main/SPEC.md) agent-orchestration shape (reconcile, workspace isolation, WORKFLOW.md).
 
 ## Architecture
 
@@ -84,7 +84,7 @@ Svarm.Orchestrator (GenServer poll loop)
         Svarm.Usage.Ledger (append-only cost tracking)
 ```
 
-Adapters are the extension point. Adding a new tracker, runner, or provider means one module and some config, not a fork of the orchestrator.
+Adapters are the extension point. A new tracker, runner, or provider is one module plus config, not a fork of the orchestrator. Shipped adapters are listed under Status.
 
 ## Configuration
 
@@ -118,10 +118,10 @@ GitHub App identity (bot comments): [docs/github-app.md](docs/github-app.md).
 
 ## Status
 
-**Working now:** local board + GitHub Issues + pi/CLI agents + OpenRouter, with approvals and per-ticket cost receipts.
+**Working now:** local board + GitHub Issues + pi/CLI agents + OpenRouter, with approvals and per-ticket cost receipts. Humans show up as approvers and PR reviewers, not as a separate people roster.
 
-**Not shipped yet:** Linear/Jira trackers, multi-provider LLM abstraction, managed hosting. Don't read "adapter-ready" as "all adapters exist."
+**Not shipped yet:** Linear/Jira trackers, multi-provider UI, managed hosting, in-app setup wizard. "Adapter-ready" means the behaviours exist; it does not mean every adapter is built.
 
 ## Why self-hosted?
 
-Your source code and API keys never leave your infrastructure. Local tracker and local models mean no cloud dependency. No SaaS middleman sees your code, keys, or token usage.
+Source code and API keys stay on your machines. You can run a local tracker and keep LLM traffic on whatever provider you configure. There is no Svärm cloud in the middle of that path.

@@ -1,5 +1,5 @@
 defmodule SvarmWeb.BoardLive do
-  @moduledoc "Real-time blended team board and agent run log."
+  @moduledoc "Real-time agent board and run log (tickets, costs, human review states)."
   use SvarmWeb, :live_view
 
   alias Svarm.{AgentRegistry, AgentRunner, Approval, Board, Events, Usage}
@@ -205,8 +205,8 @@ defmodule SvarmWeb.BoardLive do
       >
         <div class="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h1 class="text-2xl font-semibold tracking-tight">Team Board</h1>
-            <p class="text-sm opacity-70">Your AI teammates, governed</p>
+            <h1 class="text-2xl font-semibold tracking-tight">Board</h1>
+            <p class="text-sm opacity-70">Agent work · human review</p>
           </div>
           <div class="flex gap-2 items-center text-sm">
             <button type="button" phx-click="refresh" class="btn btn-sm btn-ghost">
@@ -498,7 +498,7 @@ defmodule SvarmWeb.BoardLive do
     assigns =
       assign(assigns,
         workflow_ok?: Map.get(c, :workflow_loaded?, false),
-        workflow_path: Map.get(c, :workflow_path) || "—",
+        workflow_path: Map.get(c, :workflow_path) || "-",
         tracker_label: Map.get(c, :tracker_label) || "local",
         agent_count: Map.get(c, :agent_count) || 0,
         approval_mode: Map.get(c, :approval_mode) || "untrusted",
@@ -511,11 +511,11 @@ defmodule SvarmWeb.BoardLive do
       aria-labelledby="board-empty-title"
     >
       <h2 id="board-empty-title" class="text-lg font-semibold tracking-tight">
-        All quiet — no tickets yet
+        All quiet. No tickets yet.
       </h2>
       <p class="mt-2 max-w-2xl text-sm opacity-80">
-        This board is the live view of your blended team. Tickets move through columns as agents
-        claim work; select a card for streamed output and per-ticket cost.
+        Live view of agent work on tickets. Cards move as agents claim work; open a card
+        for streamed output and per-ticket cost. Approvals and review are the human steps.
       </p>
 
       <ul class="mt-5 max-w-2xl space-y-2 text-sm" aria-label="First-run checklist">
@@ -581,7 +581,7 @@ defmodule SvarmWeb.BoardLive do
           <span class="text-xs opacity-60">No API keys · mock agents · ~1 minute to aha</span>
         <% else %>
           <p class="text-sm opacity-70">
-            Point WORKFLOW.md at your tracker and open eligible issues — or run
+            Point WORKFLOW.md at your tracker and open eligible issues, or run
             Docker with <code class="rounded bg-base-300 px-1 font-mono text-xs">--profile demo</code>
             for a zero-key board.
           </p>
@@ -611,7 +611,7 @@ defmodule SvarmWeb.BoardLive do
 
       <%= if @idle? do %>
         <p class="text-sm opacity-60 rounded-lg border border-base-300 bg-base-200/60 px-3 py-2">
-          Orchestrator idle — nothing running
+          Orchestrator idle. Nothing running.
           <%= if last_poll_label(@orchestrator, @now_mono) do %>
             · last poll {last_poll_label(@orchestrator, @now_mono)}
           <% end %>
@@ -805,7 +805,7 @@ defmodule SvarmWeb.BoardLive do
           </div>
 
           <p class="text-sm">
-            <span class="font-mono text-xs opacity-70">{@task.id}</span> — {@task.title}
+            <span class="font-mono text-xs opacity-70">{@task.id}</span>: {@task.title}
           </p>
 
           <%= if map_size(@meta) > 0 do %>
@@ -1005,13 +1005,13 @@ defmodule SvarmWeb.BoardLive do
     "#{identity.display_name}#{role} started · attempt #{attempt}"
   end
 
-  defp column_empty_hint("todo"), do: "Task queue — dispatch or seed"
+  defp column_empty_hint("todo"), do: "Task queue: dispatch or seed"
   defp column_empty_hint("pending_approval"), do: "No gates pending"
   defp column_empty_hint("in_progress"), do: "Nothing running"
   defp column_empty_hint("review"), do: "No completed work to review"
   defp column_empty_hint("done"), do: "No completed tasks"
   defp column_empty_hint("failed"), do: "No failures"
-  defp column_empty_hint(_), do: "—"
+  defp column_empty_hint(_), do: "-"
 
   defp agent_count_label(0), do: "0 agents"
   defp agent_count_label(1), do: "1 agent"
