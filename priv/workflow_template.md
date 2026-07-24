@@ -27,7 +27,7 @@ polling:
 agent:
   max_concurrent_agents: 3
   max_retry_backoff_ms: 300000
-  stall_timeout_ms: 300000       # kill stalled agents after N ms
+  stall_timeout_ms: 2700000      # 45 min; keep >= PiRPC run timeout
 approval:
   # off | all | untrusted — gate agent runs before first dispatch from todo
   # Default untrusted: real agents need human go-ahead; demo_* / default skip.

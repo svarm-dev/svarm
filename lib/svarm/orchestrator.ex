@@ -22,7 +22,7 @@ defmodule Svarm.Orchestrator do
 
   @default_poll_interval_ms 30_000
   @default_max_concurrent 3
-  @default_stall_timeout_ms 5 * 60_000
+  @default_stall_timeout_ms 45 * 60_000
   @default_max_retry_backoff_ms 5 * 60_000
   @default_max_retries 5
   @default_active_states ["todo", "in_progress"]
@@ -225,6 +225,9 @@ defmodule Svarm.Orchestrator do
 
   defp reconcile_stalls(%{stall_timeout_ms: stall} = state) when stall <= 0, do: state
 
+  # Best-effort: exits the worker Task (closes its Port). Does not walk the OS
+  # process tree — keep agent.stall_timeout_ms >= PiRPC wall-clock timeout so
+  # Svarm.Runner.PiRPC abort→kill_tree runs first on hung sessions.
   defp reconcile_stalls(state) do
     now = System.monotonic_time(:millisecond)
 

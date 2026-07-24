@@ -107,6 +107,8 @@ Default **`approval.mode: untrusted`**: real agents will **not** run until you a
 
 Poll interval defaults to ~30s (see `polling.interval_ms` in WORKFLOW.md).
 
+Pi RPC runs default to a **45-minute wall-clock** timeout (streaming does not extend it); orchestrator stall is the same duration (WORKFLOW `agent.stall_timeout_ms`). Keep run timeout ≤ stall so abort→kill runs before stall. See [docs/agents.md](docs/agents.md#pi-rpc-profile-path-b-default).
+
 Example receipt shape:
 
 ```

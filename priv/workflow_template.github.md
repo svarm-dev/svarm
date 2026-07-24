@@ -16,7 +16,7 @@ polling:
 agent:
   max_concurrent_agents: 3
   max_retry_backoff_ms: 300000
-  stall_timeout_ms: 300000
+  stall_timeout_ms: 2700000
 approval:
   mode: untrusted
   trusted_assignees: ["default", "demo_research", "demo_code", "demo_docs"]

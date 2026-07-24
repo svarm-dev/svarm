@@ -18,7 +18,7 @@ defmodule Svarm.Workflow.Config do
         get_list(config, ["tracker", "terminal_states"], ["done", "failed", "review"]),
       max_concurrent: get_int(config, ["agent", "max_concurrent_agents"], 3),
       max_retry_backoff_ms: get_int(config, ["agent", "max_retry_backoff_ms"], 300_000),
-      stall_timeout_ms: get_int(config, ["agent", "stall_timeout_ms"], 300_000),
+      stall_timeout_ms: get_int(config, ["agent", "stall_timeout_ms"], 2_700_000),
       tracker_config: tracker_config(config)
     }
     |> Map.update!(:workspace_root, &expand_path/1)

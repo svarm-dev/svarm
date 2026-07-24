@@ -1,0 +1,251 @@
+defmodule Svarm.Runner.PiRPCTest do
+  use ExUnit.Case, async: false
+
+  alias Svarm.{Events, Issue}
+  alias Svarm.Runner.PiRPC
+
+  @fake Path.expand("../../support/fake_pi_rpc.sh", __DIR__)
+
+  defmodule StubTracker do
+    def update_status(config, id, status) do
+      Agent.update(config.statuses, &[{id, status} | &1])
+      :ok
+    end
+  end
+
+  setup do
+    {:ok, statuses} = Agent.start_link(fn -> [] end)
+
+    workspace_root =
+      Path.join(System.tmp_dir!(), "svarm_pi_rpc_test_#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(workspace_root)
+    :ok = Events.subscribe()
+
+    on_exit(fn ->
+      if Process.alive?(statuses), do: Agent.stop(statuses)
+      File.rm_rf(workspace_root)
+    end)
+
+    %{workspace_root: workspace_root, statuses: statuses}
+  end
+
+  defp task(id) do
+    %Issue{
+      id: id,
+      source_id: id,
+      title: "PiRPC fixture task",
+      body: "do the thing",
+      type: "code",
+      assignee: "default",
+      status: "in_progress",
+      attempts: 0,
+      tenant: "test"
+    }
+  end
+
+  defp agent_config(mode, extra_env \\ %{}) do
+    %{
+      adapter: "pi_rpc",
+      provider: "test",
+      model: "fake",
+      display_name: "FakePi",
+      env: Map.merge(%{"FAKE_PI_MODE" => mode}, extra_env)
+    }
+  end
+
+  defp run_opts(workspace_root, statuses, extra \\ []) do
+    [
+      workspace_root: workspace_root,
+      tracker: StubTracker,
+      tracker_config: %{statuses: statuses},
+      executable: @fake,
+      run_id: "run_test_#{System.unique_integer([:positive])}",
+      timeout_ms: Keyword.get(extra, :timeout_ms, 5_000),
+      abort_grace_ms: Keyword.get(extra, :abort_grace_ms, 500),
+      settle_grace_ms: Keyword.get(extra, :settle_grace_ms, 500)
+    ]
+  end
+
+  defp last_status(statuses, id) do
+    Agent.get(statuses, fn list ->
+      Enum.find_value(list, fn
+        {^id, status} -> status
+        _ -> nil
+      end)
+    end)
+  end
+
+  defp assert_agent_line(task_id, pattern, timeout \\ 2_000) do
+    assert_receive {:agent_line, ^task_id, line}, timeout
+
+    if line =~ pattern do
+      line
+    else
+      assert_agent_line(task_id, pattern, timeout)
+    end
+  end
+
+  test "fake peer is executable" do
+    assert File.regular?(@fake)
+    assert Bitwise.band(File.stat!(@fake).mode, 0o111) != 0
+  end
+
+  test "maybe_add_env allowlists host vars and keeps explicit overrides only" do
+    System.put_env("SVARM_TEST_SECRET_XYZ", "s3cr3t")
+    on_exit(fn -> System.delete_env("SVARM_TEST_SECRET_XYZ") end)
+
+    opts = Svarm.Runner.maybe_add_env([], %{"FOO" => "bar"})
+    env = Keyword.fetch!(opts, :env)
+    keys = Enum.map(env, fn {k, _} -> List.to_string(k) end)
+
+    refute "SVARM_TEST_SECRET_XYZ" in keys
+    assert "FOO" in keys
+    assert "PATH" in keys
+  end
+
+  describe "take_lines/1" do
+    test "holds partial line as remainder" do
+      assert {"{\"a\":", []} = PiRPC.take_lines("{\"a\":")
+    end
+
+    test "emits complete lines and keeps trailing partial" do
+      assert {"partial", ["one", "two"]} = PiRPC.take_lines("one\ntwo\npartial")
+    end
+
+    test "drops oversized complete lines" do
+      huge = String.duplicate("x", 1_000_001)
+      assert {"", []} = PiRPC.take_lines(huge <> "\n")
+    end
+  end
+
+  test "happy path: prompt → settle → :ok / review", %{workspace_root: root, statuses: statuses} do
+    assert :ok = PiRPC.run(task("sva_happy"), agent_config("happy"), run_opts(root, statuses))
+    assert last_status(statuses, "sva_happy") == "review"
+    assert_agent_line("sva_happy", "hello from fake pi")
+  end
+
+  test "timeout: wall-clock abort/kill → error, no zombie", %{
+    workspace_root: root,
+    statuses: statuses
+  } do
+    pidfile = Path.join(root, "hang.pid")
+
+    assert {:error, {:pi, :timeout}} =
+             PiRPC.run(
+               task("sva_timeout"),
+               agent_config("hang", %{"FAKE_PI_PIDFILE" => pidfile}),
+               run_opts(root, statuses, timeout_ms: 400, abort_grace_ms: 200)
+             )
+
+    assert last_status(statuses, "sva_timeout") == "failed"
+    assert_agent_line("sva_timeout", "timeout, aborting")
+
+    assert File.exists?(pidfile), "fake peer should have written pidfile after prompt"
+    pid = pidfile |> File.read!() |> String.trim() |> String.to_integer()
+
+    # Kernel may take a beat to reap; poll /proc.
+    refute os_pid_alive_after?(pid, 1_000), "zombie peer pid #{pid} still alive"
+
+    leftover = list_fake_pids()
+    refute pid in leftover, "pgrep still sees hang peer #{pid}: #{inspect(leftover)}"
+  end
+
+  test "crash exit without settle → failed + board line", %{
+    workspace_root: root,
+    statuses: statuses
+  } do
+    assert {:error, {:pi, {:exit, 1}}} =
+             PiRPC.run(task("sva_crash"), agent_config("crash"), run_opts(root, statuses))
+
+    assert last_status(statuses, "sva_crash") == "failed"
+    assert_agent_line("sva_crash", "process exited 1")
+  end
+
+  test "extension_ui_request fails fast (no hang) + board line", %{
+    workspace_root: root,
+    statuses: statuses
+  } do
+    t0 = System.monotonic_time(:millisecond)
+
+    assert {:error, {:pi, :ui_request}} =
+             PiRPC.run(
+               task("sva_ui"),
+               agent_config("ui"),
+               run_opts(root, statuses, timeout_ms: 5_000)
+             )
+
+    elapsed = System.monotonic_time(:millisecond) - t0
+    assert elapsed < 2_000, "UI fail-fast took #{elapsed}ms (expected << timeout)"
+
+    assert last_status(statuses, "sva_ui") == "failed"
+    assert_agent_line("sva_ui", "unsupported UI request")
+  end
+
+  test "protocol response success:false → failed + board line", %{
+    workspace_root: root,
+    statuses: statuses
+  } do
+    assert {:error, {:pi, :protocol}} =
+             PiRPC.run(task("sva_proto"), agent_config("protocol"), run_opts(root, statuses))
+
+    assert last_status(statuses, "sva_proto") == "failed"
+    assert_agent_line("sva_proto", "protocol error")
+  end
+
+  test "malformed line does not kill happy session", %{workspace_root: root, statuses: statuses} do
+    assert :ok =
+             PiRPC.run(task("sva_malformed"), agent_config("malformed"), run_opts(root, statuses))
+
+    assert last_status(statuses, "sva_malformed") == "review"
+  end
+
+  test "missing executable → failed with not_on_path + board line", %{
+    workspace_root: root,
+    statuses: statuses
+  } do
+    opts =
+      run_opts(root, statuses)
+      |> Keyword.put(:executable, Path.join(root, "no-such-pi-binary"))
+
+    assert {:error, {:pi, :not_on_path}} =
+             PiRPC.run(task("sva_missing"), agent_config("happy"), opts)
+
+    assert last_status(statuses, "sva_missing") == "failed"
+    assert_agent_line("sva_missing", "pi not found on PATH")
+  end
+
+  defp list_fake_pids do
+    case System.cmd("pgrep", ["-f", "fake_pi_rpc.sh"], stderr_to_stdout: true) do
+      {out, 0} ->
+        out
+        |> String.split()
+        |> Enum.flat_map(fn s ->
+          case Integer.parse(s) do
+            {n, ""} -> [n]
+            _ -> []
+          end
+        end)
+
+      _ ->
+        []
+    end
+  end
+
+  defp os_pid_alive_after?(pid, timeout_ms) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+
+    Stream.repeatedly(fn ->
+      alive? = match?({:ok, _}, File.read("/proc/#{pid}/stat"))
+      Process.sleep(50)
+      alive?
+    end)
+    |> Enum.reduce_while(true, fn alive?, _ ->
+      cond do
+        not alive? -> {:halt, false}
+        System.monotonic_time(:millisecond) >= deadline -> {:halt, true}
+        true -> {:cont, true}
+      end
+    end)
+  end
+end
