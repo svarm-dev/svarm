@@ -9,22 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.2] - 2026-07-25
 
-Operator-facing setup and board human waits; CI for the public repo.
+In-app configuration UI, human-wait visibility on the board, and CI for the public repo.
 
 ### Added
 
-- **In-app setup** (`/setup`): encrypted Settings store (OpenRouter key, GitHub PAT tracker overlay, default agent model); explicit **Apply** reloads orchestrator config without restart (#4)
-- **Stage B human wait states** on the team board and dashboard (who is blocked on a human) (#3)
+- **In-app setup** (`/setup`): encrypted Settings store (OpenRouter key, GitHub PAT tracker overlay, default agent model); explicit **Apply** reloads orchestrator config without restart ([#4](https://github.com/svarm-dev/svarm/pull/4))
+- Human **wait-state** visibility on the team board and dashboard (when work is blocked on a person) ([#3](https://github.com/svarm-dev/svarm/pull/3))
 - GitHub Actions **`mix ci`** workflow on `main` and pull requests
 
 ### Fixed
 
 - Boot without a file_system/inotify backend (CI and minimal containers) — WORKFLOW live reload is optional
 - pi RPC module shape for Credo strict / Dialyzer under `mix ci`
-
-### Changed
-
-- Ignore local `.claude/` agent plan dirs in git
 
 
 ## [0.1.1] - 2026-07-24
