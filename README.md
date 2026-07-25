@@ -135,9 +135,11 @@ GitHub App identity (bot comments): [docs/github-app.md](docs/github-app.md).
 
 ## Status
 
-**Working now:** local board + GitHub Issues + pi/CLI agents + OpenRouter, with approvals and per-ticket cost receipts. Humans show up as approvers and PR reviewers, not as a separate people roster.
+**Working now:** local board + GitHub Issues + pi/CLI agents + OpenRouter, with approvals, per-ticket cost, optional **in-app `/setup`** (encrypted keys; file/env still work), and Stage B human-wait visibility on board/dashboard.
 
-**Not shipped yet:** Linear/Jira trackers, multi-provider UI, managed hosting, in-app setup wizard. "Adapter-ready" means the behaviours exist; it does not mean every adapter is built.
+**Not shipped yet:** Linear/Jira trackers, multi-provider/multi-agent registry UI, managed hosting. "Adapter-ready" means the behaviours exist; it does not mean every adapter is built.
+
+Optional UI config after the demo: open `/setup` (same auth as `/approvals` in Docker). Details: [GETTING-STARTED.md](GETTING-STARTED.md).
 
 ## Why self-hosted?
 
