@@ -1,6 +1,13 @@
 defmodule Svarm.Workflow.Watcher do
-  @moduledoc "Watches `WORKFLOW.md` and tells Workflow.Store to reload."
+  @moduledoc """
+  Watches `WORKFLOW.md` and tells Workflow.Store to reload.
+
+  If no filesystem backend is available (common in CI without `inotify-tools`),
+  the process is ignored and the app boots without live reload.
+  """
   use GenServer
+
+  require Logger
 
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts)
@@ -12,10 +19,18 @@ defmodule Svarm.Workflow.Watcher do
     dir = Path.dirname(path)
     file = Path.basename(path)
 
-    {:ok, pid} = FileSystem.Worker.start_link(dirs: [dir])
-    FileSystem.subscribe(pid)
+    case FileSystem.start_link(dirs: [dir]) do
+      {:ok, pid} ->
+        FileSystem.subscribe(pid)
+        {:ok, %{worker: pid, path: path, file: file}}
 
-    {:ok, %{worker: pid, path: path, file: file}}
+      :ignore ->
+        Logger.info("workflow watcher: no file_system backend; live reload disabled")
+        :ignore
+
+      {:error, reason} ->
+        {:stop, reason}
+    end
   end
 
   @impl true
