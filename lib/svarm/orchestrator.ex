@@ -17,7 +17,7 @@ defmodule Svarm.Orchestrator do
 
   require Logger
 
-  alias Svarm.{AgentRunner, Approval, Events, Tracker, Usage, Workflow, Workspace}
+  alias Svarm.{AgentRunner, Approval, Events, Settings, Tracker, Usage, Workflow, Workspace}
   alias Svarm.Workflow.Config, as: WorkflowConfig
 
   @default_poll_interval_ms 30_000
@@ -60,6 +60,12 @@ defmodule Svarm.Orchestrator do
 
   @doc "Run one poll cycle immediately (used by `mix svarm.demo`)."
   def kick, do: send(__MODULE__, :tick)
+
+  @doc """
+  Reload agents from file+Settings and re-apply workflow/tracker overlay.
+  Used by `/setup` Apply — no BEAM restart.
+  """
+  def reload_config, do: GenServer.call(__MODULE__, :reload_config)
 
   ## init
 
@@ -211,6 +217,41 @@ defmodule Svarm.Orchestrator do
     {:reply, status_summary(state), state}
   end
 
+  def handle_call(:reload_config, _from, state) do
+    agents =
+      case AgentRunner.load_agents() do
+        %{} = m ->
+          m
+
+        {:error, reason} ->
+          Logger.error("reload_config: agents load failed: #{inspect(reason)}")
+          %{}
+
+        _ ->
+          %{}
+      end
+
+    workflow = Workflow.Store.get()
+
+    state =
+      %{state | agents: agents, workflow: workflow}
+      |> apply_workflow_config()
+      |> put_approval_config()
+      |> resolve_tracker()
+      |> resolve_runner()
+
+    summary = %{
+      agent_count: map_size(state.agents),
+      tracker_kind: state.tracker_config[:kind] || :local,
+      default_model: get_in(state.agents, ["default", :model])
+    }
+
+    Logger.info("reload_config: agents=#{summary.agent_count} tracker=#{summary.tracker_kind}")
+
+    broadcast_status(state)
+    {:reply, {:ok, summary}, state}
+  end
+
   ## reconcile: stall detection + tracker state sync (§8.5–§8.6)
   # Per-tick: kill stalled workers, then refresh state from tracker for any
   # in-flight (running/claimed/retrying) tasks. If tracker now shows terminal
@@ -319,15 +360,14 @@ defmodule Svarm.Orchestrator do
   end
 
   defp apply_workflow_config(%{workflow: nil} = state) do
-    %{
-      state
-      | tracker_config: %{
-          kind: :local,
-          active_states: state.active_states,
-          terminal_states: state.terminal_states,
-          ignored_assignees: []
-        }
+    base = %{
+      kind: :local,
+      active_states: state.active_states,
+      terminal_states: state.terminal_states,
+      ignored_assignees: []
     }
+
+    %{state | tracker_config: Settings.Resolve.tracker_overlay(base)}
   end
 
   defp apply_workflow_config(%{workflow: wf} = state) do
@@ -360,7 +400,7 @@ defmodule Svarm.Orchestrator do
         workspace_root: workspace_root,
         active_states: cfg.active_states,
         terminal_states: cfg.terminal_states,
-        tracker_config: cfg.tracker_config
+        tracker_config: Settings.Resolve.tracker_overlay(cfg.tracker_config)
     }
   end
 

@@ -502,7 +502,9 @@ defmodule SvarmWeb.BoardLive do
         tracker_label: Map.get(c, :tracker_label) || "local",
         agent_count: Map.get(c, :agent_count) || 0,
         approval_mode: Map.get(c, :approval_mode) || "untrusted",
-        approvals_auth?: Map.get(c, :approvals_auth?, false)
+        approvals_auth?: Map.get(c, :approvals_auth?, false),
+        setup_complete?: Map.get(c, :setup_complete?, false),
+        provider_configured?: Map.get(c, :provider_configured?, false)
       )
 
     ~H"""
@@ -525,6 +527,20 @@ defmodule SvarmWeb.BoardLive do
             else: "○"}</span>
           <span>
             Workflow loaded <span class="font-mono text-xs opacity-60">({@workflow_path})</span>
+          </span>
+        </li>
+        <li class="flex gap-2">
+          <span class="font-mono text-xs opacity-60 w-5 shrink-0">{if @provider_configured?,
+            do: "✓",
+            else: "○"}</span>
+          <span>
+            Provider key
+            <%= if not @setup_complete? do %>
+              ·
+              <a href={~p"/setup"} class="underline underline-offset-2 hover:opacity-100">
+                Configure in /setup
+              </a>
+            <% end %>
           </span>
         </li>
         <li class="flex gap-2">
@@ -570,6 +586,9 @@ defmodule SvarmWeb.BoardLive do
       </ul>
 
       <div class="mt-6 flex flex-wrap items-center gap-3">
+        <%= if not @setup_complete? do %>
+          <a href={~p"/setup"} class="btn btn-outline btn-sm">Open setup</a>
+        <% end %>
         <%= if @demo_routes do %>
           <.link
             href={~p"/dev/demo/seed?goal=create+a+cool+app"}

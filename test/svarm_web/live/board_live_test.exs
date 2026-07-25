@@ -15,6 +15,10 @@ defmodule SvarmWeb.BoardLiveTest do
     assert html =~ "Workflow loaded"
     refute html =~ "Needs approval"
     refute html =~ "Run detail"
+
+    unless Svarm.Board.instance_status().setup_complete? do
+      assert html =~ "Open setup"
+    end
   end
 
   test "renders board with tasks and hides empty onboarding", %{conn: conn} do

@@ -163,6 +163,9 @@
 
       <div class="mt-8 flex flex-wrap gap-3">
         <a href={~p"/board"} class="btn btn-primary">Open board</a>
+        <%= if not @instance.setup_complete? do %>
+          <a href={~p"/setup"} class="btn btn-outline">Configure setup</a>
+        <% end %>
         <%= if @instance.approvals_auth? or @instance.approval_mode == "off" do %>
           <a href={~p"/approvals"} class="btn btn-outline">Approvals</a>
         <% end %>
@@ -184,7 +187,8 @@
         >
           GETTING-STARTED
         </a>
-        · config in <code class="font-mono text-xs rounded bg-base-200 px-1">WORKFLOW.md</code>
+        · optional UI at <code class="font-mono text-xs rounded bg-base-200 px-1">/setup</code>
+        · or config in <code class="font-mono text-xs rounded bg-base-200 px-1">WORKFLOW.md</code>
         + <code class="font-mono text-xs rounded bg-base-200 px-1">agents.toml</code>
       </p>
     </div>

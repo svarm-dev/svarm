@@ -9,5 +9,9 @@ defmodule Svarm.BoardInstanceTest do
     assert is_boolean(status.workflow_loaded?)
     assert is_boolean(status.approvals_auth?)
     assert is_boolean(status.empty?)
+    assert is_boolean(status.provider_configured?)
+    assert is_boolean(status.tracker_ready?)
+    assert is_boolean(status.setup_complete?)
+    assert status.tracker_source in ["settings", "file"]
   end
 end

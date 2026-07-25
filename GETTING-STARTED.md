@@ -31,6 +31,8 @@ docker compose --profile demo up --build
 
 When you’re done watching cards move, go to **B** for a real issue → PR loop.
 
+**Optional UI setup:** after demo, open `/setup` to store OpenRouter + GitHub PAT + default model in the app DB (encrypted). File/env config still works when Settings is empty. In Docker, `/setup` uses the same Basic Auth as `/approvals`.
+
 ---
 
 ## B) Real loop on a toy repo

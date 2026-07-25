@@ -94,7 +94,7 @@ The web layer is a **read-only observer** of orchestration. It never mutates sta
 - **Orchestrator calls adapters, not implementations** — depends on `Svarm.Tracker` (behaviour), never `Svarm.Tracker.GitHub`.
 - **Web layer never calls AgentRunner or Workspace** — reads state through `Board` and `Orchestrator.status/0`.
 - **Only AgentRunner shells out** — `System.cmd`, `Port.open`, `File.cd` live exclusively in `agent_runner.ex`.
-- **Only KanbanBridge touches the DB** — all Ecto queries go through `KanbanBridge` GenServer calls. Other modules never import `Ecto.Query` or call `Svarm.Repo` directly.
+- **KanbanBridge is the task DB path** — all task Ecto queries go through `KanbanBridge`. Other Repo-backed contexts are allowed for their own domains: `Usage`/`RunLog`/`Settings` (not task state).
 - **Events is the cross-boundary side channel** — backend → web communication is PubSub, not direct calls.
 
 ## Setup and commands
@@ -223,7 +223,7 @@ mix test --only <tag>
 
 - **Do not add Postgres** — SQLite via Ecto is the project standard. Postgres is a managed-tier option for the distant future, not now.
 - **Do not replace KanbanBridge with an external tracker** without going through the adapter behaviour (`Svarm.Tracker`).
-- **Do not add Ecto queries outside KanbanBridge** — all database access goes through the `KanbanBridge` GenServer.
+- **Do not add Ecto queries for tasks outside KanbanBridge** — task CRUD stays on `KanbanBridge`. `Usage`/`RunLog`/`Settings` own their tables.
 - **Do not shell out from anywhere except AgentRunner** — `System.cmd`, `Port.open`, `File.cd` are AgentRunner's exclusive domain.
 - **Do not expand scope to Symphony Codex app-server streaming** unless explicitly asked — v1 is poll/reconcile + WORKFLOW.md, not Codex app-server.
 - **Do not add `:httpoison`, `:tesla`, or `:httpc`** — use `Req` for all HTTP.
