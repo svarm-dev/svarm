@@ -2,7 +2,7 @@ defmodule Svarm.Board do
   @moduledoc """
   Read API for the kanban dashboard. LiveViews call here — not the tracker directly.
   """
-  alias Svarm.{Orchestrator, Tracker, Workflow}
+  alias Svarm.{Orchestrator, Settings, Tracker, Workflow}
   alias Svarm.Workflow.Config, as: WorkflowConfig
 
   @default_columns [
@@ -19,9 +19,7 @@ defmodule Svarm.Board do
   same as the orchestrator. Falls back to local kanban.
   """
   def tracker do
-    workflow = Workflow.Store.get()
-    cfg = if workflow, do: WorkflowConfig.from(workflow), else: %{}
-    tc = cfg[:tracker_config] || %{}
+    tc = tracker_config()
 
     case tc[:kind] || :local do
       :github -> Tracker.GitHub
@@ -47,7 +45,8 @@ defmodule Svarm.Board do
   defp tracker_config do
     workflow = Workflow.Store.get()
     cfg = if workflow, do: WorkflowConfig.from(workflow), else: %{}
-    cfg[:tracker_config] || %{}
+    base = cfg[:tracker_config] || %{}
+    Settings.Resolve.tracker_overlay(base)
   end
 
   def orchestrator_status do
@@ -62,14 +61,16 @@ defmodule Svarm.Board do
   def instance_status do
     workflow = Workflow.Store.get()
     cfg = if workflow, do: WorkflowConfig.from(workflow), else: %{}
-    tracker = cfg[:tracker_config] || %{}
+    tracker = Settings.Resolve.tracker_overlay(cfg[:tracker_config] || %{})
     agents = safe_agents()
     tasks = safe_list_tasks()
     approval = approval_mode(workflow)
+    setup = Settings.status()
 
     %{
       tracker_kind: tracker[:kind] || :local,
       tracker_label: tracker_label(tracker),
+      tracker_source: setup.tracker_source,
       workflow_path: workflow && workflow.path,
       workflow_loaded?: match?(%Workflow{}, workflow),
       agent_count: map_size(agents),
@@ -77,7 +78,10 @@ defmodule Svarm.Board do
       approval_mode: approval,
       approvals_auth?: approvals_auth_configured?(),
       demo_routes: Svarm.Demo.routes_enabled?(),
-      empty?: tasks == []
+      empty?: tasks == [],
+      provider_configured?: setup.provider_configured?,
+      tracker_ready?: setup.tracker_ready?,
+      setup_complete?: setup.setup_complete?
     }
   end
 

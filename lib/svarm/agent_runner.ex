@@ -9,13 +9,15 @@ defmodule Svarm.AgentRunner do
 
   alias Svarm.Runner.{Cli, PiRPC}
 
-  @doc "Parse priv/agents.toml into agent config maps."
+  @doc "Parse priv/agents.toml into agent config maps, then merge Settings overrides."
   def load_agents(path \\ nil) do
     path =
       path || System.get_env("SVARM_AGENTS_PATH") ||
         Path.join(:code.priv_dir(:svarm), "agents.toml")
 
-    Cli.load_agents(path)
+    path
+    |> Cli.load_agents()
+    |> Svarm.Settings.Resolve.merge_agents()
   end
 
   @doc "Resolve an agent config by name."

@@ -36,6 +36,8 @@ defmodule SvarmWeb.Router do
     get "/approvals", ApprovalsController, :index
     post "/approvals/:id/approve", ApprovalsController, :approve
     post "/approvals/:id/reject", ApprovalsController, :reject
+
+    live "/setup", SetupLive, :index
   end
 
   # Other scopes may use custom stacks.

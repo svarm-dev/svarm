@@ -106,8 +106,7 @@ defmodule Svarm.Provider.OpenRouter do
   # -- helpers --
 
   defp resolve_api_key do
-    auth_env = config() |> Map.get("auth_env", "OPENROUTER_API_KEY")
-    System.get_env(auth_env)
+    Svarm.Settings.Resolve.openrouter_api_key()
   end
 
   defp base_url do
