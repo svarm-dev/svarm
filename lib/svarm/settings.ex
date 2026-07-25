@@ -127,9 +127,8 @@ defmodule Svarm.Settings do
   """
   def test_provider do
     case OpenRouter.list_models([]) do
-      {:ok, models} when is_list(models) -> {:ok, length(models)}
+      {:ok, models} -> {:ok, length(models)}
       {:error, reason} -> {:error, format_error(reason)}
-      other -> {:error, inspect(other)}
     end
   end
 
@@ -247,7 +246,6 @@ defmodule Svarm.Settings do
   defp present?(""), do: false
   defp present?(_), do: true
 
-  defp format_error(reason) when is_binary(reason), do: reason
   defp format_error(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp format_error(reason), do: inspect(reason)
 end
