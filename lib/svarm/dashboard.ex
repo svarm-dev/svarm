@@ -23,6 +23,7 @@ defmodule Svarm.Dashboard do
       orchestrator: orchestrator,
       agent_roster: agent_roster(tasks, agents, orchestrator),
       task_distribution: Board.counts_by_status(tasks),
+      human_wait: Board.human_wait_summary(tasks),
       session_cost: Usage.session_cost_summary(),
       session_totals: totals,
       recent_runs: recent_runs(tasks, agents)

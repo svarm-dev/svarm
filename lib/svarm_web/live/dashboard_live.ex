@@ -67,7 +67,7 @@ defmodule SvarmWeb.DashboardLive do
         <div class="flex items-center justify-between">
           <div>
             <h1 class="text-2xl font-semibold tracking-tight">Dashboard</h1>
-            <p class="text-sm opacity-70">Agents, cost, and work in flight</p>
+            <p class="text-sm opacity-70">Agents, cost, and work waiting on humans</p>
           </div>
           <div class="flex gap-2 items-center">
             <button type="button" phx-click="refresh" class="btn btn-sm btn-ghost">
@@ -91,6 +91,8 @@ defmodule SvarmWeb.DashboardLive do
               totals={@snapshot.session_totals}
               orchestrator={@snapshot.orchestrator}
             />
+
+            <.human_wait_strip summary={@snapshot.human_wait} />
 
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <.agent_roster agents={@snapshot.agent_roster} />
@@ -213,6 +215,32 @@ defmodule SvarmWeb.DashboardLive do
       ]}>
         {@value}
       </p>
+    </div>
+    """
+  end
+
+  attr :summary, :map, required: true
+
+  defp human_wait_strip(assigns) do
+    s = assigns.summary || %{pending_approval: 0, review: 0, total: 0}
+    assigns = assign(assigns, :summary, s)
+
+    ~H"""
+    <div class={[
+      "rounded-lg border px-4 py-3 flex flex-wrap items-center justify-between gap-3",
+      @summary.total > 0 && "border-warning/30 bg-warning/5",
+      @summary.total == 0 && "border-base-300 bg-base-200/60"
+    ]}>
+      <div>
+        <p class="text-sm font-semibold">Waiting on humans</p>
+        <p class="text-xs opacity-70 mt-0.5">
+          Approvals {@summary.pending_approval} · Review {@summary.review} · Total {@summary.total}
+        </p>
+      </div>
+      <div class="flex gap-2">
+        <a href={~p"/approvals"} class="btn btn-xs btn-outline">Approvals</a>
+        <a href={~p"/board"} class="btn btn-xs btn-primary">Board</a>
+      </div>
     </div>
     """
   end
@@ -355,7 +383,8 @@ defmodule SvarmWeb.DashboardLive do
                   <td>
                     <span class={[
                       "badge badge-xs",
-                      run.status in ["done", "review"] && "badge-success",
+                      run.status == "done" && "badge-success",
+                      run.status == "review" && "badge-warning",
                       run.status == "failed" && "badge-error"
                     ]}>
                       {run.status}
@@ -409,6 +438,7 @@ defmodule SvarmWeb.DashboardLive do
       orchestrator: %{},
       agent_roster: [],
       task_distribution: %{},
+      human_wait: %{pending_approval: 0, review: 0, total: 0},
       session_cost: %{total_cost_usd: 0.0, record_count: 0},
       session_totals: %{prompt_tokens: 0, completion_tokens: 0, record_count: 0},
       recent_runs: []

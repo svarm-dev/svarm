@@ -206,7 +206,7 @@ defmodule SvarmWeb.BoardLive do
         <div class="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h1 class="text-2xl font-semibold tracking-tight">Board</h1>
-            <p class="text-sm opacity-70">Agent work · human review</p>
+            <p class="text-sm opacity-70">Agent work · human approval and review</p>
           </div>
           <div class="flex gap-2 items-center text-sm">
             <button type="button" phx-click="refresh" class="btn btn-sm btn-ghost">
@@ -679,12 +679,26 @@ defmodule SvarmWeb.BoardLive do
   defp column(assigns) do
     ~H"""
     <div
-      class="flex-shrink-0 w-64 bg-base-200 rounded-lg p-3 flex flex-col gap-2"
+      class={[
+        "flex-shrink-0 w-64 rounded-lg p-3 flex flex-col gap-2",
+        human_column?(@status_id) && "bg-warning/10 border border-warning/30",
+        not human_column?(@status_id) && "bg-base-200"
+      ]}
       data-status={@status_id}
     >
-      <h2 class="font-medium text-sm text-base-content/80">
+      <h2 class={[
+        "font-medium text-sm",
+        human_column?(@status_id) && "text-warning",
+        not human_column?(@status_id) && "text-base-content/80"
+      ]}>
         {@title}
-        <span class="badge badge-sm badge-ghost ml-1 font-mono">{length(@tasks)}</span>
+        <span class={[
+          "badge badge-sm ml-1 font-mono",
+          human_column?(@status_id) && "badge-warning",
+          not human_column?(@status_id) && "badge-ghost"
+        ]}>
+          {length(@tasks)}
+        </span>
       </h2>
       <ul class="flex flex-col gap-2 min-h-[3rem]">
         <%= if @tasks == [] do %>
@@ -701,7 +715,7 @@ defmodule SvarmWeb.BoardLive do
                 "border-transparent bg-base-100/80 hover:border-base-300",
               card.running && "ring-2 ring-primary/50 bg-primary/5",
               card.retrying && "ring-2 ring-warning/40",
-              card.pending_approval && "border-dashed border-warning/60"
+              card.wait_reason in [:approval, :review] && "border-dashed border-warning/60"
             ]}>
               <button
                 type="button"
@@ -725,7 +739,12 @@ defmodule SvarmWeb.BoardLive do
                     compact
                     workload={Map.get(@workload, task.assignee || "default")}
                   />
-                  <span class="text-[10px] opacity-50 shrink-0">{type_label(task.type)}</span>
+                  <div class="flex items-center gap-1 shrink-0">
+                    <%= if reviewer = Board.reviewer(task) do %>
+                      <span class="text-[10px] opacity-60" title="Reviewer">{reviewer}</span>
+                    <% end %>
+                    <span class="text-[10px] opacity-50">{type_label(task.type)}</span>
+                  </div>
                 </div>
 
                 <%= if cost && cost.record_count > 0 do %>
@@ -740,7 +759,7 @@ defmodule SvarmWeb.BoardLive do
                 <% end %>
               </button>
 
-              <%= if card.pending_approval and not demo_task?(task) do %>
+              <%= if card.wait_reason == :approval and not demo_task?(task) do %>
                 <div class="mt-2 flex gap-1">
                   <button
                     type="button"
@@ -817,6 +836,30 @@ defmodule SvarmWeb.BoardLive do
           <% end %>
 
           <.cost_breakdown cost={@cost} />
+
+          <%= if @task.status == "review" do %>
+            <div class="rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-sm">
+              <p class="font-medium">Awaiting human review</p>
+              <p class="mt-0.5 opacity-80">
+                Agent finished. Review the PR on your tracker before merge.
+              </p>
+              <%= if Board.reviewer(@task) do %>
+                <p class="mt-1 text-xs opacity-70">Reviewer: {Board.reviewer(@task)}</p>
+              <% end %>
+              <%= if pr = Board.pr_url(@task, @meta) do %>
+                <a
+                  href={pr}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="btn btn-sm btn-outline mt-2"
+                >
+                  Open PR
+                </a>
+              <% else %>
+                <p class="mt-1 text-xs opacity-60">Review on tracker/GitHub</p>
+              <% end %>
+            </div>
+          <% end %>
 
           <%= if @task.status == "failed" do %>
             <div class="rounded-md border border-error/30 bg-error/5 px-3 py-2 text-sm">
@@ -966,11 +1009,13 @@ defmodule SvarmWeb.BoardLive do
       <%= if @card.retrying do %>
         <span class="badge badge-warning badge-xs shrink-0">retry</span>
       <% else %>
-        <%= if @card.pending_approval do %>
+        <%= if @card.wait_reason in [:approval, :review] do %>
           <span
             class="badge badge-warning badge-outline badge-xs shrink-0"
-            title="Awaiting human gate approval"
-          >approval</span>
+            title={Board.wait_reason_label(@card.wait_reason)}
+          >
+            {Board.wait_reason_label(@card.wait_reason)}
+          </span>
         <% end %>
       <% end %>
     <% end %>
@@ -1008,7 +1053,7 @@ defmodule SvarmWeb.BoardLive do
   defp column_empty_hint("todo"), do: "Task queue: dispatch or seed"
   defp column_empty_hint("pending_approval"), do: "No gates pending"
   defp column_empty_hint("in_progress"), do: "Nothing running"
-  defp column_empty_hint("review"), do: "No completed work to review"
+  defp column_empty_hint("review"), do: "No work waiting for human review"
   defp column_empty_hint("done"), do: "No completed tasks"
   defp column_empty_hint("failed"), do: "No failures"
   defp column_empty_hint(_), do: "-"
@@ -1040,14 +1085,18 @@ defmodule SvarmWeb.BoardLive do
 
   defp card_activity(task, running_ids, retry_ids) do
     id = task.id
-    status = task.status
+    wait = Board.wait_reason(task)
 
     %{
       running: id in running_ids,
       retrying: id in retry_ids,
-      pending_approval: status == Approval.pending_status()
+      wait_reason: wait,
+      pending_approval: wait == :approval
     }
   end
+
+  defp human_column?(status) when status in ["pending_approval", "review"], do: true
+  defp human_column?(_), do: false
 
   defp format_elapsed(nil, _now), do: "…"
 
@@ -1236,7 +1285,8 @@ defmodule SvarmWeb.BoardLive do
         running? -> {"Running", "badge-primary gap-1"}
         status == "failed" -> {"Failed", "badge-error"}
         status == "done" -> {"Done", "badge-success"}
-        status == Approval.pending_status() -> {"Pending", "badge-warning"}
+        status == Approval.pending_status() -> {"Needs approval", "badge-warning"}
+        status == "review" -> {"Needs review", "badge-warning"}
         true -> {String.capitalize(status), "badge-ghost"}
       end
 
