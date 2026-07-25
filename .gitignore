@@ -47,6 +47,7 @@ npm-debug.log
 
 # Local agent tooling (not part of the shipped product)
 .agents/
+.claude/
 .pi/
 .impeccable/
 
