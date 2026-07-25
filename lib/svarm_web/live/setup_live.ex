@@ -200,7 +200,7 @@ defmodule SvarmWeb.SetupLive do
           <input
             type="text"
             name="provider[default_model]"
-            value={@provider[:default_model] || @provider["default_model"] || ""}
+            value={@provider[:default_model] || ""}
             class="input input-bordered input-sm w-full font-mono"
             placeholder="openrouter/free"
           />
@@ -216,10 +216,10 @@ defmodule SvarmWeb.SetupLive do
   attr :status, :map, required: true
 
   defp tracker_card(assigns) do
-    kind = assigns.tracker[:kind] || assigns.tracker["kind"] || "local"
+    kind = to_string(assigns.tracker[:kind] || "local")
 
     labels =
-      case assigns.tracker[:required_labels] || assigns.tracker["required_labels"] do
+      case assigns.tracker[:required_labels] do
         list when is_list(list) -> list
         bin when is_binary(bin) -> [bin]
         _ -> []
@@ -244,8 +244,8 @@ defmodule SvarmWeb.SetupLive do
         <label class="form-control w-full">
           <span class="label-text text-xs opacity-70">Kind</span>
           <select name="tracker[kind]" class="select select-bordered select-sm w-full">
-            <option value="local" selected={@kind == "local" or @kind == :local}>local</option>
-            <option value="github" selected={@kind == "github" or @kind == :github}>github</option>
+            <option value="local" selected={@kind == "local"}>local</option>
+            <option value="github" selected={@kind == "github"}>github</option>
           </select>
         </label>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -254,7 +254,7 @@ defmodule SvarmWeb.SetupLive do
             <input
               type="text"
               name="tracker[owner]"
-              value={@tracker[:owner] || @tracker["owner"] || ""}
+              value={@tracker[:owner] || ""}
               class="input input-bordered input-sm w-full font-mono"
             />
           </label>
@@ -263,7 +263,7 @@ defmodule SvarmWeb.SetupLive do
             <input
               type="text"
               name="tracker[repo]"
-              value={@tracker[:repo] || @tracker["repo"] || ""}
+              value={@tracker[:repo] || ""}
               class="input input-bordered input-sm w-full font-mono"
             />
           </label>
@@ -315,7 +315,7 @@ defmodule SvarmWeb.SetupLive do
           <input
             type="text"
             name="agent[provider]"
-            value={@agent["provider"] || @agent[:provider] || "openrouter"}
+            value={@agent["provider"] || "openrouter"}
             class="input input-bordered input-sm w-full font-mono"
           />
         </label>
@@ -324,7 +324,7 @@ defmodule SvarmWeb.SetupLive do
           <input
             type="text"
             name="agent[model]"
-            value={@agent["model"] || @agent[:model] || ""}
+            value={@agent["model"] || ""}
             class="input input-bordered input-sm w-full font-mono"
             placeholder="openrouter/free"
           />

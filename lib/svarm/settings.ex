@@ -22,7 +22,7 @@ defmodule Svarm.Settings do
 
   @doc """
   Redacted section map for UI. Secret fields become `api_key_set?: boolean`
-  (ciphertext never returned).
+  (ciphertext never returned). Keys are atoms for known fields.
   """
   def get_section(section) when is_binary(section) do
     case Store.get(section) do
@@ -36,21 +36,12 @@ defmodule Svarm.Settings do
 
   @doc "Plaintext secret for adapters only. Returns nil when unset/invalid."
   def get_secret(section, field) when is_binary(section) and is_binary(field) do
-    case Store.get(section) do
-      {:ok, data} ->
-        case data[field] do
-          enc when is_binary(enc) and enc != "" ->
-            case Crypto.decrypt(enc) do
-              {:ok, plain} -> plain
-              :error -> nil
-            end
-
-          _ ->
-            nil
-        end
-
-      :error ->
-        nil
+    with {:ok, data} <- Store.get(section),
+         enc when is_binary(enc) and enc != "" <- data[field],
+         {:ok, plain} <- Crypto.decrypt(enc) do
+      plain
+    else
+      _ -> nil
     end
   end
 
@@ -62,13 +53,7 @@ defmodule Svarm.Settings do
   """
   def put_section(section, attrs) when is_binary(section) and is_map(attrs) do
     attrs = stringify_keys(attrs)
-
-    existing =
-      case Store.get(section) do
-        {:ok, d} -> d
-        :error -> %{}
-      end
-
+    existing = store_map(section)
     data = prepare_for_store(section, attrs, existing)
 
     case Store.put(section, data) do
@@ -78,24 +63,15 @@ defmodule Svarm.Settings do
   end
 
   @doc "Save OpenRouter provider settings."
-  def put_provider(attrs) when is_map(attrs) do
-    put_section("provider.openrouter", attrs)
-  end
+  def put_provider(attrs) when is_map(attrs), do: put_section("provider.openrouter", attrs)
 
   @doc "Save tracker settings (local or GitHub PAT)."
-  def put_tracker(attrs) when is_map(attrs) do
-    put_section("tracker", attrs)
-  end
+  def put_tracker(attrs) when is_map(attrs), do: put_section("tracker", attrs)
 
   @doc "Save default agent override (provider/model). Merged onto agents.toml."
   def put_default_agent(attrs) when is_map(attrs) do
     attrs = stringify_keys(attrs)
-
-    existing =
-      case Store.get("agents") do
-        {:ok, d} -> d
-        :error -> %{}
-      end
+    existing = store_map("agents")
 
     default =
       Map.merge(
@@ -126,25 +102,15 @@ defmodule Svarm.Settings do
   end
 
   def provider_configured? do
-    case Resolve.openrouter_api_key() do
-      key when is_binary(key) and key != "" -> true
-      _ -> false
-    end
+    match?(key when is_binary(key) and key != "", Resolve.openrouter_api_key())
   end
 
   def tracker_ready? do
-    base = workflow_tracker_config()
-    tc = Resolve.tracker_overlay(base)
+    tc = Resolve.tracker_overlay(workflow_tracker_config())
 
     case tc[:kind] || :local do
-      :local ->
-        true
-
-      :github ->
-        present?(tc[:owner]) and present?(tc[:repo]) and present?(tc[:api_key])
-
-      _ ->
-        true
+      :github -> present?(tc[:owner]) and present?(tc[:repo]) and present?(tc[:api_key])
+      _ -> true
     end
   end
 
@@ -169,32 +135,35 @@ defmodule Svarm.Settings do
 
   @doc """
   Smoke-test tracker using Settings overlay on workflow tracker config.
-  Local always succeeds. GitHub lists issues once.
+  Local always succeeds. GitHub lists eligible issues once.
   """
   def test_tracker do
-    base = workflow_tracker_config()
-    tc = Resolve.tracker_overlay(base)
+    tc = Resolve.tracker_overlay(workflow_tracker_config())
+    test_tracker_config(tc)
+  end
 
-    case tc[:kind] || :local do
-      :local ->
-        {:ok, :local}
+  defp test_tracker_config(%{kind: :local}), do: {:ok, :local}
+  defp test_tracker_config(%{kind: kind}) when kind != :github, do: {:ok, :local}
 
-      :github ->
-        if present?(tc[:owner]) and present?(tc[:repo]) and present?(tc[:api_key]) do
-          case Tracker.GitHub.list_eligible(tc) do
-            {:ok, issues} -> {:ok, length(issues)}
-            {:error, reason} -> {:error, format_error(reason)}
-          end
-        else
-          {:error, "GitHub tracker needs owner, repo, and a PAT"}
-        end
-
-      other ->
-        {:error, "unsupported tracker: #{inspect(other)}"}
+  defp test_tracker_config(tc) do
+    if present?(tc[:owner]) and present?(tc[:repo]) and present?(tc[:api_key]) do
+      case Tracker.GitHub.list_eligible(tc) do
+        {:ok, issues} -> {:ok, length(issues)}
+        {:error, reason} -> {:error, format_error(reason)}
+      end
+    else
+      {:error, "GitHub tracker needs owner, repo, and a PAT"}
     end
   end
 
   ## private
+
+  defp store_map(section) do
+    case Store.get(section) do
+      {:ok, d} -> d
+      :error -> %{}
+    end
+  end
 
   defp redact(section, data) do
     secrets = Map.get(@secret_fields, section, [])
@@ -204,7 +173,6 @@ defmodule Svarm.Settings do
 
       acc
       |> Map.delete(field)
-      |> Map.put("api_key_set?", set?)
       |> Map.put(:api_key_set?, set?)
     end)
     |> atomize_known_keys(section)
@@ -212,23 +180,23 @@ defmodule Svarm.Settings do
 
   defp prepare_for_store(section, attrs, existing) do
     secrets = Map.get(@secret_fields, section, [])
-    drop_keys = secrets ++ ["api_key_set?"]
-    base = Map.merge(existing, Map.drop(attrs, drop_keys))
+    base = Map.merge(existing, Map.drop(attrs, secrets ++ ["api_key_set?"]))
 
     Enum.reduce(secrets, base, fn field, acc ->
-      case attrs[field] do
-        val when is_binary(val) and val != "" ->
-          Map.put(acc, field, Crypto.encrypt(val))
-
-        _ ->
-          case existing[field] do
-            enc when is_binary(enc) and enc != "" -> Map.put(acc, field, enc)
-            _ -> Map.delete(acc, field)
-          end
-      end
+      put_secret_field(acc, field, attrs[field], existing[field])
     end)
     |> Map.drop(["api_key_set?"])
   end
+
+  defp put_secret_field(acc, field, val, _existing) when is_binary(val) and val != "" do
+    Map.put(acc, field, Crypto.encrypt(val))
+  end
+
+  defp put_secret_field(acc, field, _val, enc) when is_binary(enc) and enc != "" do
+    Map.put(acc, field, enc)
+  end
+
+  defp put_secret_field(acc, field, _val, _existing), do: Map.delete(acc, field)
 
   defp stringify_keys(map) do
     Map.new(map, fn
@@ -256,9 +224,7 @@ defmodule Svarm.Settings do
   defp atomize_known_keys(data, _), do: data
 
   defp copy_string_key(map, key) do
-    sk = Atom.to_string(key)
-
-    case Map.fetch(map, sk) do
+    case Map.fetch(map, Atom.to_string(key)) do
       {:ok, v} -> Map.put(map, key, v)
       :error -> map
     end
