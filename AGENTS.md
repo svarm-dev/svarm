@@ -9,7 +9,7 @@ Instructions for coding agents working in **Svärm** (`svarm`). Human-oriented d
 
 ## Project overview
 
-Svärm is a **Symphony-compatible** autonomous dev-team orchestrator and blended workforce platform. It dispatches coding agents (pi, Claude Code, etc.) to work on tickets from a kanban board, governed by a WORKFLOW.md contract.
+Svärm is a **self-hosted control plane** for external coding agents on your tickets (Symphony-compatible poll/reconcile). It dispatches agents (pi, Claude Code, etc.) from a LiveView board, governed by a WORKFLOW.md contract. Agents open PRs; humans keep merge. Not a lights-off factory or embedded multi-agent runtime.
 
 - **Stack:** Elixir 1.20.2 / OTP 29 (`.mise.toml`), Phoenix 1.8, Ecto 3.14 with `ecto_sqlite3`, Tailwind CSS + daisyUI.
 - **Database:** SQLite via Ecto (`Svarm.Repo`). Single-file, no daemon. Postgres is a future managed-tier option, not now.

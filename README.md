@@ -4,7 +4,11 @@
   <img src="priv/static/images/swarm-hero.svg" alt="Svärm" width="280" />
 </p>
 
-**Governed coding agents on your tickets: identity, live board, approvals, and cost on every run.**
+**Svärm — control for your agent loop**
+
+Agent workflows for real projects — not lights-off factories.
+
+> *Move fast without torching the repo.*
 
 Self-hosted, open source (MIT), built in Elixir.
 
@@ -17,11 +21,11 @@ Self-hosted, open source (MIT), built in Elixir.
 
 Your team already uses AI coding agents (pi, Claude Code, Cursor, Copilot). They open PRs and touch real code. Most of that work is hard to see, hard to approve, and hard to cost.
 
-Svärm pulls work from GitHub Issues (or a local board), runs an agent in an isolated workspace, and leaves a PR plus a cost receipt for a human to review.
+Svärm pulls work from GitHub Issues (or a local board), dispatches an **external** agent in an isolated workspace, and leaves a PR plus a cost receipt. **Humans keep the merge button.** Successful runs land in `review`, not `done`.
 
 - **Watch agents work.** Cards on a board with live logs and per-ticket cost.
-- **Gate before dispatch.** Which agent, which model, approved by whom.
-- **Cost on the ticket.** Tokens, model, and dollar amount on the run.
+- **Human gates.** Optional approval before dispatch; wait chips for approval and review.
+- **Cost on the ticket.** Tokens, model, and dollar amount (append-only ledger).
 
 ## Quick start
 
@@ -50,8 +54,8 @@ mix phx.server
 
 | Route | What it shows |
 |-------|---------------|
-| [`/board`](http://localhost:4000/board) | Agent board with demo tasks already moving |
-| [`/dashboard`](http://localhost:4000/dashboard) | Operational overview: agent roster, cost, task distribution |
+| [`/board`](http://localhost:4000/board) | Board with demo tasks already moving |
+| [`/dashboard`](http://localhost:4000/dashboard) | Ops overview: agent roster, cost, waiting on humans |
 | [`/`](http://localhost:4000/) | Instance overview (tracker, agents, workflow) |
 | [`/approvals`](http://localhost:4000/approvals) | First-run gates (Basic Auth: `svarm` / `svarm` in demo) |
 
@@ -78,12 +82,12 @@ More captures under [`docs/screenshots/`](docs/screenshots/).
 
 ## How it works
 
-Svärm polls your tracker and runs a short loop:
+Svärm runs a control loop on your tickets:
 
 1. **Reconcile** sync running work with the tracker
 2. **Preflight** config, capacity, and approval checks
 3. **Fetch** eligible issues (labels / states)
-4. **Dispatch** agent in an isolated workspace
+4. **Dispatch** external agent in an isolated workspace
 5. **Receipt** usage comment on the issue; human reviews the PR
 
 Successful runs land in `review`, not `done`. Agents never merge. Each finished run can post a cost receipt (tokens, model, dollars) on the issue.
@@ -137,7 +141,7 @@ GitHub App identity (bot comments): [docs/github-app.md](docs/github-app.md).
 
 **Working now:** local board + GitHub Issues + pi/CLI agents + OpenRouter, with approvals, per-ticket cost, optional **in-app `/setup`** (encrypted keys; file/env still work), and Stage B human-wait visibility on board/dashboard.
 
-**Not shipped yet:** Linear/Jira trackers, multi-provider/multi-agent registry UI, managed hosting. "Adapter-ready" means the behaviours exist; it does not mean every adapter is built.
+**Not shipped yet:** Linear/Jira trackers, multi-provider/multi-agent registry UI, managed hosting, hard budget enforcement. "Adapter-ready" means the behaviours exist; it does not mean every adapter is built.
 
 Optional UI config after the demo: open `/setup` (same auth as `/approvals` in Docker). Details: [GETTING-STARTED.md](GETTING-STARTED.md).
 

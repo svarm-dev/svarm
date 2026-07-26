@@ -1,5 +1,5 @@
 defmodule SvarmWeb.BoardLive do
-  @moduledoc "Real-time agent board and run log (tickets, costs, human review states)."
+  @moduledoc "Real-time board and agent run log (agent work · human judgment)."
   use SvarmWeb, :live_view
 
   alias Svarm.{AgentRegistry, AgentRunner, Approval, Board, Events, Usage}
@@ -206,7 +206,7 @@ defmodule SvarmWeb.BoardLive do
         <div class="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h1 class="text-2xl font-semibold tracking-tight">Board</h1>
-            <p class="text-sm opacity-70">Agent work · human approval and review</p>
+            <p class="text-sm opacity-70">Agent work · human judgment</p>
           </div>
           <div class="flex gap-2 items-center text-sm">
             <button type="button" phx-click="refresh" class="btn btn-sm btn-ghost">
@@ -516,8 +516,8 @@ defmodule SvarmWeb.BoardLive do
         All quiet. No tickets yet.
       </h2>
       <p class="mt-2 max-w-2xl text-sm opacity-80">
-        Live view of agent work on tickets. Cards move as agents claim work; open a card
-        for streamed output and per-ticket cost. Approvals and review are the human steps.
+        Live view of agent work and human wait states. Cards move as agents claim work;
+        open a card for streamed output and per-ticket cost. Approvals and review are the human steps.
       </p>
 
       <ul class="mt-5 max-w-2xl space-y-2 text-sm" aria-label="First-run checklist">

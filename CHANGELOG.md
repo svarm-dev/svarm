@@ -47,6 +47,7 @@ First **public** try path: Docker demo profile, approvals env, journey docs, ins
 - AGENTS.md banner for operators vs coding agents; honesty pass on shipped surface
 - Sample `priv/agents/*.toml` removed in favor of docs/agents.md
 - Compose **app** / **demo** profiles are mutually exclusive (no port 4000 clash)
+- **Launch messaging fence:** public copy leads with “control for your agent loop” / human judgment; park blended-workforce overclaim for flip
 
 ### Fixed
 
