@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Setup preflight** (`/setup`): live readiness (key source, default model, form-scoped tracker probe), model suggestions after OpenRouter test, single Apply path ([#5](https://github.com/svarm-dev/svarm/pull/5))
+- **Dashboard** governance spine: human-wait first, windowed spend/tokens from one summary, busy-first agent roster ([#5](https://github.com/svarm-dev/svarm/pull/5))
+- GitHub issue/PR templates and Dependabot for Hex + Actions ([#6](https://github.com/svarm-dev/svarm/pull/6))
+
+### Changed
+
+- Public messaging: lead with “control for your agent loop” / human judgment; drop blended-workforce teammate hype from README, homepage, board, and dashboard
+
+### Fixed
+
+- Dashboard session token totals with negative monotonic timestamps; completed runs without assignee count on the right agent
+
+
 ## [0.1.2] - 2026-07-25
 
 In-app configuration UI, human-wait visibility on the board, and CI for the public repo.
@@ -47,7 +62,6 @@ First **public** try path: Docker demo profile, approvals env, journey docs, ins
 - AGENTS.md banner for operators vs coding agents; honesty pass on shipped surface
 - Sample `priv/agents/*.toml` removed in favor of docs/agents.md
 - Compose **app** / **demo** profiles are mutually exclusive (no port 4000 clash)
-- **Launch messaging fence:** public copy leads with “control for your agent loop” / human judgment; park blended-workforce overclaim for flip
 
 ### Fixed
 
