@@ -73,43 +73,19 @@ defmodule Svarm.Usage.Query do
   end
 
   @doc """
-  Returns a simple session-wide cost total (in USD).
-  Useful for the orchestrator status bar.
+  Returns a session-wide spend summary: cost, tokens, and estimate flag.
+  Useful for the orchestrator status bar and dashboard cost card.
   """
   def session_cost_summary do
-    records = Ledger.list_all()
-
-    total =
-      Enum.reduce(records, 0.0, fn record, acc ->
-        case Rates.cost_usd(
-               record.provider,
-               record.model_id,
-               record.prompt_tokens || 0,
-               record.completion_tokens || 0
-             ) do
-          {:ok, cost} -> acc + cost
-          _ -> acc
-        end
-      end)
-
-    %{
-      total_cost_usd: Float.round(total, 4),
-      record_count: length(records)
-    }
+    Ledger.list_all() |> summarize_records()
   end
 
   @doc """
-  Returns actual cost (USD) and count for records since a monotonic timestamp.
+  Returns spend summary for records since a monotonic timestamp (ms).
   Uses model-specific pricing from Rates — no flat-rate estimation.
   """
   def cost_since(since_mono) when is_integer(since_mono) do
-    records = Ledger.records_since(since_mono)
-    cost = sum_usage_cost(records)
-
-    %{
-      total_cost_usd: Float.round(cost, 4),
-      record_count: length(records)
-    }
+    Ledger.records_since(since_mono) |> summarize_records()
   end
 
   @doc """
@@ -132,14 +108,26 @@ defmodule Svarm.Usage.Query do
 
   @doc """
   Returns total tokens consumed in the current session.
+
+  Prefer `session_cost_summary/0` when cost and tokens must stay aligned.
   """
   def session_totals do
-    totals = Ledger.totals_since(0)
+    summary = session_cost_summary()
 
     %{
-      prompt_tokens: totals[:prompt] || 0,
-      completion_tokens: totals[:completion] || 0,
-      record_count: totals[:count] || 0
+      prompt_tokens: summary.prompt_tokens,
+      completion_tokens: summary.completion_tokens,
+      record_count: summary.record_count
+    }
+  end
+
+  defp summarize_records(records) do
+    %{
+      total_cost_usd: Float.round(sum_usage_cost(records), 4),
+      record_count: length(records),
+      prompt_tokens: Enum.reduce(records, 0, &((&1.prompt_tokens || 0) + &2)),
+      completion_tokens: Enum.reduce(records, 0, &((&1.completion_tokens || 0) + &2)),
+      estimated: Enum.any?(records, & &1.estimated)
     }
   end
 end

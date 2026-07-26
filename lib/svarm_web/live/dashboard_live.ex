@@ -10,18 +10,23 @@ defmodule SvarmWeb.DashboardLive do
   @impl true
   def mount(_params, _session, socket) do
     socket =
-      if connected?(socket) do
-        Events.subscribe()
-        load_dashboard(socket)
-      else
-        assign(socket,
-          snapshot: empty_snapshot(),
-          time_window: "session",
-          window_cost: %{total_cost_usd: 0.0, record_count: 0},
-          error: nil,
-          connected: false
-        )
-      end
+      socket
+      |> assign(:page_title, "Dashboard")
+      |> then(fn s ->
+        if connected?(s) do
+          Events.subscribe()
+          load_dashboard(s)
+        else
+          assign(s,
+            snapshot: empty_snapshot(),
+            time_window: "session",
+            window_cost: empty_window_cost(),
+            error: nil,
+            connected: false,
+            now_mono: System.monotonic_time(:millisecond)
+          )
+        end
+      end)
 
     {:ok, socket}
   end
@@ -62,19 +67,16 @@ defmodule SvarmWeb.DashboardLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash}>
-      <div class="max-w-5xl mx-auto space-y-6">
-        <div class="flex items-center justify-between">
+    <Layouts.app flash={@flash} active_nav={:dashboard}>
+      <div class="max-w-5xl mx-auto space-y-5">
+        <div class="flex items-start justify-between gap-4">
           <div>
             <h1 class="text-2xl font-semibold tracking-tight">Dashboard</h1>
-            <p class="text-sm opacity-70">Agents, cost, and work waiting on humans</p>
+            <p class="text-sm opacity-70">Work waiting on humans, spend, and who's live</p>
           </div>
-          <div class="flex gap-2 items-center">
-            <button type="button" phx-click="refresh" class="btn btn-sm btn-ghost">
-              Refresh
-            </button>
-            <a href={~p"/board"} class="btn btn-sm btn-outline">Board</a>
-          </div>
+          <button type="button" phx-click="refresh" class="btn btn-sm btn-ghost shrink-0">
+            Refresh
+          </button>
         </div>
 
         <%= if @error do %>
@@ -83,18 +85,22 @@ defmodule SvarmWeb.DashboardLive do
           <%= if not @connected do %>
             <.loading_skeleton />
           <% else %>
-            <.time_window_picker window={@time_window} />
-
-            <.metrics_bar
-              task_distribution={@snapshot.task_distribution}
-              cost={@window_cost}
-              totals={@snapshot.session_totals}
+            <.system_status
               orchestrator={@snapshot.orchestrator}
+              human_wait={@snapshot.human_wait}
+              now_mono={@now_mono}
             />
 
             <.human_wait_strip summary={@snapshot.human_wait} />
 
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <.spend_card cost={@window_cost} window={@time_window} />
+
+            <.queue_strip
+              task_distribution={@snapshot.task_distribution}
+              orchestrator={@snapshot.orchestrator}
+            />
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
               <.agent_roster agents={@snapshot.agent_roster} />
               <.task_breakdown distribution={@snapshot.task_distribution} />
             </div>
@@ -111,21 +117,11 @@ defmodule SvarmWeb.DashboardLive do
 
   defp loading_skeleton(assigns) do
     ~H"""
-    <div class="space-y-6 animate-pulse">
-      <div class="flex gap-1">
-        <div class="h-6 w-16 rounded bg-base-300" />
-        <div class="h-6 w-12 rounded bg-base-300" />
-        <div class="h-6 w-12 rounded bg-base-300" />
-      </div>
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <%= for _ <- 1..4 do %>
-          <div class="rounded-lg border border-base-300 bg-base-200/60 px-4 py-3">
-            <div class="h-3 w-12 rounded bg-base-300 mb-2" />
-            <div class="h-6 w-8 rounded bg-base-300" />
-          </div>
-        <% end %>
-      </div>
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <div class="space-y-5 animate-pulse">
+      <div class="h-5 w-64 rounded bg-base-300" />
+      <div class="rounded-lg border border-base-300 bg-base-200/60 h-16" />
+      <div class="rounded-lg border border-base-300 bg-base-200/60 h-24" />
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <div class="rounded-lg border border-base-300 bg-base-200/60 p-4 h-48" />
         <div class="rounded-lg border border-base-300 bg-base-200/60 p-4 h-48" />
       </div>
@@ -147,75 +143,49 @@ defmodule SvarmWeb.DashboardLive do
     """
   end
 
-  attr :window, :string, required: true
-
-  defp time_window_picker(assigns) do
-    ~H"""
-    <div class="flex items-center gap-1" role="group" aria-label="Time window">
-      <%= for {value, label} <- [{"session", "Session"}, {"24h", "24h"}, {"7d", "7d"}] do %>
-        <button
-          type="button"
-          phx-click="set_window"
-          phx-value-window={value}
-          class={[
-            "btn btn-xs",
-            @window == value && "btn-primary",
-            @window != value && "btn-ghost"
-          ]}
-        >
-          {label}
-        </button>
-      <% end %>
-    </div>
-    """
-  end
-
-  attr :task_distribution, :map, required: true
-  attr :cost, :map, required: true
-  attr :totals, :map, required: true
   attr :orchestrator, :map, required: true
+  attr :human_wait, :map, required: true
+  attr :now_mono, :integer, required: true
 
-  defp metrics_bar(assigns) do
-    total_tasks = assigns.task_distribution |> Map.values() |> Enum.sum()
-    running = Map.get(assigns.orchestrator, :running, 0)
-    cost = assigns.cost.total_cost_usd || 0.0
-    tokens = (assigns.totals[:prompt_tokens] || 0) + (assigns.totals[:completion_tokens] || 0)
+  defp system_status(assigns) do
+    o = assigns.orchestrator || %{}
+    running = Map.get(o, :running, 0)
+    wait_total = Map.get(assigns.human_wait || %{}, :total, 0)
+    last_poll = last_poll_label(o, assigns.now_mono)
 
     assigns =
       assign(assigns,
-        total_tasks: total_tasks,
         running: running,
-        cost: cost,
-        tokens: tokens
+        wait_total: wait_total,
+        last_poll: last_poll,
+        live?: running > 0
       )
 
     ~H"""
-    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-      <.metric_card label="Tickets" value={@total_tasks} />
-      <.metric_card label="Running" value={@running} accent={@running > 0} />
-      <.metric_card label="Cost" value={"$#{Float.round(@cost, 2)}"} mono />
-      <.metric_card label="Tokens" value={format_tokens(@tokens)} />
-    </div>
-    """
-  end
-
-  attr :label, :string, required: true
-  attr :value, :any, required: true
-  attr :accent, :boolean, default: false
-  attr :mono, :boolean, default: false
-
-  defp metric_card(assigns) do
-    ~H"""
-    <div class="rounded-lg border border-base-300 bg-base-200/60 px-4 py-3">
-      <p class="text-xs opacity-60">{@label}</p>
-      <p class={[
-        "text-xl font-semibold mt-0.5",
-        @accent && "text-primary",
-        @mono && "font-mono"
+    <p class="text-xs opacity-70 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+      <span class={[
+        "inline-flex items-center gap-1 font-medium",
+        @live? && "text-primary",
+        !@live? && "text-base-content/70"
       ]}>
-        {@value}
-      </p>
-    </div>
+        <span class={[
+          "size-1.5 rounded-full",
+          @live? && "bg-primary motion-safe:animate-pulse",
+          !@live? && "bg-base-content/30"
+        ]} />
+        {if @live?, do: "#{@running} running", else: "Idle"}
+      </span>
+      <%= if @last_poll do %>
+        <span aria-hidden="true">·</span>
+        <span>last poll {@last_poll}</span>
+      <% end %>
+      <span aria-hidden="true">·</span>
+      <span>
+        {if @wait_total > 0,
+          do: "#{@wait_total} waiting on humans",
+          else: "nothing waiting on humans"}
+      </span>
+    </p>
     """
   end
 
@@ -238,24 +208,139 @@ defmodule SvarmWeb.DashboardLive do
         </p>
       </div>
       <div class="flex gap-2">
-        <a href={~p"/approvals"} class="btn btn-xs btn-outline">Approvals</a>
-        <a href={~p"/board"} class="btn btn-xs btn-primary">Board</a>
+        <%= if @summary.pending_approval > 0 do %>
+          <a href={~p"/approvals"} class="btn btn-xs btn-primary">Approvals</a>
+          <a href={~p"/board"} class="btn btn-xs btn-outline">Board</a>
+        <% else %>
+          <%= if @summary.review > 0 do %>
+            <a href={~p"/board"} class="btn btn-xs btn-primary">Open board</a>
+          <% else %>
+            <a href={~p"/board"} class="btn btn-xs btn-outline">Board</a>
+          <% end %>
+        <% end %>
       </div>
     </div>
+    """
+  end
+
+  attr :cost, :map, required: true
+  attr :window, :string, required: true
+
+  defp spend_card(assigns) do
+    cost = assigns.cost || empty_window_cost()
+    tokens = (cost[:prompt_tokens] || 0) + (cost[:completion_tokens] || 0)
+    usd = cost[:total_cost_usd] || 0.0
+    estimated? = cost[:estimated] == true
+
+    assigns =
+      assign(assigns,
+        usd: usd,
+        tokens: tokens,
+        estimated?: estimated?,
+        records: cost[:record_count] || 0
+      )
+
+    ~H"""
+    <section class="rounded-lg border border-base-300 bg-base-200/60 p-4">
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <div>
+          <h2 class="text-sm font-semibold">Spend</h2>
+          <p class="text-xs opacity-60 mt-0.5">Window applies to cost and tokens only</p>
+        </div>
+        <.time_window_picker window={@window} />
+      </div>
+      <div class="flex flex-wrap items-baseline gap-x-6 gap-y-2">
+        <div>
+          <p class="text-xs opacity-60">Cost</p>
+          <p class="text-xl font-semibold font-mono mt-0.5">
+            ${Float.round(@usd, 2)}
+            <%= if @estimated? do %>
+              <span class="text-xs font-sans font-medium opacity-60 ml-1">est.</span>
+            <% end %>
+          </p>
+        </div>
+        <div>
+          <p class="text-xs opacity-60">Tokens</p>
+          <p class="text-xl font-semibold font-mono mt-0.5">{format_tokens(@tokens)}</p>
+        </div>
+        <div class="text-xs opacity-50 self-end pb-1">
+          {@records} ledger {if @records == 1, do: "record", else: "records"}
+        </div>
+      </div>
+    </section>
+    """
+  end
+
+  attr :window, :string, required: true
+
+  defp time_window_picker(assigns) do
+    ~H"""
+    <div class="flex items-center gap-1" role="group" aria-label="Spend time window">
+      <%= for {value, label} <- [{"session", "Session"}, {"24h", "24h"}, {"7d", "7d"}] do %>
+        <button
+          type="button"
+          phx-click="set_window"
+          phx-value-window={value}
+          class={[
+            "btn btn-xs",
+            @window == value && "btn-primary",
+            @window != value && "btn-ghost"
+          ]}
+        >
+          {label}
+        </button>
+      <% end %>
+    </div>
+    """
+  end
+
+  attr :task_distribution, :map, required: true
+  attr :orchestrator, :map, required: true
+
+  defp queue_strip(assigns) do
+    total = assigns.task_distribution |> Map.values() |> Enum.sum()
+    running = Map.get(assigns.orchestrator || %{}, :running, 0)
+
+    assigns = assign(assigns, total_tasks: total, running: running)
+
+    ~H"""
+    <p class="text-xs opacity-70 flex flex-wrap gap-x-3 gap-y-1">
+      <span>
+        Tickets <span class="font-mono font-medium text-base-content">{@total_tasks}</span>
+      </span>
+      <span>
+        Running
+        <span class={[
+          "font-mono font-medium",
+          @running > 0 && "text-primary",
+          @running == 0 && "text-base-content"
+        ]}>
+          {@running}
+        </span>
+      </span>
+    </p>
     """
   end
 
   attr :agents, :list, required: true
 
   defp agent_roster(assigns) do
+    agents = assigns.agents || []
+    {active, idle} = Enum.split_with(agents, &(&1.busy? or &1.total_assigned > 0))
+    # If nobody has work yet, show the full registered team so empty isn't blank.
+    show = if active == [], do: agents, else: active
+    idle_count = if active == [], do: 0, else: length(idle)
+
+    assigns = assign(assigns, show: show, idle_count: idle_count)
+
     ~H"""
     <div class="rounded-lg border border-base-300 bg-base-200/60 p-4">
-      <h2 class="text-sm font-semibold mb-3">Agent roster</h2>
-      <%= if @agents == [] do %>
-        <p class="text-sm opacity-50">No agents registered. Add agents in agents.toml.</p>
+      <h2 class="text-sm font-semibold mb-3">Who's working</h2>
+      <%= if @show == [] do %>
+        <p class="text-sm opacity-50">No agents registered. Add agents in Setup.</p>
       <% else %>
         <ul class="space-y-2">
-          <%= for agent <- @agents do %>
+          <%= for agent <- @show do %>
             <li class="flex items-center justify-between gap-3 rounded-md bg-base-100/80 px-3 py-2">
               <div class="flex items-center gap-2 min-w-0">
                 <span class={[
@@ -267,7 +352,7 @@ defmodule SvarmWeb.DashboardLive do
                 </span>
                 <div class="min-w-0">
                   <p class="text-sm font-medium truncate">{agent.display_name}</p>
-                  <p class="text-[10px] opacity-50 truncate">
+                  <p class="text-xs opacity-60 truncate">
                     {agent.role || agent.model || "agent"}
                   </p>
                 </div>
@@ -281,27 +366,31 @@ defmodule SvarmWeb.DashboardLive do
                     </span>
                   <% end %>
                   <span
-                    class="font-mono opacity-60"
-                    title={"#{agent.active_count} active / #{agent.completed_count} done / #{agent.failed_count} failed"}
+                    class="font-mono opacity-70"
+                    title={"#{agent.active_count} active · #{agent.completed_count} done · #{agent.failed_count} failed"}
                   >
-                    {agent.active_count}a {agent.completed_count}d
+                    {agent.active_count} active · {agent.completed_count} done
                     <%= if agent.failed_count > 0 do %>
-                      <span class="text-error">{agent.failed_count}f</span>
+                      <span class="text-error">· {agent.failed_count} failed</span>
                     <% end %>
                   </span>
                 </div>
                 <%= if agent.running_task_title do %>
-                  <p
-                    class="text-[10px] opacity-50 truncate max-w-[180px]"
+                  <a
+                    href={~p"/board?#{[task: agent.running_task_id]}"}
+                    class="text-xs opacity-60 truncate max-w-[180px] hover:opacity-100 hover:text-primary"
                     title={agent.running_task_title}
                   >
                     {agent.running_task_title}
-                  </p>
+                  </a>
                 <% end %>
               </div>
             </li>
           <% end %>
         </ul>
+        <%= if @idle_count > 0 do %>
+          <p class="text-xs opacity-50 mt-3">{@idle_count} idle</p>
+        <% end %>
       <% end %>
     </div>
     """
@@ -378,11 +467,18 @@ defmodule SvarmWeb.DashboardLive do
             <tbody>
               <%= for run <- @runs do %>
                 <tr class="hover">
-                  <td class="max-w-[200px] truncate text-sm">{run.title}</td>
+                  <td class="max-w-[220px] truncate text-sm">
+                    <a
+                      href={~p"/board?#{[task: run.id]}"}
+                      class="hover:text-primary hover:underline underline-offset-2"
+                    >
+                      {run.title}
+                    </a>
+                  </td>
                   <td class="text-sm">{run.display_name}</td>
                   <td>
                     <span class={[
-                      "badge badge-xs",
+                      "badge badge-sm",
                       run.status == "done" && "badge-success",
                       run.status == "review" && "badge-warning",
                       run.status == "failed" && "badge-error"
@@ -392,9 +488,9 @@ defmodule SvarmWeb.DashboardLive do
                   </td>
                   <td class="text-right font-mono text-xs">
                     <%= if run.cost_usd do %>
-                      ${run.cost_usd}
+                      ${run.cost_usd}{if run.estimated, do: " est.", else: ""}
                     <% else %>
-                      <span class="opacity-40">-</span>
+                      <span class="opacity-40">—</span>
                     <% end %>
                   </td>
                 </tr>
@@ -418,16 +514,20 @@ defmodule SvarmWeb.DashboardLive do
       window_cost: cost,
       time_window: socket.assigns[:time_window] || "session",
       error: nil,
-      connected: true
+      connected: true,
+      now_mono: System.monotonic_time(:millisecond),
+      page_title: "Dashboard"
     )
   rescue
     e in [DBConnection.ConnectionError, ErlangError, ArgumentError] ->
       assign(socket,
         snapshot: empty_snapshot(),
-        window_cost: %{total_cost_usd: 0.0, record_count: 0},
+        window_cost: empty_window_cost(),
         time_window: socket.assigns[:time_window] || "session",
         error: Exception.message(e),
-        connected: true
+        connected: true,
+        now_mono: System.monotonic_time(:millisecond),
+        page_title: "Dashboard"
       )
   end
 
@@ -439,13 +539,41 @@ defmodule SvarmWeb.DashboardLive do
       agent_roster: [],
       task_distribution: %{},
       human_wait: %{pending_approval: 0, review: 0, total: 0},
-      session_cost: %{total_cost_usd: 0.0, record_count: 0},
+      session_cost: empty_window_cost(),
       session_totals: %{prompt_tokens: 0, completion_tokens: 0, record_count: 0},
       recent_runs: []
+    }
+  end
+
+  defp empty_window_cost do
+    %{
+      total_cost_usd: 0.0,
+      record_count: 0,
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      estimated: false
     }
   end
 
   defp format_tokens(n) when n >= 1_000_000, do: "#{Float.round(n / 1_000_000, 1)}M"
   defp format_tokens(n) when n >= 1_000, do: "#{Float.round(n / 1_000, 1)}K"
   defp format_tokens(n), do: "#{n}"
+
+  defp last_poll_label(o, now_mono) when is_map(o) and is_integer(now_mono) do
+    case Map.get(o, :last_tick_mono_ms) do
+      ms when is_integer(ms) ->
+        age_s = max(div(now_mono - ms, 1000), 0)
+        format_age(age_s)
+
+      _ ->
+        nil
+    end
+  end
+
+  defp last_poll_label(_, _), do: nil
+
+  defp format_age(s) when s < 5, do: "just now"
+  defp format_age(s) when s < 60, do: "#{s}s ago"
+  defp format_age(s) when s < 3600, do: "#{div(s, 60)}m ago"
+  defp format_age(s), do: "#{div(s, 3600)}h ago"
 end

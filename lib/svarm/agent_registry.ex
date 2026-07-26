@@ -36,10 +36,11 @@ defmodule Svarm.AgentRegistry do
     }
   end
 
-  defp normalize_assignee(nil), do: "default"
-  defp normalize_assignee(""), do: "default"
-  defp normalize_assignee(name) when is_binary(name), do: name
-  defp normalize_assignee(_), do: "default"
+  @doc "Normalize an assignee key (nil/blank → \"default\")."
+  def normalize_assignee(nil), do: "default"
+  def normalize_assignee(""), do: "default"
+  def normalize_assignee(name) when is_binary(name), do: name
+  def normalize_assignee(_), do: "default"
 
   defp blank_to_nil(nil), do: nil
   defp blank_to_nil(""), do: nil
