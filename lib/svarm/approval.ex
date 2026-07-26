@@ -4,16 +4,45 @@ defmodule Svarm.Approval do
 
   Trust is workflow-driven: `approval.mode` and `approval.trusted_assignees`.
   Tasks held in kanban status `pending_approval` until approved.
+
+  Surface API (`list_pending/0`, `approve/1`, `reject/2`) uses the **active**
+  tracker adapter + config — same settings/workflow resolve path as the
+  orchestrator and board — not a hardcoded Local adapter.
   """
 
-  alias Svarm.{ProfileRouter, Tracker}
+  alias Svarm.{ProfileRouter, Settings, Tracker, Workflow}
+  alias Svarm.Workflow.Config, as: WorkflowConfig
 
   @status_pending "pending_approval"
+  @tracker_override {__MODULE__, :tracker_override}
 
   def pending_status, do: @status_pending
 
-  @doc "Returns the tracker adapter to use."
-  def tracker, do: Tracker.Local
+  @doc """
+  Returns the active tracker adapter (same resolve as orchestrator/board).
+  """
+  def tracker do
+    {adapter, _config} = resolve_tracker()
+    adapter
+  end
+
+  @doc """
+  Returns the active tracker config (workflow + Settings overlay).
+  """
+  def tracker_config do
+    {_adapter, config} = resolve_tracker()
+    config
+  end
+
+  @doc false
+  def __override_tracker__(adapter, config) when is_atom(adapter) and is_map(config) do
+    Process.put(@tracker_override, {adapter, config})
+  end
+
+  @doc false
+  def __clear_tracker_override__ do
+    Process.delete(@tracker_override)
+  end
 
   @doc "Parsed approval settings from workflow front matter."
   def config_from_map(config) when is_map(config) do
@@ -82,28 +111,31 @@ defmodule Svarm.Approval do
   ## Surface API (tracker-backed)
 
   def list_pending do
-    {:ok, issues} = tracker().list_issues(%{}, status: @status_pending)
+    {adapter, config} = resolve_tracker()
+    {:ok, issues} = adapter.list_issues(config, status: @status_pending)
     issues
   end
 
   def approve(task_id) when is_binary(task_id) do
-    case tracker().get_issue(%{}, task_id) do
+    {adapter, config} = resolve_tracker()
+
+    case adapter.get_issue(config, task_id) do
       {:ok, %{assignee: assignee}} when is_binary(assignee) and assignee != "" ->
         if demo_assignee?(assignee) do
           {:error, :demo_task}
         else
-          do_approve(task_id)
+          do_approve(adapter, config, task_id)
         end
 
       _ ->
-        do_approve(task_id)
+        do_approve(adapter, config, task_id)
     end
   end
 
-  defp do_approve(task_id) do
-    case tracker().get_issue(%{}, task_id) do
+  defp do_approve(adapter, config, task_id) do
+    case adapter.get_issue(config, task_id) do
       {:ok, %{status: @status_pending}} ->
-        :ok = tracker().update_status(%{}, task_id, "todo")
+        :ok = adapter.update_status(config, task_id, "todo")
         broadcast(:approved, task_id)
         :ok
 
@@ -117,26 +149,27 @@ defmodule Svarm.Approval do
 
   def reject(task_id, to_status \\ "failed") when is_binary(task_id) do
     if to_status in ["failed", "review"] do
-      do_reject(task_id, to_status)
+      {adapter, config} = resolve_tracker()
+      do_reject(adapter, config, task_id, to_status)
     else
       {:error, :invalid_status}
     end
   end
 
-  defp do_reject(task_id, to_status) do
-    case tracker().get_issue(%{}, task_id) do
+  defp do_reject(adapter, config, task_id, to_status) do
+    case adapter.get_issue(config, task_id) do
       {:ok, %{assignee: assignee, status: @status_pending}}
       when is_binary(assignee) and assignee != "" ->
         if demo_assignee?(assignee) do
           {:error, :demo_task}
         else
-          :ok = tracker().update_status(%{}, task_id, to_status)
+          :ok = adapter.update_status(config, task_id, to_status)
           broadcast(:rejected, task_id)
           :ok
         end
 
       {:ok, %{status: @status_pending}} ->
-        :ok = tracker().update_status(%{}, task_id, to_status)
+        :ok = adapter.update_status(config, task_id, to_status)
         broadcast(:rejected, task_id)
         :ok
 
@@ -163,4 +196,27 @@ defmodule Svarm.Approval do
   end
 
   defp demo_assignee?(assignee), do: String.starts_with?(assignee, "demo_")
+
+  # Same settings/workflow resolve path as Board / Orchestrator.
+  defp resolve_tracker do
+    case Process.get(@tracker_override) do
+      {adapter, config} when is_atom(adapter) and is_map(config) ->
+        {adapter, config}
+
+      _ ->
+        tc = active_tracker_config()
+
+        case tc[:kind] || :local do
+          :github -> {Tracker.GitHub, tc}
+          _ -> {Tracker.Local, tc}
+        end
+    end
+  end
+
+  defp active_tracker_config do
+    workflow = Workflow.Store.get()
+    cfg = if workflow, do: WorkflowConfig.from(workflow), else: %{}
+    base = cfg[:tracker_config] || %{}
+    Settings.Resolve.tracker_overlay(base)
+  end
 end
