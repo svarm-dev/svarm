@@ -33,6 +33,9 @@ defmodule Svarm.Dashboard do
   @doc """
   Cost summary for a rolling time window. Accepts "session", "24h", or "7d".
   Uses model-specific pricing from Usage.Rates — no flat-rate estimation.
+
+  Returns cost, tokens, record_count, and estimated in one map so the UI
+  never pairs windowed cost with unscoped tokens.
   """
   def cost_for_window("session"), do: Usage.session_cost_summary()
 
@@ -47,19 +50,24 @@ defmodule Svarm.Dashboard do
   Merges agents.toml definitions with live task data.
   """
   def agent_roster(tasks, agents, orchestrator) do
-    active_assignees = Map.get(orchestrator, :active_assignees, [])
+    active_assignees =
+      orchestrator
+      |> Map.get(:active_assignees, [])
+      |> Enum.map(&AgentRegistry.normalize_assignee/1)
+
     running_map = Map.get(orchestrator, :running_started, %{})
 
     agent_keys =
-      (Map.keys(agents) ++ Enum.map(tasks, & &1.assignee))
-      |> Enum.reject(&is_nil/1)
+      (Map.keys(agents) ++ Enum.map(tasks, &AgentRegistry.normalize_assignee(&1.assignee)))
       |> Enum.uniq()
 
     Enum.map(agent_keys, fn key ->
       identity = AgentRegistry.identity(key, agents)
       agent_config = Map.get(agents, key, %{})
 
-      assigned_tasks = Enum.filter(tasks, &(&1.assignee == key))
+      assigned_tasks =
+        Enum.filter(tasks, &(AgentRegistry.normalize_assignee(&1.assignee) == key))
+
       completed = Enum.count(assigned_tasks, &(&1.status in ["done", "review"]))
       failed = Enum.count(assigned_tasks, &(&1.status == "failed"))
       active = Enum.count(assigned_tasks, &(&1.status == "in_progress"))
@@ -108,6 +116,7 @@ defmodule Svarm.Dashboard do
         assignee: task.assignee,
         display_name: identity.display_name,
         cost_usd: cost && cost.total_cost_usd,
+        estimated: cost && cost.estimated,
         created_at: task.created_at
       }
     end)

@@ -31,32 +31,53 @@ defmodule SvarmWeb.Layouts do
     default: nil,
     doc: "the current [scope](https://phoenix.hexdocs.pm/scopes.html)"
 
+  attr :active_nav, :atom,
+    default: nil,
+    doc: "which primary nav item is current (:dashboard | :board | :setup | :approvals)"
+
   slot :inner_block, required: true
 
   def app(assigns) do
     ~H"""
-    <header class="navbar px-4 sm:px-6 lg:px-8">
-      <div class="flex-1">
-        <a href="/" class="flex-1 flex w-fit items-center gap-2">
-          <img src={~p"/images/logo.svg"} width="36" />
-          <span class="text-sm font-semibold">Svärm</span>
+    <header class="navbar min-h-14 gap-3 px-4 sm:px-6 lg:px-8">
+      <div class="navbar-start shrink-0">
+        <a href="/" class="flex items-center gap-2 no-underline text-base-content">
+          <img src={~p"/images/logo.svg"} width="32" height="32" alt="" class="size-8" />
+          <span class="text-sm font-semibold tracking-tight">Svärm</span>
         </a>
       </div>
-      <div class="flex-none">
-        <ul class="flex flex-column px-1 space-x-4 items-center">
-          <li>
-            <a href={~p"/dashboard"} class="btn btn-ghost">Dashboard</a>
-          </li>
-          <li>
-            <a href={~p"/board"} class="btn btn-ghost">Board</a>
-          </li>
-          <li>
-            <a href={~p"/approvals"} class="btn btn-ghost">Approvals</a>
-          </li>
-          <li>
-            <.theme_toggle />
-          </li>
-        </ul>
+      <div class="navbar-end min-w-0">
+        <nav aria-label="Primary" class="flex items-center gap-0.5 sm:gap-1 overflow-x-auto">
+          <a
+            href={~p"/dashboard"}
+            class={["btn btn-ghost btn-sm", @active_nav == :dashboard && "btn-active"]}
+            aria-current={@active_nav == :dashboard && "page"}
+          >
+            Dashboard
+          </a>
+          <a
+            href={~p"/board"}
+            class={["btn btn-ghost btn-sm", @active_nav == :board && "btn-active"]}
+            aria-current={@active_nav == :board && "page"}
+          >
+            Board
+          </a>
+          <a
+            href={~p"/setup"}
+            class={["btn btn-ghost btn-sm", @active_nav == :setup && "btn-active"]}
+            aria-current={@active_nav == :setup && "page"}
+          >
+            Setup
+          </a>
+          <a
+            href={~p"/approvals"}
+            class={["btn btn-ghost btn-sm", @active_nav == :approvals && "btn-active"]}
+            aria-current={@active_nav == :approvals && "page"}
+          >
+            Approvals
+          </a>
+          <.theme_toggle />
+        </nav>
       </div>
     </header>
 

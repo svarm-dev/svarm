@@ -91,14 +91,45 @@ defmodule Svarm.Settings do
     provider_configured? = provider_configured?()
     tracker_ready? = tracker_ready?()
     agent_count = agent_count()
+    default_model = default_model()
 
     %{
       provider_configured?: provider_configured?,
+      provider_key_in_settings?: provider_key_in_settings?(),
       tracker_ready?: tracker_ready?,
       tracker_source: tracker_source(),
       agent_count: agent_count,
+      default_model: default_model,
+      default_model_set?: present?(default_model),
       setup_complete?: provider_configured? and tracker_ready? and agent_count > 0
     }
+  end
+
+  def provider_key_in_settings? do
+    match?(key when is_binary(key) and key != "", get_secret("provider.openrouter", "api_key"))
+  end
+
+  def default_model do
+    agents =
+      case get_section("agents") do
+        {:ok, m} -> m
+        :error -> %{}
+      end
+
+    case get_in(agents, ["default", "model"]) do
+      model when is_binary(model) and model != "" ->
+        model
+
+      _ ->
+        case get_section("provider.openrouter") do
+          {:ok, p} ->
+            p = stringify_keys(p)
+            blank_to_nil(p["default_model"])
+
+          :error ->
+            nil
+        end
+    end
   end
 
   def provider_configured? do
@@ -123,22 +154,37 @@ defmodule Svarm.Settings do
 
   @doc """
   Smoke-test OpenRouter with current resolved key (Settings then env).
-  Returns `{:ok, model_count}` or `{:error, reason}`.
+
+  Returns `{:ok, %{count: n, models: [id, ...]}}` (models capped for UI chips)
+  or `{:error, reason}`.
   """
   def test_provider do
     case OpenRouter.list_models([]) do
-      {:ok, models} -> {:ok, length(models)}
-      {:error, reason} -> {:error, format_error(reason)}
+      {:ok, models} when is_list(models) ->
+        {:ok, %{count: length(models), models: Enum.take(models, 12)}}
+
+      {:error, reason} ->
+        {:error, format_error(reason)}
     end
   end
 
   @doc """
   Smoke-test tracker using Settings overlay on workflow tracker config.
   Local always succeeds. GitHub lists eligible issues once.
+
+  When `form_attrs` is provided, tests those values without writing Settings
+  (blank PAT keeps the stored/env secret for the probe only).
   """
   def test_tracker do
     tc = Resolve.tracker_overlay(workflow_tracker_config())
     test_tracker_config(tc)
+  end
+
+  def test_tracker(form_attrs) when is_map(form_attrs) do
+    form_attrs
+    |> stringify_keys()
+    |> tracker_config_from_form()
+    |> test_tracker_config()
   end
 
   defp test_tracker_config(%{kind: :local}), do: {:ok, :local}
@@ -242,10 +288,63 @@ defmodule Svarm.Settings do
     cfg[:tracker_config] || %{kind: :local}
   end
 
+  defp tracker_config_from_form(form) do
+    base = Resolve.tracker_overlay(workflow_tracker_config())
+    kind = if form["tracker_kind"] == "github", do: :github, else: :local
+
+    %{
+      kind: kind,
+      auth: :token,
+      owner: blank_to_nil(form["tracker_owner"]) || base[:owner],
+      repo: blank_to_nil(form["tracker_repo"]) || base[:repo],
+      api_key: form_tracker_api_key(form, base),
+      required_labels: form_tracker_labels(form, base)
+    }
+  end
+
+  defp form_tracker_api_key(form, base) do
+    case form["tracker_api_key"] do
+      key when is_binary(key) and key != "" -> key
+      _ -> base[:api_key] || get_secret("tracker", "api_key")
+    end
+  end
+
+  defp form_tracker_labels(form, base) do
+    case form["tracker_labels"] || form["required_labels"] do
+      list when is_list(list) -> Enum.map(list, &to_string/1)
+      bin when is_binary(bin) and bin != "" -> parse_label_csv(bin)
+      _ -> base[:required_labels] || []
+    end
+  end
+
+  defp parse_label_csv(bin) do
+    bin
+    |> String.split(",", trim: true)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+  end
+
+  defp blank_to_nil(nil), do: nil
+  defp blank_to_nil(""), do: nil
+  defp blank_to_nil(v), do: v
+
   defp present?(nil), do: false
   defp present?(""), do: false
   defp present?(_), do: true
 
-  defp format_error(reason) when is_atom(reason), do: Atom.to_string(reason)
-  defp format_error(reason), do: inspect(reason)
+  defp format_error(reason) when is_atom(reason) do
+    reason
+    |> Atom.to_string()
+    |> String.replace("_", " ")
+  end
+
+  defp format_error(reason) when is_map(reason) do
+    reason
+    |> stringify_keys()
+    |> then(fn m -> m["message"] || m["reason"] end)
+    |> case do
+      msg when is_binary(msg) and msg != "" -> msg
+      _ -> "unexpected error — check credentials and try again"
+    end
+  end
 end
