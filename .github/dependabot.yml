@@ -1,5 +1,6 @@
 version: 2
 updates:
+  # Patch bumps land in one PR; minor/major stay separate for review.
   - package-ecosystem: mix
     directory: "/"
     schedule:
@@ -7,7 +8,14 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - dependencies
+    groups:
+      hex-patches:
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
 
+  # All Actions pin bumps in one monthly PR.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
@@ -15,3 +23,7 @@ updates:
     open-pull-requests-limit: 3
     labels:
       - dependencies
+    groups:
+      github-actions:
+        patterns:
+          - "*"
