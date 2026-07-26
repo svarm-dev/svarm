@@ -28,7 +28,7 @@ jobs:
           otp-version: "29"
 
       - name: Cache deps and build
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             deps
@@ -38,7 +38,7 @@ jobs:
             ${{ runner.os }}-mix-
 
       - name: Cache Dialyzer PLT
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: _build/test/*_plt*
           key: ${{ runner.os }}-plt-${{ hashFiles('mix.lock') }}
