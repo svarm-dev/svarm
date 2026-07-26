@@ -19,7 +19,7 @@ jobs:
       SECRET_KEY_BASE: "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
