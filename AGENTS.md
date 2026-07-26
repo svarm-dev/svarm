@@ -172,6 +172,56 @@ Do **not** put Svärm architecture rules only in skills. If every edit should kn
 
 Svärm product law always overrides generic Phoenix advice when they conflict (SQLite-only, KanbanBridge-only DB access, AgentRunner-only shell-out, no Postgres).
 
+## GitHub issue → PR workflow (coding agents)
+
+**Role split:** Hermes shapes issues/ADRs; **Pi (or any coding agent) implements**; **human merges**. Do not merge PRs unless the human explicitly asks.
+
+**Required tooling:** `gh` installed and authenticated (`gh auth status`). Prefer `gh` over raw REST. Repo remote is **`origin` → `github.com/svarm-dev/svarm`** only.
+
+### Loop
+
+1. **Intake** — `gh issue view N` (treat acceptance criteria as law). Optional: comment that you are taking it.
+2. **Sync** — `git fetch origin && git checkout main && git pull --ff-only origin main`
+3. **Branch** — conventional short name from main:
+   - `fix/…` · `feat/…` · `docs/…` · `refactor/…` · `test/…` · `ci/…`
+4. **Implement** — only what the issue AC requires. No drive-by refactors.
+5. **Verify** — `mix precommit` before push (larger changes: `mix ci` when practical).
+6. **Push + PR**
+   ```bash
+   git push -u origin HEAD
+   gh pr create --title "type: short description" --body "$(cat <<'EOF'
+   ## Summary
+   - …
+
+   ## Test plan
+   - [ ] mix precommit / relevant tests
+   - [ ] …
+
+   Closes #N
+   EOF
+   )"
+   ```
+7. **CI** — `gh pr checks` (or `gh pr checks --watch`). On red: `gh run view <id> --log-failed` → fix → push. **Max 3 fix loops**, then stop and report blocked with logs/PR URL.
+8. **Hand off** — reply with PR URL, summary, residual risk. **Do not merge.**
+
+### Hard rules
+
+| Do | Don't |
+|----|--------|
+| One issue → one branch → one PR | Expand scope past the issue AC |
+| `Closes #N` (or `Fixes #N`) in the PR body | Close the issue manually mid-work |
+| Comment on the issue if blocked | Invent follow-up work “while here” |
+| Keep CI green before pinging the human | Merge to `main` |
+| Commit only intentional paths | Commit `.env`, PEMs, keys, local config |
+
+### PR title / commits
+
+Conventional Commits: `type(scope): summary` — types `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `ci`, `perf`.
+
+### When the issue includes docs AC
+
+Ship docs in the **same PR** as the code (example: issue #17 requires AGENTS/README honesty with the Approval fix). Do not open a sibling “docs later” PR unless the human says so.
+
 ## Elixir conventions
 
 - **Write for the public repo** — @moduledoc, @doc, and comments should be understandable to someone reading the GitHub repo for the first time. Never reference private maintainer docs, plan step numbers, or build priorities that aren't in the public repo. Describe what the module IS and what it DOES, not its history.
