@@ -565,32 +565,33 @@ defmodule SvarmWeb.SetupLive do
   end
 
   defp build_form(provider, tracker, agent) do
-    kind = to_string(tracker[:kind] || tracker["kind"] || "local")
-
-    labels =
-      case tracker[:required_labels] || tracker["required_labels"] do
-        list when is_list(list) -> Enum.join(list, ", ")
-        bin when is_binary(bin) -> bin
-        _ -> ""
-      end
-
-    model =
-      agent["model"] ||
-        provider[:default_model] ||
-        provider["default_model"] ||
-        ""
+    provider = stringify_map(provider)
+    tracker = stringify_map(tracker)
+    agent = stringify_map(agent)
 
     %{
       "provider_api_key" => "",
-      "tracker_kind" => kind,
-      "tracker_owner" => tracker[:owner] || tracker["owner"] || "",
-      "tracker_repo" => tracker[:repo] || tracker["repo"] || "",
+      "tracker_kind" => to_string(tracker["kind"] || "local"),
+      "tracker_owner" => tracker["owner"] || "",
+      "tracker_repo" => tracker["repo"] || "",
       "tracker_api_key" => "",
-      "tracker_labels" => labels,
+      "tracker_labels" => labels_to_csv(tracker["required_labels"]),
       "agent_provider" => agent["provider"] || "openrouter",
-      "agent_model" => model
+      "agent_model" => agent["model"] || provider["default_model"] || ""
     }
   end
+
+  defp stringify_map(map) when is_map(map) do
+    Map.new(map, fn
+      {k, v} when is_atom(k) -> {Atom.to_string(k), v}
+      {k, v} when is_binary(k) -> {k, v}
+      {k, v} -> {to_string(k), v}
+    end)
+  end
+
+  defp labels_to_csv(list) when is_list(list), do: Enum.join(list, ", ")
+  defp labels_to_csv(bin) when is_binary(bin), do: bin
+  defp labels_to_csv(_), do: ""
 
   defp normalize_params(params) when is_map(params) do
     %{
@@ -604,14 +605,20 @@ defmodule SvarmWeb.SetupLive do
       "tracker_repo" => blank_to_empty(params["tracker_repo"]),
       "tracker_api_key" => blank_to_empty(params["tracker_api_key"]),
       "tracker_labels" => blank_to_empty(params["tracker_labels"]),
-      "agent_provider" => blank_to_empty(params["agent_provider"]) || "openrouter",
+      "agent_provider" => agent_provider_param(params["agent_provider"]),
       "agent_model" => blank_to_empty(params["agent_model"])
     }
   end
 
-  defp blank_to_empty(nil), do: ""
   defp blank_to_empty(v) when is_binary(v), do: v
-  defp blank_to_empty(v), do: to_string(v)
+  defp blank_to_empty(_), do: ""
+
+  defp agent_provider_param(v) do
+    case blank_to_empty(v) do
+      "" -> "openrouter"
+      other -> other
+    end
+  end
 
   defp form_snapshot(form, provider, tracker) do
     %{
@@ -637,100 +644,96 @@ defmodule SvarmWeb.SetupLive do
 
   # Projected readiness after Apply (form + stored secrets + live env).
   defp readiness(form, assigns) do
-    status = assigns.status
-    provider = assigns.provider
-    tracker = assigns.tracker
-    agent = assigns.agent
-
-    provider_ready =
-      present?(form["provider_api_key"]) or provider[:api_key_set?] == true or
-        status.provider_configured? == true
-
-    provider_pending =
-      provider_ready and status.provider_configured? != true and
-        (present?(form["provider_api_key"]) or provider[:api_key_set?] == true)
-
-    tracker_form_ready =
-      case form["tracker_kind"] do
-        "local" ->
-          true
-
-        "github" ->
-          present?(form["tracker_owner"]) and present?(form["tracker_repo"]) and
-            (present?(form["tracker_api_key"]) or tracker[:api_key_set?] == true)
-
-        _ ->
-          false
-      end
-
-    tracker_pending =
-      tracker_form_ready and status.tracker_ready? != true and form["tracker_kind"] == "local"
-
-    agent_ready =
-      present?(form["agent_model"]) or present?(agent["model"]) or
-        status[:default_model_set?] == true
-
-    agent_pending =
-      agent_ready and status[:default_model_set?] != true and present?(form["agent_model"])
-
-    complete? = provider_ready and tracker_form_ready and agent_ready
+    provider = provider_readiness(form, assigns)
+    tracker = tracker_readiness(form, assigns)
+    agent = agent_readiness(form, assigns)
 
     %{
-      provider: %{
-        ready?: provider_ready,
-        badge:
-          cond do
-            provider_pending -> "pending"
-            provider_ready -> "ready"
-            true -> "needed"
-          end
-      },
-      tracker: %{
-        ready?: tracker_form_ready,
-        badge:
-          cond do
-            tracker_pending -> "pending"
-            tracker_form_ready and status.tracker_ready? -> "ready"
-            tracker_form_ready and not status.tracker_ready? -> "pending"
-            true -> "needed"
-          end
-      },
-      agent: %{
-        ready?: agent_ready,
-        badge:
-          cond do
-            agent_pending -> "pending"
-            agent_ready -> "ready"
-            true -> "needed"
-          end
-      },
-      complete?: complete?
+      provider: provider,
+      tracker: tracker,
+      agent: agent,
+      complete?: provider.ready? and tracker.ready? and agent.ready?
     }
   end
 
-  defp next_step(readiness, form, status) do
-    cond do
-      not readiness.provider.ready? ->
-        "Add an OpenRouter API key, then apply."
+  defp provider_readiness(form, assigns) do
+    ready? =
+      present?(form["provider_api_key"]) or assigns.provider[:api_key_set?] == true or
+        assigns.status.provider_configured? == true
 
-      readiness.tracker.badge == "needed" and form["tracker_kind"] == "github" ->
-        "Add GitHub owner, repo, and PAT, then apply."
+    pending? =
+      ready? and assigns.status.provider_configured? != true and
+        (present?(form["provider_api_key"]) or assigns.provider[:api_key_set?] == true)
 
-      readiness.tracker.badge == "pending" ->
-        "Apply to use Local board tracker."
+    %{ready?: ready?, badge: readiness_badge(ready?, pending?)}
+  end
 
-      not readiness.agent.ready? ->
-        "Set a default model, then apply."
+  defp tracker_readiness(form, assigns) do
+    ready? = tracker_form_ready?(form, assigns.tracker)
+    # Pending when the form is ready but live status has not caught up yet.
+    pending? = ready? and not assigns.status.tracker_ready?
+    %{ready?: ready?, badge: readiness_badge(ready?, pending?)}
+  end
 
-      readiness.complete? and (not status.setup_complete? or readiness.tracker.badge == "pending") ->
-        "Apply to load these settings into the running orchestrator."
+  defp tracker_form_ready?(form, tracker) do
+    case form["tracker_kind"] do
+      "local" ->
+        true
 
-      readiness.complete? ->
-        "Apply if you changed anything, or open the board."
+      "github" ->
+        present?(form["tracker_owner"]) and present?(form["tracker_repo"]) and
+          (present?(form["tracker_api_key"]) or tracker[:api_key_set?] == true)
 
-      true ->
-        "Complete the steps above, then apply."
+      _ ->
+        false
     end
+  end
+
+  defp agent_readiness(form, assigns) do
+    ready? =
+      present?(form["agent_model"]) or present?(assigns.agent["model"]) or
+        assigns.status[:default_model_set?] == true
+
+    pending? =
+      ready? and assigns.status[:default_model_set?] != true and present?(form["agent_model"])
+
+    %{ready?: ready?, badge: readiness_badge(ready?, pending?)}
+  end
+
+  defp readiness_badge(_ready?, true), do: "pending"
+  defp readiness_badge(true, false), do: "ready"
+  defp readiness_badge(false, false), do: "needed"
+
+  defp next_step(%{provider: %{ready?: false}}, _form, _status) do
+    "Add an OpenRouter API key, then apply."
+  end
+
+  defp next_step(%{tracker: %{badge: "needed"}}, %{"tracker_kind" => "github"}, _status) do
+    "Add GitHub owner, repo, and PAT, then apply."
+  end
+
+  defp next_step(%{tracker: %{badge: "pending"}}, %{"tracker_kind" => "local"}, _status) do
+    "Apply to use Local board tracker."
+  end
+
+  defp next_step(%{agent: %{ready?: false}}, _form, _status) do
+    "Set a default model, then apply."
+  end
+
+  defp next_step(%{complete?: true, tracker: %{badge: "pending"}}, _form, _status) do
+    "Apply to load these settings into the running orchestrator."
+  end
+
+  defp next_step(%{complete?: true}, _form, %{setup_complete?: false}) do
+    "Apply to load these settings into the running orchestrator."
+  end
+
+  defp next_step(%{complete?: true}, _form, _status) do
+    "Apply if you changed anything, or open the board."
+  end
+
+  defp next_step(_readiness, _form, _status) do
+    "Complete the steps above, then apply."
   end
 
   defp save_all(form) do

@@ -122,8 +122,12 @@ defmodule Svarm.Settings do
 
       _ ->
         case get_section("provider.openrouter") do
-          {:ok, p} -> p[:default_model] || p["default_model"]
-          :error -> nil
+          {:ok, p} ->
+            p = stringify_keys(p)
+            blank_to_nil(p["default_model"])
+
+          :error ->
+            nil
         end
     end
   end
@@ -288,35 +292,36 @@ defmodule Svarm.Settings do
     base = Resolve.tracker_overlay(workflow_tracker_config())
     kind = if form["tracker_kind"] == "github", do: :github, else: :local
 
-    api_key =
-      case form["tracker_api_key"] do
-        key when is_binary(key) and key != "" -> key
-        _ -> base[:api_key] || get_secret("tracker", "api_key")
-      end
-
-    labels =
-      case form["tracker_labels"] || form["required_labels"] do
-        list when is_list(list) ->
-          Enum.map(list, &to_string/1)
-
-        bin when is_binary(bin) and bin != "" ->
-          bin
-          |> String.split(",", trim: true)
-          |> Enum.map(&String.trim/1)
-          |> Enum.reject(&(&1 == ""))
-
-        _ ->
-          base[:required_labels] || []
-      end
-
     %{
       kind: kind,
       auth: :token,
       owner: blank_to_nil(form["tracker_owner"]) || base[:owner],
       repo: blank_to_nil(form["tracker_repo"]) || base[:repo],
-      api_key: api_key,
-      required_labels: labels
+      api_key: form_tracker_api_key(form, base),
+      required_labels: form_tracker_labels(form, base)
     }
+  end
+
+  defp form_tracker_api_key(form, base) do
+    case form["tracker_api_key"] do
+      key when is_binary(key) and key != "" -> key
+      _ -> base[:api_key] || get_secret("tracker", "api_key")
+    end
+  end
+
+  defp form_tracker_labels(form, base) do
+    case form["tracker_labels"] || form["required_labels"] do
+      list when is_list(list) -> Enum.map(list, &to_string/1)
+      bin when is_binary(bin) and bin != "" -> parse_label_csv(bin)
+      _ -> base[:required_labels] || []
+    end
+  end
+
+  defp parse_label_csv(bin) do
+    bin
+    |> String.split(",", trim: true)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
   end
 
   defp blank_to_nil(nil), do: nil
@@ -327,19 +332,19 @@ defmodule Svarm.Settings do
   defp present?(""), do: false
   defp present?(_), do: true
 
-  defp format_error(reason) when is_atom(reason), do: humanize_atom(reason)
-  defp format_error(reason) when is_binary(reason), do: reason
-  defp format_error(%{reason: reason}) when is_binary(reason), do: reason
-  defp format_error(%{message: msg}) when is_binary(msg), do: msg
+  defp format_error(reason) when is_atom(reason) do
+    reason
+    |> Atom.to_string()
+    |> String.replace("_", " ")
+  end
 
-  defp format_error({:http_error, status}) when is_integer(status),
-    do: "HTTP #{status} from provider"
-
-  defp format_error({:error, reason}), do: format_error(reason)
-  defp format_error(_), do: "unexpected error — check credentials and try again"
-
-  defp humanize_atom(:timeout), do: "request timed out"
-  defp humanize_atom(:nxdomain), do: "could not resolve host"
-  defp humanize_atom(:econnrefused), do: "connection refused"
-  defp humanize_atom(atom), do: atom |> Atom.to_string() |> String.replace("_", " ")
+  defp format_error(reason) when is_map(reason) do
+    reason
+    |> stringify_keys()
+    |> then(fn m -> m["message"] || m["reason"] end)
+    |> case do
+      msg when is_binary(msg) and msg != "" -> msg
+      _ -> "unexpected error — check credentials and try again"
+    end
+  end
 end
