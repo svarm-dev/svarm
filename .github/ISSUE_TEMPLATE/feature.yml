@@ -1,0 +1,23 @@
+name: Feature request
+description: Suggest an improvement or new capability
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Optional — how you think it could work
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it matters
+      description: How this fits Svärm (self-hosted control plane for coding agents)
+    validations:
+      required: true
