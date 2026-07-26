@@ -21,7 +21,7 @@ Self-hosted, open source (MIT), built in Elixir.
 
 Your team already uses AI coding agents (pi, Claude Code, Cursor, Copilot). They open PRs and touch real code. Most of that work is hard to see, hard to approve, and hard to cost.
 
-Svärm pulls work from GitHub Issues (or a local board), dispatches an **external** agent in an isolated workspace, and leaves a PR plus a cost receipt. **Humans keep the merge button.** Successful runs land in `review`, not `done`.
+Svärm pulls work from GitHub Issues (or a local board) and dispatches an **external** agent in a per-ticket workspace directory (path-escape guard / cwd isolation — not a chroot or container). The agent is **prompted** (WORKFLOW) to branch, push, and open a PR; Svärm itself does not create PRs. Successful runs land in `review` with a cost receipt. **Humans keep the merge button.**
 
 - **Watch agents work.** Cards on a board with live logs and per-ticket cost.
 - **Human gates.** Optional approval before dispatch; wait chips for approval and review.
@@ -87,8 +87,8 @@ Svärm runs a control loop on your tickets:
 1. **Reconcile** sync running work with the tracker
 2. **Preflight** config, capacity, and approval checks
 3. **Fetch** eligible issues (labels / states)
-4. **Dispatch** external agent in an isolated workspace
-5. **Receipt** usage comment on the issue; human reviews the PR
+4. **Dispatch** external agent in a per-ticket workspace directory
+5. **Receipt** usage comment on the issue; agent-opened PR waits for human review
 
 Successful runs land in `review`, not `done`. Agents never merge. Each finished run can post a cost receipt (tokens, model, dollars) on the issue.
 

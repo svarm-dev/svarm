@@ -4,6 +4,9 @@ defmodule SvarmWeb.ApprovalsControllerTest do
   alias Svarm.{Approval, KanbanBridge}
 
   setup do
+    # Ensure active tracker is Local (Settings overlay can leak from other tests).
+    Svarm.Settings.Store.delete("tracker")
+
     task =
       KanbanBridge.create_task(%{
         title: "Gate me",

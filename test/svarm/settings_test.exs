@@ -5,10 +5,15 @@ defmodule Svarm.SettingsTest do
   alias Svarm.Settings.{Crypto, Resolve, Store}
 
   setup do
-    Store.delete("provider.openrouter")
-    Store.delete("tracker")
-    Store.delete("agents")
-    Store.delete("meta")
+    cleanup = fn ->
+      Store.delete("provider.openrouter")
+      Store.delete("tracker")
+      Store.delete("agents")
+      Store.delete("meta")
+    end
+
+    cleanup.()
+    on_exit(cleanup)
     :ok
   end
 

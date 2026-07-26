@@ -9,7 +9,7 @@ Instructions for coding agents working in **Svärm** (`svarm`). Human-oriented d
 
 ## Project overview
 
-Svärm is a **self-hosted control plane** for external coding agents on your tickets (Symphony-compatible poll/reconcile). It dispatches agents (pi, Claude Code, etc.) from a LiveView board, governed by a WORKFLOW.md contract. Agents open PRs; humans keep merge. Not a lights-off factory or embedded multi-agent runtime.
+Svärm is a **self-hosted control plane** for external coding agents on your tickets (Symphony-compatible poll/reconcile). It dispatches agents (pi, Claude Code, etc.) from a LiveView board, governed by a WORKFLOW.md contract. The external agent is **prompted** (via WORKFLOW) to branch/push/`gh pr create`; tickets land in `review` with a cost receipt; humans keep merge. Not a lights-off factory or embedded multi-agent runtime.
 
 - **Stack:** Elixir 1.20.2 / OTP 29 (`.mise.toml`), Phoenix 1.8, Ecto 3.14 with `ecto_sqlite3`, Tailwind CSS + daisyUI.
 - **Database:** SQLite via Ecto (`Svarm.Repo`). Single-file, no daemon. Postgres is a future managed-tier option, not now.
@@ -23,7 +23,10 @@ svarm/
 ├── lib/
 │   ├── svarm/                    # Orchestration backend
 │   │   ├── orchestrator.ex       # GenServer poll loop (the brain)
-│   │   ├── agent_runner.ex       # System.cmd dispatch, Port streaming
+│   │   ├── agent_runner.ex       # Runner facade: load agents, resolve adapter, dispatch
+│   │   ├── runner.ex             # Runner helpers (env, GitHub token)
+│   │   ├── runner/cli.ex         # CLI runner — Port.open / process kill tree
+│   │   ├── runner/pi_rpc.ex      # pi RPC runner — Port.open / process kill tree
 │   │   ├── dispatch.ex           # Goal → kanban decomposition
 │   │   ├── decompose.ex          # LLM-powered task breakdown
 │   │   ├── kanban_bridge.ex      # Task CRUD via Ecto (GenServer API)
@@ -36,7 +39,7 @@ svarm/
 │   │   ├── events.ex             # PubSub broadcasts to LiveView
 │   │   ├── profile_router.ex     # Task → agent routing
 │   │   └── application.ex        # Supervision tree
-│   └── svarm_web/                # Phoenix web layer (read-only observer)
+│   └── svarm_web/                # Phoenix web layer (mostly read-only; approvals mutate)
 │       ├── live/board_live.ex    # Team board LiveView
 │       ├── controllers/          # Page, approvals, demo seed
 │       ├── components/           # CoreComponents, layouts
@@ -58,7 +61,7 @@ svarm/
 
 ## Architecture boundaries
 
-The web layer is a **read-only observer** of orchestration. It never mutates state directly.
+The web layer is mostly a **read-only observer** of orchestration. Exception: `ApprovalsController` and board approve/reject events call `Svarm.Approval`, which mutates tracker state.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -77,25 +80,26 @@ The web layer is a **read-only observer** of orchestration. It never mutates sta
 │  Tick: reconcile →   │
 │  preflight → fetch   │    ┌──────────────────────────┐
 │  eligible → dispatch │    │  Svarm.AgentRunner        │
-│                      │    │  (System.cmd, Port)       │
+│                      │    │  (facade: load/resolve)   │
 │  Depends on:         │    │                            │
-│  • Svarm.Tracker     │    │  ONLY module that shells  │
-│  • Svarm.Runner      │    │  out to external processes│
-│  • KanbanBridge      │    └──────────────────────────┘
-│  • Workflow.Store    │
+│  • Svarm.Tracker     │    │  Shell-out lives in:       │
+│  • Svarm.Runner      │    │  Runner.Cli / Runner.PiRPC │
+│  • KanbanBridge      │    │  (Port.open, kill tree)    │
+│  • Workflow.Store    │    └──────────────────────────┘
 │  • Approval          │    ┌──────────────────────────┐
 │  • Events            │    │  Svarm.Workspace          │
-│  • Dispatch          │    │  (sandbox directories)    │
+│  • Dispatch          │    │  (per-ticket directories) │
 │  • Decompose         │    │  Path escape guard        │
 └──────────────────────┘    └──────────────────────────┘
 ```
 
 **Rules:**
 - **Orchestrator calls adapters, not implementations** — depends on `Svarm.Tracker` (behaviour), never `Svarm.Tracker.GitHub`.
-- **Web layer never calls AgentRunner or Workspace** — reads state through `Board` and `Orchestrator.status/0`.
-- **Only AgentRunner shells out** — `System.cmd`, `Port.open`, `File.cd` live exclusively in `agent_runner.ex`.
+- **Web layer never calls AgentRunner or Workspace** — reads state through `Board` and `Orchestrator.status/0`. **Exception:** approve/reject via `Approval` (ApprovalsController + BoardLive).
+- **Shell-out lives in Runner adapters** — `Port.open`, process kill tree, and related `System.cmd` for agent processes live in `Runner.Cli` / `Runner.PiRPC`. `AgentRunner` is the facade (load agents, resolve adapter, dispatch).
 - **KanbanBridge is the task DB path** — all task Ecto queries go through `KanbanBridge`. Other Repo-backed contexts are allowed for their own domains: `Usage`/`RunLog`/`Settings` (not task state).
 - **Events is the cross-boundary side channel** — backend → web communication is PubSub, not direct calls.
+- **Approval uses the active tracker** — same settings/workflow resolve as the orchestrator (Local or GitHub), never a hardcoded Local-only path.
 
 ## Setup and commands
 
@@ -170,7 +174,7 @@ Do **not** put Svärm architecture rules only in skills. If every edit should kn
 - **`impeccable`** — UI craft when the task is frontend.
 - **`ponytail`** — minimal diffs / YAGNI.
 
-Svärm product law always overrides generic Phoenix advice when they conflict (SQLite-only, KanbanBridge-only DB access, AgentRunner-only shell-out, no Postgres).
+Svärm product law always overrides generic Phoenix advice when they conflict (SQLite-only, KanbanBridge-only DB access, Runner.Cli/PiRPC shell-out only, no Postgres).
 
 ## GitHub issue → PR workflow (coding agents)
 
@@ -274,7 +278,7 @@ mix test --only <tag>
 - **Do not add Postgres** — SQLite via Ecto is the project standard. Postgres is a managed-tier option for the distant future, not now.
 - **Do not replace KanbanBridge with an external tracker** without going through the adapter behaviour (`Svarm.Tracker`).
 - **Do not add Ecto queries for tasks outside KanbanBridge** — task CRUD stays on `KanbanBridge`. `Usage`/`RunLog`/`Settings` own their tables.
-- **Do not shell out from anywhere except AgentRunner** — `System.cmd`, `Port.open`, `File.cd` are AgentRunner's exclusive domain.
+- **Do not shell out from anywhere except Runner adapters** — `Port.open` / agent process kill tree live in `Runner.Cli` and `Runner.PiRPC` only (AgentRunner is the facade).
 - **Do not expand scope to Symphony Codex app-server streaming** unless explicitly asked — v1 is poll/reconcile + WORKFLOW.md, not Codex app-server.
 - **Do not add `:httpoison`, `:tesla`, or `:httpc`** — use `Req` for all HTTP.
 - **Do not add `:pi_bridge` to mix.exs** — pi-elixir bundles its own bridge. This is an outdated install path.

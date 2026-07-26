@@ -1,12 +1,26 @@
 defmodule Svarm.ApprovalTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
-  alias Svarm.Approval
+  alias Svarm.{Approval, Issue, KanbanBridge, Tracker}
+  alias Svarm.Test.FakeTracker
 
   @agents %{
     "default" => %{command: "true", args: [], env: %{}},
     "cody" => %{command: "true", args: [], env: %{}}
   }
+
+  setup do
+    Approval.__clear_tracker_override__()
+    # Settings overlay must not force GitHub during Local regression.
+    Svarm.Settings.Store.delete("tracker")
+
+    on_exit(fn ->
+      Approval.__clear_tracker_override__()
+      Svarm.Settings.Store.delete("tracker")
+    end)
+
+    :ok
+  end
 
   describe "config_from_map/1" do
     test "parses mode and trusted assignees" do
@@ -69,6 +83,129 @@ defmodule Svarm.ApprovalTest do
     test "maps known errors" do
       assert Approval.flash_error(:not_found) =~ "not found"
       assert Approval.flash_error({:not_pending, "done"}) =~ "pending"
+    end
+  end
+
+  describe "active tracker surface API" do
+    setup do
+      FakeTracker.setup()
+      config = %{kind: :github, owner: "acme", repo: "widgets"}
+      Approval.__override_tracker__(FakeTracker, config)
+
+      pending = %Issue{
+        id: "sva_pending",
+        title: "Gate me",
+        body: "",
+        type: "code",
+        assignee: "cody",
+        status: "pending_approval",
+        priority: 0,
+        attempts: 0,
+        labels: [],
+        tracker: :github
+      }
+
+      demo = %Issue{
+        id: "sva_demo",
+        title: "Demo",
+        body: "",
+        type: "code",
+        assignee: "demo_coder",
+        status: "pending_approval",
+        priority: 0,
+        attempts: 0,
+        labels: [],
+        tracker: :github
+      }
+
+      other = %Issue{
+        id: "sva_todo",
+        title: "Not pending",
+        body: "",
+        type: "code",
+        assignee: "cody",
+        status: "todo",
+        priority: 0,
+        attempts: 0,
+        labels: [],
+        tracker: :github
+      }
+
+      FakeTracker.put(pending)
+      FakeTracker.put(demo)
+      FakeTracker.put(other)
+
+      %{config: config}
+    end
+
+    test "tracker/0 returns the active adapter" do
+      assert Approval.tracker() == FakeTracker
+    end
+
+    test "tracker_config/0 returns the active config", %{config: config} do
+      assert Approval.tracker_config() == config
+    end
+
+    test "list_pending returns only pending_approval on the active tracker" do
+      ids = Approval.list_pending() |> Enum.map(& &1.id) |> Enum.sort()
+      assert ids == ["sva_demo", "sva_pending"]
+    end
+
+    test "approve moves pending issue to todo on the active tracker" do
+      assert :ok = Approval.approve("sva_pending")
+      assert {:ok, %{status: "todo"}} = FakeTracker.get_issue(%{}, "sva_pending")
+    end
+
+    test "reject moves pending issue to failed on the active tracker" do
+      assert :ok = Approval.reject("sva_pending")
+      assert {:ok, %{status: "failed"}} = FakeTracker.get_issue(%{}, "sva_pending")
+    end
+
+    test "reject to review is allowed" do
+      assert :ok = Approval.reject("sva_pending", "review")
+      assert {:ok, %{status: "review"}} = FakeTracker.get_issue(%{}, "sva_pending")
+    end
+
+    test "demo assignees cannot be approved or rejected" do
+      assert {:error, :demo_task} = Approval.approve("sva_demo")
+      assert {:error, :demo_task} = Approval.reject("sva_demo")
+      assert {:ok, %{status: "pending_approval"}} = FakeTracker.get_issue(%{}, "sva_demo")
+    end
+
+    test "approve of non-pending returns not_pending" do
+      assert {:error, {:not_pending, "todo"}} = Approval.approve("sva_todo")
+    end
+
+    test "approve of missing issue returns not_found" do
+      assert {:error, :not_found} = Approval.approve("sva_missing")
+    end
+  end
+
+  describe "local tracker path" do
+    setup do
+      # Default resolve is Local when no override and no github settings.
+      :ok = Tracker.Local.delete_all(%{})
+      on_exit(fn -> Tracker.Local.delete_all(%{}) end)
+      :ok
+    end
+
+    test "approve and list_pending work on Local SQLite" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "Local gate",
+          body: "",
+          type: "code",
+          assignee: "cody",
+          status: "pending_approval"
+        })
+
+      assert Approval.tracker() == Tracker.Local
+      assert [%{id: id}] = Approval.list_pending()
+      assert id == task.id
+
+      assert :ok = Approval.approve(task.id)
+      assert Approval.list_pending() == []
+      assert %{status: "todo"} = KanbanBridge.get_task(task.id)
     end
   end
 end
