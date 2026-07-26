@@ -5,9 +5,14 @@ defmodule SvarmWeb.SetupLiveTest do
   alias Svarm.Settings.Store
 
   setup do
-    Store.delete("provider.openrouter")
-    Store.delete("tracker")
-    Store.delete("agents")
+    cleanup = fn ->
+      Store.delete("provider.openrouter")
+      Store.delete("tracker")
+      Store.delete("agents")
+    end
+
+    cleanup.()
+    on_exit(cleanup)
     :ok
   end
 

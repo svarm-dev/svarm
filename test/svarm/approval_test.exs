@@ -11,7 +11,14 @@ defmodule Svarm.ApprovalTest do
 
   setup do
     Approval.__clear_tracker_override__()
-    on_exit(fn -> Approval.__clear_tracker_override__() end)
+    # Settings overlay must not force GitHub during Local regression.
+    Svarm.Settings.Store.delete("tracker")
+
+    on_exit(fn ->
+      Approval.__clear_tracker_override__()
+      Svarm.Settings.Store.delete("tracker")
+    end)
+
     :ok
   end
 
