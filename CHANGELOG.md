@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Dashboard session token totals with negative monotonic timestamps; completed runs without assignee count on the right agent
+- Approve/reject gates use the active tracker (Local or GitHub), not a Local-only path ([#19](https://github.com/svarm-dev/svarm/pull/19))
 
 
 ## [0.1.2] - 2026-07-25
