@@ -235,8 +235,10 @@ defmodule Svarm.Tracker.GitHub do
         {:ok, %{status: 201}} ->
           Logger.info("github: posted run summary (run #{run_id})")
 
-        {:ok, %{status: 403}} ->
-          Logger.warning("github: rate limited on comment for run #{run_id}")
+        {:ok, %{status: 403} = resp} ->
+          Logger.warning(
+            "github: comment forbidden for run #{run_id}: #{format_forbidden(resp)}"
+          )
 
         other ->
           Logger.warning("github: post_run_summary failed for run #{run_id}: #{inspect(other)}")
@@ -247,8 +249,8 @@ defmodule Svarm.Tracker.GitHub do
   end
 
   defp find_issue(config, id) do
-    case list_eligible(config) do
-      {:ok, issues} -> Enum.find(issues, &(&1.id == id))
+    case get_issue(config, id) do
+      {:ok, issue} -> issue
       _ -> nil
     end
   end
@@ -264,9 +266,14 @@ defmodule Svarm.Tracker.GitHub do
       |> maybe_close(status)
 
     case Req.patch(url, json: body, headers: headers(config)) do
-      {:ok, %{status: 200}} -> :ok
-      {:ok, %{status: 403}} -> Logger.warning("github: rate limited on issue update")
-      other -> Logger.warning("github: issue update failed: #{inspect(other)}")
+      {:ok, %{status: 200}} ->
+        :ok
+
+      {:ok, %{status: 403} = resp} ->
+        Logger.warning("github: issue update forbidden: #{format_forbidden(resp)}")
+
+      other ->
+        Logger.warning("github: issue update failed: #{inspect(other)}")
     end
 
     :ok
@@ -346,6 +353,35 @@ defmodule Svarm.Tracker.GitHub do
       true -> 60
     end
   end
+
+
+  # Never log Authorization. Surface GitHub's message + rate headers so we can
+  # tell secondary rate limits from missing scopes / SSO / fine-grained perms.
+  defp format_forbidden(%{headers: headers, body: body}) do
+    msg =
+      case body do
+        %{"message" => m} when is_binary(m) -> m
+        b when is_binary(b) -> String.slice(b, 0, 200)
+        _ -> "forbidden"
+      end
+
+    remaining = header_value(headers, "x-ratelimit-remaining")
+    reset = header_value(headers, "x-ratelimit-reset")
+    retry = header_value(headers, "retry-after")
+    "message=#{inspect(msg)} remaining=#{remaining} reset=#{reset} retry_after=#{retry}"
+  end
+
+  defp format_forbidden(_), do: "forbidden"
+
+  defp header_value(headers, name) when is_map(headers) do
+    get_in(headers, [name, Access.at(0)]) ||
+      get_in(headers, [String.downcase(name), Access.at(0)]) ||
+      Map.get(headers, name) ||
+      Map.get(headers, String.downcase(name)) ||
+      "-"
+  end
+
+  defp header_value(_, _), do: "-"
 
   defp error(type, message, retry_after \\ nil) do
     %{type: type, message: message, retry_after: retry_after}
