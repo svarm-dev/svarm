@@ -151,9 +151,12 @@ defmodule Svarm.Orchestrator do
       if task_id == nil do
         {:noreply, state}
       else
-        {entry, state} = Map.pop(state.running, task_id)
-        state = %{state | claimed: MapSet.delete(state.claimed, task_id)}
-        state = Map.update!(state, :last_run_entries, &Map.put(&1, task_id, entry))
+        {entry, running} = Map.pop(state.running, task_id)
+
+        state =
+          %{state | running: running, claimed: MapSet.delete(state.claimed, task_id)}
+          |> Map.update!(:last_run_entries, &Map.put(&1, task_id, entry))
+
         Logger.warning("worker crashed for #{task_id}: #{inspect(reason)}")
         state = schedule_retry(state, entry.task, {:crash, reason})
         {:noreply, state}

@@ -31,7 +31,7 @@ RUN MIX_ENV=prod mix release svarm
 FROM node:22-bookworm-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    openssl ca-certificates curl git \
+    openssl ca-certificates curl git procps \
     && rm -rf /var/lib/apt/lists/*
 
 # GitHub CLI (needed for gh repo clone, gh auth, etc.)

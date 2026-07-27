@@ -249,12 +249,24 @@ defmodule Svarm.Runner.PiRPC do
   end
 
   defp kill_tree(os_pid) when is_integer(os_pid) do
-    case System.cmd("pgrep", ["-P", Integer.to_string(os_pid)], stderr_to_stdout: true) do
-      {out, 0} -> Enum.each(String.split(out), &kill_parsed_child/1)
-      _ -> :ok
+    # Docker slim images often lack pgrep (procps). Never raise here — a cleanup
+    # failure must not crash the worker after a successful run.
+    case System.find_executable("pgrep") do
+      nil ->
+        :ok
+
+      pgrep ->
+        case System.cmd(pgrep, ["-P", Integer.to_string(os_pid)], stderr_to_stdout: true) do
+          {out, 0} -> Enum.each(String.split(out), &kill_parsed_child/1)
+          _ -> :ok
+        end
     end
 
-    _ = System.cmd("kill", ["-KILL", Integer.to_string(os_pid)], stderr_to_stdout: true)
+    case System.find_executable("kill") do
+      nil -> :ok
+      kill -> _ = System.cmd(kill, ["-KILL", Integer.to_string(os_pid)], stderr_to_stdout: true)
+    end
+
     :ok
   end
 

@@ -28,6 +28,42 @@ defmodule Svarm.OrchestratorTest do
     end
   end
 
+  describe "worker DOWN handling" do
+    test "survives worker crash without replacing whole state" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "crash survivor",
+          status: "todo",
+          assignee: "cody"
+        })
+
+      mref = make_ref()
+
+      :sys.replace_state(Orchestrator, fn state ->
+        running =
+          Map.put(state.running, task.id, %{
+            task: task,
+            pid: self(),
+            mref: mref,
+            run_id: "run_down_test",
+            started_mono_ms: System.monotonic_time(:millisecond),
+            started_at: System.system_time(:second)
+          })
+
+        %{state | running: running, claimed: MapSet.put(state.claimed, task.id)}
+      end)
+
+      send(Orchestrator, {:DOWN, mref, :process, self(), :enoent})
+      Process.sleep(80)
+
+      assert Process.whereis(Orchestrator)
+      state = :sys.get_state(Orchestrator)
+      refute Map.has_key?(state.running, task.id)
+      refute MapSet.member?(state.claimed, task.id)
+      assert is_map(state.agents) or is_map(Orchestrator.status())
+    end
+  end
+
   describe "list_eligible failures" do
     defmodule FailingTracker do
       def list_eligible(_config),
