@@ -30,7 +30,7 @@ verify, open a pull request, and stop. Do **not** merge.
 Workflow:
 1. Configure git: `gh auth setup-git`
 2. Clone the repo: `gh repo clone OWNER/REPO .` (if the workspace is empty)
-3. Create a branch: `git checkout -b svarm/{{issue.id}}`
+3. Create a branch: `git checkout -b svarm/{{issue.source_id}}`
 4. Implement the changes described below
 5. Run project tests and lint if present; if they fail, exit non-zero
 6. Commit with a descriptive message referencing the issue
@@ -39,7 +39,7 @@ Workflow:
 9. Summarize what you changed and what you verified
 10. Do **not** merge the PR and do **not** push to main/master
 
-Task: {{issue.title}} ({{issue.id}})
+Task: {{issue.title}} (issue #{{issue.source_id}}, id {{issue.id}})
 Attempt: {{attempt}}
 
 Description:

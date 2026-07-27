@@ -41,4 +41,20 @@ defmodule Svarm.RedactTest do
     assert text =~ "redacted"
     assert text =~ "svarm-dev"
   end
+
+  test "text redacts env dumps and token shapes" do
+    raw = """
+    OPENROUTER_API_KEY=sk-or-v1-SECRETVALUEHERE123
+    GITHUB_TOKEN=github_pat_11AAAA_SECRET
+    also sk-or-v1-anothersecretvalue999 in prose
+    """
+
+    out = Redact.text(raw)
+    refute out =~ "SECRETVALUE"
+    refute out =~ "github_pat_11AAAA_SECRET"
+    refute out =~ "anothersecretvalue"
+    assert out =~ "OPENROUTER_API_KEY=[redacted]"
+    assert out =~ "GITHUB_TOKEN=[redacted]"
+    assert out =~ "[redacted]"
+  end
 end
