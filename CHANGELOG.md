@@ -12,15 +12,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Setup preflight** (`/setup`): live readiness (key source, default model, form-scoped tracker probe), model suggestions after OpenRouter test, single Apply path ([#5](https://github.com/svarm-dev/svarm/pull/5))
 - **Dashboard** governance spine: human-wait first, windowed spend/tokens from one summary, busy-first agent roster ([#5](https://github.com/svarm-dev/svarm/pull/5))
 - GitHub issue/PR templates and Dependabot for Hex + Actions ([#6](https://github.com/svarm-dev/svarm/pull/6))
+- Human-readable agent **tool logs** on the board (unwrap pi/MCP content blocks; no raw Elixir map dumps) ([#23](https://github.com/svarm-dev/svarm/pull/23), [#28](https://github.com/svarm-dev/svarm/issues/28))
+- WORKFLOW placeholder `{{issue.source_id}}` for tracker-native issue numbers (e.g. GitHub `#26`) ([#23](https://github.com/svarm-dev/svarm/pull/23))
+- Docker: default git author for agent commits (`SVARM_GIT_EMAIL` / `SVARM_GIT_NAME`); `procps` for process cleanup ([#23](https://github.com/svarm-dev/svarm/pull/23))
 
 ### Changed
 
 - Public messaging: lead with “control for your agent loop” / human judgment; drop blended-workforce teammate hype from README, homepage, board, and dashboard
+- Successful agent runs that leave the tracker in an active status move to **review** once (no endless re-dispatch) ([#23](https://github.com/svarm-dev/svarm/pull/23))
+- Run cost prefers **provider-reported USD** when present, then the rate table ([#23](https://github.com/svarm-dev/svarm/pull/23))
 
 ### Fixed
 
 - Dashboard session token totals with negative monotonic timestamps; completed runs without assignee count on the right agent
 - Approve/reject gates use the active tracker (Local or GitHub), not a Local-only path ([#19](https://github.com/svarm-dev/svarm/pull/19))
+- GitHub board no longer fills **Todo** with pull requests and unlabeled closed issues ([#23](https://github.com/svarm-dev/svarm/pull/23))
+- Docker pi runs no longer crash after exit when `pgrep` is missing, and no longer restart the orchestrator on worker DOWN ([#23](https://github.com/svarm-dev/svarm/pull/23))
+- GitHub API 403s log the real message and rate-limit headers (not always “rate limited”) ([#23](https://github.com/svarm-dev/svarm/pull/23))
+- Usage ledger stores provider cost so OpenRouter spend can show on receipts ([#23](https://github.com/svarm-dev/svarm/pull/23))
+
+### Security
+
+- Redact API keys and tokens from orchestrator crash dumps, board agent lines, and persisted run logs ([#23](https://github.com/svarm-dev/svarm/pull/23))
 
 
 ## [0.1.2] - 2026-07-25
