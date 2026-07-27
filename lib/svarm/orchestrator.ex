@@ -466,7 +466,8 @@ defmodule Svarm.Orchestrator do
     cond do
       Map.has_key?(acc.running, task.id) or
         MapSet.member?(acc.claimed, task.id) or
-          Map.has_key?(acc.retry_attempts, task.id) ->
+        Map.has_key?(acc.retry_attempts, task.id) or
+          MapSet.member?(acc.completed, task.id) ->
         {:cont, acc}
 
       task.status in acc.terminal_states ->
@@ -580,8 +581,13 @@ defmodule Svarm.Orchestrator do
           post_run_summary(state, task_id, :ok)
           %{state | completed: MapSet.put(state.completed, task_id)}
         else
-          Logger.info("task #{task_id} normal exit but still active, scheduling continuation")
-          schedule_continuation(state, task)
+          # Runner reported success (exit 0). Re-spawning burns tokens and
+          # rate-limits GitHub when status patches fail — force review once.
+          Logger.warning("task #{task_id} exited ok but status=#{task.status}; forcing review")
+
+          state.tracker.update_status(state.tracker_config, task_id, "review")
+          post_run_summary(state, task_id, :ok)
+          %{state | completed: MapSet.put(state.completed, task_id)}
         end
 
       {:error, _} ->
@@ -661,19 +667,6 @@ defmodule Svarm.Orchestrator do
   end
 
   ## retry / backoff
-
-  defp schedule_continuation(state, task) do
-    timer = Process.send_after(self(), {:retry, task.id}, @continuation_retry_ms)
-
-    entry = %{
-      attempt: task.attempts || 0,
-      identifier: task.id,
-      due_at_mono: System.monotonic_time(:millisecond) + @continuation_retry_ms,
-      timer: timer
-    }
-
-    %{state | retry_attempts: Map.put(state.retry_attempts, task.id, entry)}
-  end
 
   defp schedule_retry(state, nil, _reason), do: state
 

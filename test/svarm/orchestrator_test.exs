@@ -111,8 +111,8 @@ defmodule Svarm.OrchestratorTest do
     end
   end
 
-  describe "continuation retry" do
-    test "schedules continuation when normal exit but task still active" do
+  describe "successful exit completion" do
+    test "forces review and completes when exit ok but status still active" do
       task =
         KanbanBridge.create_task(%{
           title: "continuation task",
@@ -138,9 +138,12 @@ defmodule Svarm.OrchestratorTest do
       Process.sleep(50)
 
       status = Orchestrator.status()
-      # Task is "todo" (active, not terminal) → continuation retry
-      assert task.id in status.retry_ids
+      state = :sys.get_state(Orchestrator)
+      # No re-spawn loop — completed even if tracker still looked active
+      refute task.id in status.retry_ids
       refute task.id in status.running_ids
+      assert MapSet.member?(state.completed, task.id)
+      assert KanbanBridge.get_task(task.id).status == "review"
     end
 
     test "marks completed when normal exit and task is terminal" do
@@ -270,7 +273,7 @@ defmodule Svarm.OrchestratorTest do
       assert Map.get(state, :last_run_entries)[task.id].run_id == "run_test123"
     end
 
-    test "not called on continuation retry (task still active)" do
+    test "posts summary when exit ok forces review from active status" do
       task =
         KanbanBridge.create_task(%{
           title: "continuation task",
@@ -296,8 +299,9 @@ defmodule Svarm.OrchestratorTest do
       Process.sleep(50)
 
       status = Orchestrator.status()
-      # Task stays in retry_ids (continuation), not completed
-      assert task.id in status.retry_ids
+      state = :sys.get_state(Orchestrator)
+      refute task.id in status.retry_ids
+      assert MapSet.member?(state.completed, task.id)
     end
   end
 
