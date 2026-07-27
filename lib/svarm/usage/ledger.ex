@@ -25,6 +25,7 @@ defmodule Svarm.Usage.Ledger do
       prompt_tokens: Map.get(attrs, :prompt_tokens),
       completion_tokens: Map.get(attrs, :completion_tokens),
       estimated: Map.get(attrs, :estimated, false),
+      provider_cost_usd: Map.get(attrs, :provider_cost_usd),
       recorded_at: System.monotonic_time(:millisecond)
     }
     |> Repo.insert!()

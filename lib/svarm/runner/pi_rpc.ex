@@ -469,7 +469,15 @@ defmodule Svarm.Runner.PiRPC do
   defp handle_event(%{"type" => "message_end"} = event, _task_id, log, usage, session) do
     msg = event["message"] || %{}
     msg_usage = msg["usage"] || %{}
-    cost = get_in(msg_usage, ["cost", "total"])
+
+    cost =
+      get_in(msg_usage, ["cost", "total"]) ||
+        get_in(msg_usage, ["cost", "total_cost"]) ||
+        case msg_usage["cost"] do
+          c when is_number(c) -> c
+          _ -> nil
+        end ||
+        get_in(msg, ["cost", "total"])
 
     usage =
       usage

@@ -113,5 +113,25 @@ defmodule Svarm.UsageTest do
       assert report.record_count == 2
       assert map_size(report.breakdown) == 2
     end
+
+    test "prefers provider_cost_usd over rate table" do
+      task_id = "task_provider_cost"
+
+      Usage.append(%{
+        run_id: "r_pc",
+        task_id: task_id,
+        source: "worker",
+        provider: "openrouter",
+        model_id: "deepseek/deepseek-v4-flash",
+        prompt_tokens: 90_000,
+        completion_tokens: 6_200,
+        provider_cost_usd: 0.0148,
+        estimated: false
+      })
+
+      report = Usage.task_cost(task_id)
+      assert report.total_cost_usd == 0.0148
+      assert report.estimated == false
+    end
   end
 end
