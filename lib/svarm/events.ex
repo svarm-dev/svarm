@@ -23,7 +23,7 @@ defmodule Svarm.Events do
   end
 
   def broadcast_agent_line(task_id, line) when is_binary(task_id) and is_binary(line) do
-    broadcast({:agent_line, task_id, line})
+    broadcast({:agent_line, task_id, Svarm.Redact.text(line)})
   end
 
   def broadcast_run_started(task_id, meta) when is_map(meta) do

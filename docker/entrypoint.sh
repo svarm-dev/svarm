@@ -34,4 +34,8 @@ fi
 export SVARM_WORKFLOW_PATH="${SVARM_WORKFLOW_PATH:-$CONFIG_DIR/WORKFLOW.md}"
 export SVARM_AGENTS_PATH="${SVARM_AGENTS_PATH:-$CONFIG_DIR/agents.toml}"
 
+# Agent commits need an identity (container has none by default).
+git config --global user.email "${SVARM_GIT_EMAIL:-svarm-bot@users.noreply.github.com}"
+git config --global user.name "${SVARM_GIT_NAME:-Svärm Agent}"
+
 exec "$@"

@@ -5,6 +5,9 @@ defmodule Svarm.Usage.Rates do
   always recalculate at the rate that was active when they were recorded.
 
   All rates in USD per 1M tokens.
+
+  Prefer provider-reported `provider_cost_usd` at query time when present
+  (see `Svarm.Usage.Query`); this table is the fallback for known models.
   """
   @rates %{
     # OpenRouter (via openrouter.ai)
@@ -24,7 +27,7 @@ defmodule Svarm.Usage.Rates do
       prompt: 1.75,
       completion: 14.0
     },
-    "openrouter/free" => %{
+    {"openrouter", "openrouter/free"} => %{
       prompt: 0.0,
       completion: 0.0
     },
@@ -60,9 +63,7 @@ defmodule Svarm.Usage.Rates do
   """
   def cost_usd(provider, model_id, prompt_tokens, completion_tokens)
       when is_binary(provider) and is_binary(model_id) do
-    key = {provider, model_id}
-
-    case Map.get(@rates, key) do
+    case rate_for(provider, model_id) do
       nil ->
         {:error, :unknown_model}
 
@@ -73,17 +74,42 @@ defmodule Svarm.Usage.Rates do
     end
   end
 
+  def cost_usd(_, _, _, _), do: {:error, :unknown_model}
+
   @doc """
   Returns the rate map for a given provider and model, or nil if unknown.
   """
-  def rate_for(provider, model_id) do
-    Map.get(@rates, {provider, model_id})
+  def rate_for(provider, model_id) when is_binary(provider) and is_binary(model_id) do
+    Map.get(@rates, {provider, model_id}) ||
+      Map.get(@rates, {provider, strip_prefix(provider, model_id)}) ||
+      Map.get(@rates, {provider, with_prefix(provider, model_id)})
   end
+
+  def rate_for(_, _), do: nil
 
   @doc """
   Lists all known provider/model pairs.
   """
   def known_models do
     Map.keys(@rates)
+  end
+
+  # openrouter + "deepseek/..." or "openrouter/free" both appear in agents.toml
+  defp strip_prefix(provider, model_id) do
+    prefix = provider <> "/"
+
+    if String.starts_with?(model_id, prefix) do
+      String.replace_prefix(model_id, prefix, "")
+    else
+      model_id
+    end
+  end
+
+  defp with_prefix(provider, model_id) do
+    if String.contains?(model_id, "/") do
+      model_id
+    else
+      provider <> "/" <> model_id
+    end
   end
 end

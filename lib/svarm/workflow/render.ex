@@ -14,6 +14,7 @@ defmodule Svarm.Workflow.Render do
           template
           |> String.replace("{{attempt}}", attempt_str)
           |> String.replace("{{issue.id}}", m.id)
+          |> String.replace("{{issue.source_id}}", m.source_id)
           |> String.replace("{{issue.title}}", m.title)
           |> String.replace("{{issue.description}}", m.description)
           |> String.replace("{{issue.body}}", m.body)
@@ -49,6 +50,7 @@ defmodule Svarm.Workflow.Render do
     allowed = [
       "attempt",
       "issue.id",
+      "issue.source_id",
       "issue.title",
       "issue.description",
       "issue.body",
@@ -84,30 +86,18 @@ defmodule Svarm.Workflow.Render do
   end
 
   defp normalize_issue(issue) do
+    id = field(issue, :id) || ""
+    body = field(issue, :body) || ""
+
     %{
-      id: field(issue, :id),
-      title: field(issue, :title),
-      body: field(issue, :body),
-      description: field(issue, :description) || field(issue, :body),
-      status: field(issue, :status),
-      assignee: field(issue, :assignee)
+      id: to_string(id),
+      source_id: to_string(field(issue, :source_id) || id),
+      title: to_string(field(issue, :title) || ""),
+      body: to_string(body),
+      description: to_string(field(issue, :description) || body),
+      status: to_string(field(issue, :status) || ""),
+      assignee: to_string(field(issue, :assignee) || "")
     }
-    |> Map.update!(:description, &(&1 || ""))
-    |> Map.update!(:body, &(&1 || ""))
-    |> Map.update!(:title, &(&1 || ""))
-    |> Map.update!(:id, &(&1 || ""))
-    |> Map.update!(:status, &(&1 || ""))
-    |> Map.update!(:assignee, &(&1 || ""))
-    |> then(fn m ->
-      %{
-        id: to_string(m.id),
-        title: to_string(m.title),
-        body: to_string(m.body),
-        description: to_string(m.description),
-        status: to_string(m.status),
-        assignee: to_string(m.assignee)
-      }
-    end)
   end
 
   defp field(issue, key) do

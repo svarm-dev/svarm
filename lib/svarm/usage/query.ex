@@ -1,7 +1,11 @@
 defmodule Svarm.Usage.Query do
   @moduledoc """
   Cost aggregation and reporting queries.
-  Cost is calculated at query time — never stored.
+
+  Preference order per record:
+  1. `provider_cost_usd` when the adapter reported a real bill (e.g. OpenRouter)
+  2. rate-table estimate from `Svarm.Usage.Rates`
+  3. $0 only when both are missing (unknown model + no provider total)
   """
   alias Svarm.Usage.{Ledger, Rates}
 
@@ -14,12 +18,7 @@ defmodule Svarm.Usage.Query do
 
     {total, breakdown} =
       Enum.reduce(records, {0.0, %{}}, fn record, {total_acc, breakdown_acc} ->
-        case Rates.cost_usd(
-               record.provider,
-               record.model_id,
-               record.prompt_tokens || 0,
-               record.completion_tokens || 0
-             ) do
+        case cost_for_record(record) do
           {:ok, cost} ->
             key = {record.source, record.provider, record.model_id}
             new_total = total_acc + cost
@@ -34,7 +33,7 @@ defmodule Svarm.Usage.Query do
     %{
       task_id: task_id,
       total_cost_usd: Float.round(total, 4),
-      estimated: Enum.any?(records, & &1.estimated),
+      estimated: Enum.any?(records, &estimated_record?/1),
       breakdown: breakdown,
       record_count: length(records)
     }
@@ -52,7 +51,7 @@ defmodule Svarm.Usage.Query do
     else
       %{
         total_cost_usd: Float.round(sum_usage_cost(records), 4),
-        estimated: Enum.any?(records, & &1.estimated),
+        estimated: Enum.any?(records, &estimated_record?/1),
         record_count: length(records)
       }
     end
@@ -60,17 +59,33 @@ defmodule Svarm.Usage.Query do
 
   defp sum_usage_cost(records) do
     Enum.reduce(records, 0.0, fn record, acc ->
-      case Rates.cost_usd(
-             record.provider,
-             record.model_id,
-             record.prompt_tokens || 0,
-             record.completion_tokens || 0
-           ) do
+      case cost_for_record(record) do
         {:ok, cost} -> acc + cost
         _ -> acc
       end
     end)
   end
+
+  @doc """
+  Cost for one ledger row: prefer provider-reported USD, else rate table.
+  """
+  def cost_for_record(%{provider_cost_usd: cost} = _record)
+      when is_number(cost) do
+    {:ok, cost * 1.0}
+  end
+
+  def cost_for_record(record) do
+    Rates.cost_usd(
+      record.provider,
+      record.model_id,
+      record.prompt_tokens || 0,
+      record.completion_tokens || 0
+    )
+  end
+
+  defp estimated_record?(%{provider_cost_usd: cost}) when is_number(cost), do: false
+  defp estimated_record?(%{estimated: true}), do: true
+  defp estimated_record?(_), do: false
 
   @doc """
   Returns a session-wide spend summary: cost, tokens, and estimate flag.
@@ -82,7 +97,6 @@ defmodule Svarm.Usage.Query do
 
   @doc """
   Returns spend summary for records since a monotonic timestamp (ms).
-  Uses model-specific pricing from Rates — no flat-rate estimation.
   """
   def cost_since(since_mono) when is_integer(since_mono) do
     Ledger.records_since(since_mono) |> summarize_records()
@@ -127,7 +141,7 @@ defmodule Svarm.Usage.Query do
       record_count: length(records),
       prompt_tokens: Enum.reduce(records, 0, &((&1.prompt_tokens || 0) + &2)),
       completion_tokens: Enum.reduce(records, 0, &((&1.completion_tokens || 0) + &2)),
-      estimated: Enum.any?(records, & &1.estimated)
+      estimated: Enum.any?(records, &estimated_record?/1)
     }
   end
 end

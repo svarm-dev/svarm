@@ -39,6 +39,8 @@ defmodule Svarm.Runner.PiRPC do
 
   require Logger
 
+  alias Svarm.Runner.LogFormat
+
   alias Svarm.{Events, Tracker, Workspace}
   alias Svarm.Workflow.Render
 
@@ -149,7 +151,14 @@ defmodule Svarm.Runner.PiRPC do
 
         send_json(port, %{id: "prompt-1", type: "prompt", message: prompt})
 
-        session0 = %{error: false, settled: false, reason: nil, exit_status: nil}
+        session0 = %{
+          error: false,
+          settled: false,
+          reason: nil,
+          exit_status: nil,
+          tool_stdout_streamed: false
+        }
+
         deadline = System.monotonic_time(:millisecond) + timeout_ms
 
         {log, usage, session} =
@@ -249,12 +258,24 @@ defmodule Svarm.Runner.PiRPC do
   end
 
   defp kill_tree(os_pid) when is_integer(os_pid) do
-    case System.cmd("pgrep", ["-P", Integer.to_string(os_pid)], stderr_to_stdout: true) do
-      {out, 0} -> Enum.each(String.split(out), &kill_parsed_child/1)
-      _ -> :ok
+    # Docker slim images often lack pgrep (procps). Never raise here — a cleanup
+    # failure must not crash the worker after a successful run.
+    case System.find_executable("pgrep") do
+      nil ->
+        :ok
+
+      pgrep ->
+        case System.cmd(pgrep, ["-P", Integer.to_string(os_pid)], stderr_to_stdout: true) do
+          {out, 0} -> Enum.each(String.split(out), &kill_parsed_child/1)
+          _ -> :ok
+        end
     end
 
-    _ = System.cmd("kill", ["-KILL", Integer.to_string(os_pid)], stderr_to_stdout: true)
+    case System.find_executable("kill") do
+      nil -> :ok
+      kill -> _ = System.cmd(kill, ["-KILL", Integer.to_string(os_pid)], stderr_to_stdout: true)
+    end
+
     :ok
   end
 
@@ -456,50 +477,42 @@ defmodule Svarm.Runner.PiRPC do
 
   defp handle_event(%{"type" => "message_end"} = event, _task_id, log, usage, session) do
     msg = event["message"] || %{}
-    msg_usage = msg["usage"] || %{}
-    cost = get_in(msg_usage, ["cost", "total"])
+    {log, merge_message_usage(usage, msg), session}
+  end
 
-    usage =
-      usage
-      |> Map.update(:prompt_tokens, msg_usage["input"] || 0, &(&1 + (msg_usage["input"] || 0)))
-      |> Map.update(
-        :completion_tokens,
-        msg_usage["output"] || 0,
-        &(&1 + (msg_usage["output"] || 0))
-      )
+  defp handle_event(%{"type" => "tool_execution_start"} = event, task_id, log, usage, session) do
+    name = event["toolName"] || "tool"
+    args = event["args"] || event["input"] || event["arguments"]
+    Events.broadcast_agent_line(task_id, LogFormat.tool_start(name, args))
+    {log, usage, %{session | tool_stdout_streamed: false}}
+  end
 
-    usage =
-      if is_number(cost) do
-        Map.update(usage, :provider_cost, cost, &(&1 + cost))
-      else
-        usage
+  defp handle_event(%{"type" => "tool_execution_update"} = event, task_id, log, usage, session) do
+    session =
+      case broadcast_tool_text(task_id, event["partialResult"]) do
+        :ok -> session
+        :streamed -> %{session | tool_stdout_streamed: true}
       end
 
     {log, usage, session}
   end
 
-  defp handle_event(%{"type" => "tool_execution_update"} = event, task_id, log, usage, session) do
-    partial = event["partialResult"]
+  defp handle_event(%{"type" => "tool_execution_end"} = event, task_id, log, usage, session) do
+    name = event["toolName"] || "tool"
 
     cond do
-      is_binary(partial) -> Events.broadcast_agent_line(task_id, partial)
-      is_map(partial) -> Events.broadcast_agent_line(task_id, inspect(partial) <> "\n")
-      is_list(partial) -> Events.broadcast_agent_line(task_id, inspect(partial) <> "\n")
-      true -> :ok
+      event["isError"] ->
+        Events.broadcast_agent_line(task_id, LogFormat.tool_fail(name, event["result"]))
+
+      session[:tool_stdout_streamed] ->
+        :ok
+
+      true ->
+        # Tools that only report on end (no partial updates).
+        _ = broadcast_tool_text(task_id, event["result"] || event["partialResult"])
     end
 
-    {log, usage, session}
-  end
-
-  defp handle_event(%{"type" => "tool_execution_end"} = event, task_id, log, usage, session) do
-    if event["isError"] do
-      Events.broadcast_agent_line(
-        task_id,
-        "\n[pi_rpc: tool #{event["toolName"]} failed: #{inspect(event["result"])}]\n"
-      )
-    end
-
-    {log, usage, session}
+    {log, usage, %{session | tool_stdout_streamed: false}}
   end
 
   defp handle_event(%{"type" => "compaction_end"} = event, task_id, log, usage, session) do
@@ -551,6 +564,47 @@ defmodule Svarm.Runner.PiRPC do
   defp handle_event(_other, _task_id, log, usage, session), do: {log, usage, session}
 
   # -- helpers --
+
+  defp merge_message_usage(usage, msg) do
+    msg_usage = msg["usage"] || %{}
+
+    usage
+    |> Map.update(:prompt_tokens, msg_usage["input"] || 0, &(&1 + (msg_usage["input"] || 0)))
+    |> Map.update(
+      :completion_tokens,
+      msg_usage["output"] || 0,
+      &(&1 + (msg_usage["output"] || 0))
+    )
+    |> maybe_add_provider_cost(extract_usage_cost(msg, msg_usage))
+  end
+
+  defp extract_usage_cost(msg, msg_usage) do
+    get_in(msg_usage, ["cost", "total"]) ||
+      get_in(msg_usage, ["cost", "total_cost"]) ||
+      numeric_cost(msg_usage["cost"]) ||
+      get_in(msg, ["cost", "total"])
+  end
+
+  defp numeric_cost(c) when is_number(c), do: c
+  defp numeric_cost(_), do: nil
+
+  defp maybe_add_provider_cost(usage, cost) when is_number(cost) do
+    Map.update(usage, :provider_cost, cost, &(&1 + cost))
+  end
+
+  defp maybe_add_provider_cost(usage, _), do: usage
+
+  defp broadcast_tool_text(task_id, payload) do
+    case LogFormat.unwrap(payload) do
+      nil ->
+        :ok
+
+      text ->
+        line = if String.ends_with?(text, "\n"), do: text, else: text <> "\n"
+        Events.broadcast_agent_line(task_id, line)
+        :streamed
+    end
+  end
 
   defp build_args(agent_config) do
     args = ["--mode", "rpc", "--no-session"]

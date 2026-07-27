@@ -4,7 +4,9 @@ defmodule Svarm.Orchestrator do
 
   Tick:     reconcile (stall + tracker state sync §8.5–8.6) → preflight (§6.3) → fetch eligible → dispatch.
   Dispatch: claim → spawn an agent runner task under the Task.Supervisor → monitor.
-  Exit:     normal exit → completed (or continuation retry); crash → backoff retry.
+  Exit:     normal exit → completed (force `review` if tracker still active);
+  crash → backoff retry. Multi-turn re-spawn is not used: runners that need
+  another turn should return an explicit continue signal in a future revision.
   Retry:    `delay = min(10_000 * 2^(attempt-1), max_retry_backoff_ms)`.
 
   Reconcile now syncs running/claimed tasks against the tracker adapter (external
@@ -151,9 +153,12 @@ defmodule Svarm.Orchestrator do
       if task_id == nil do
         {:noreply, state}
       else
-        {entry, state} = Map.pop(state.running, task_id)
-        state = %{state | claimed: MapSet.delete(state.claimed, task_id)}
-        state = Map.update!(state, :last_run_entries, &Map.put(&1, task_id, entry))
+        {entry, running} = Map.pop(state.running, task_id)
+
+        state =
+          %{state | running: running, claimed: MapSet.delete(state.claimed, task_id)}
+          |> Map.update!(:last_run_entries, &Map.put(&1, task_id, entry))
+
         Logger.warning("worker crashed for #{task_id}: #{inspect(reason)}")
         state = schedule_retry(state, entry.task, {:crash, reason})
         {:noreply, state}
@@ -463,7 +468,8 @@ defmodule Svarm.Orchestrator do
     cond do
       Map.has_key?(acc.running, task.id) or
         MapSet.member?(acc.claimed, task.id) or
-          Map.has_key?(acc.retry_attempts, task.id) ->
+        Map.has_key?(acc.retry_attempts, task.id) or
+          MapSet.member?(acc.completed, task.id) ->
         {:cont, acc}
 
       task.status in acc.terminal_states ->
@@ -577,8 +583,14 @@ defmodule Svarm.Orchestrator do
           post_run_summary(state, task_id, :ok)
           %{state | completed: MapSet.put(state.completed, task_id)}
         else
-          Logger.info("task #{task_id} normal exit but still active, scheduling continuation")
-          schedule_continuation(state, task)
+          # Runner reported success (exit 0). Do not re-spawn (burns tokens /
+          # rate-limits). Force terminal review; retry status patch so GitHub
+          # label sticks across process restarts when possible.
+          Logger.warning("task #{task_id} exited ok but status=#{task.status}; forcing review")
+
+          force_terminal_status(state, task_id, "review")
+          post_run_summary(state, task_id, :ok)
+          %{state | completed: MapSet.put(state.completed, task_id)}
         end
 
       {:error, _} ->
@@ -596,6 +608,43 @@ defmodule Svarm.Orchestrator do
       end
 
     schedule_retry(%{state | completed: MapSet.delete(state.completed, task_id)}, task, reason)
+  end
+
+  # Best-effort: move tracker to a terminal status after a successful run.
+  # `completed` still skips re-dispatch this boot if the patch never sticks.
+  defp force_terminal_status(state, task_id, status) do
+    Enum.reduce_while(1..3, :error, fn attempt, _acc ->
+      state.tracker.update_status(state.tracker_config, task_id, status)
+      force_terminal_step(state, task_id, attempt)
+    end)
+  end
+
+  defp force_terminal_step(state, task_id, attempt) do
+    case state.tracker.get_issue(state.tracker_config, task_id) do
+      {:ok, t} -> force_terminal_after_fetch(t, state.terminal_states, task_id, attempt)
+      _ -> retry_or_give_up(task_id, attempt)
+    end
+  end
+
+  defp force_terminal_after_fetch(task, terminal_states, task_id, attempt) do
+    if task.status in terminal_states do
+      {:halt, :ok}
+    else
+      retry_or_give_up(task_id, attempt)
+    end
+  end
+
+  defp retry_or_give_up(_task_id, attempt) when attempt < 3 do
+    Process.sleep(400 * attempt)
+    {:cont, :error}
+  end
+
+  defp retry_or_give_up(task_id, attempt) do
+    Logger.warning(
+      "task #{task_id}: status still non-terminal after #{attempt} tries (session skip via completed)"
+    )
+
+    {:halt, :error}
   end
 
   defp post_run_summary(state, task_id, result) do
@@ -658,19 +707,6 @@ defmodule Svarm.Orchestrator do
   end
 
   ## retry / backoff
-
-  defp schedule_continuation(state, task) do
-    timer = Process.send_after(self(), {:retry, task.id}, @continuation_retry_ms)
-
-    entry = %{
-      attempt: task.attempts || 0,
-      identifier: task.id,
-      due_at_mono: System.monotonic_time(:millisecond) + @continuation_retry_ms,
-      timer: timer
-    }
-
-    %{state | retry_attempts: Map.put(state.retry_attempts, task.id, entry)}
-  end
 
   defp schedule_retry(state, nil, _reason), do: state
 
@@ -735,4 +771,39 @@ defmodule Svarm.Orchestrator do
       last_tick_mono_ms: state.last_tick_mono_ms
     }
   end
+end
+
+defimpl Inspect, for: Svarm.Orchestrator do
+  @moduledoc false
+  # GenServer crash dumps call inspect(state) — never print tokens.
+
+  def inspect(%Svarm.Orchestrator{} = state, opts) do
+    data =
+      state
+      |> Map.from_struct()
+      |> Map.update(:tracker_config, %{}, &Svarm.Redact.map/1)
+      |> Map.update(:workflow, nil, &redact_workflow/1)
+      |> Map.update(:agents, %{}, &redact_agents/1)
+
+    Inspect.Algebra.concat(["%Svarm.Orchestrator", Inspect.Algebra.to_doc(data, opts)])
+  end
+
+  defp redact_workflow(%Svarm.Workflow{} = wf) do
+    %{path: wf.path, config: Svarm.Redact.map(wf.config || %{})}
+  end
+
+  defp redact_workflow(other), do: other
+
+  defp redact_agents(agents) when is_map(agents) do
+    Map.new(agents, fn {name, cfg} ->
+      cfg =
+        cfg
+        |> Map.update(:env, %{}, &Svarm.Redact.map/1)
+        |> Map.drop([:api_key, "api_key"])
+
+      {name, cfg}
+    end)
+  end
+
+  defp redact_agents(other), do: other
 end

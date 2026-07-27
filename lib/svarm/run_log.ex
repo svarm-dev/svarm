@@ -18,6 +18,8 @@ defmodule Svarm.RunLog do
 
   @doc "Append a chunk to a task's log. Creates the row if it doesn't exist."
   def append(task_id, chunk) when is_binary(task_id) and is_binary(chunk) do
+    chunk = Svarm.Redact.text(chunk)
+
     case Repo.get_by(__MODULE__, task_id: task_id) do
       nil ->
         %__MODULE__{task_id: task_id, content: chunk}
