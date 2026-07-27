@@ -39,6 +39,8 @@ defmodule Svarm.Runner.PiRPC do
 
   require Logger
 
+  alias Svarm.Runner.LogFormat
+
   alias Svarm.{Events, Tracker, Workspace}
   alias Svarm.Workflow.Render
 
@@ -499,24 +501,23 @@ defmodule Svarm.Runner.PiRPC do
   end
 
   defp handle_event(%{"type" => "tool_execution_update"} = event, task_id, log, usage, session) do
-    partial = event["partialResult"]
+    case LogFormat.unwrap(event["partialResult"]) do
+      nil ->
+        :ok
 
-    cond do
-      is_binary(partial) -> Events.broadcast_agent_line(task_id, partial)
-      is_map(partial) -> Events.broadcast_agent_line(task_id, inspect(partial) <> "\n")
-      is_list(partial) -> Events.broadcast_agent_line(task_id, inspect(partial) <> "\n")
-      true -> :ok
+      text ->
+        line = if String.ends_with?(text, "\n"), do: text, else: text <> "\n"
+        Events.broadcast_agent_line(task_id, line)
     end
 
     {log, usage, session}
   end
 
   defp handle_event(%{"type" => "tool_execution_end"} = event, task_id, log, usage, session) do
+    # Success stdout already streamed via tool_execution_update; only log failures here.
     if event["isError"] do
-      Events.broadcast_agent_line(
-        task_id,
-        "\n[pi_rpc: tool #{event["toolName"]} failed: #{inspect(event["result"])}]\n"
-      )
+      name = event["toolName"] || "tool"
+      Events.broadcast_agent_line(task_id, LogFormat.tool_fail(name, event["result"]))
     end
 
     {log, usage, session}
