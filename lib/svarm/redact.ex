@@ -9,7 +9,7 @@ defmodule Svarm.Redact do
   @env_names ~r/\b(OPENROUTER_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GITHUB_TOKEN|GH_TOKEN|SECRET_KEY_BASE|AWS_SECRET_ACCESS_KEY|API_KEY|TOKEN)=([^\s\n"']+)/
 
   # Token shapes (PAT, OpenRouter, GitHub classic/fine-grained, sk-*).
-  @token_shapes ~r/\b(sk-or-v1-|sk-ant-|sk-|github_pat_|ghp_|gho_|ghu_|ghs_|ghr_)[A-Za-z0-9_\-]+/
+  @token_shapes ~r/\b(sk-or-v1-|sk-ant-|github_pat_|ghp_|gho_|ghu_|ghs_|ghr_)[A-Za-z0-9_\-]{8,}/
 
   @doc "Deep-redact known secret keys in maps. Non-maps returned as-is."
   def map(data) when is_map(data) do

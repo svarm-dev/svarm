@@ -4,7 +4,9 @@ defmodule Svarm.Orchestrator do
 
   Tick:     reconcile (stall + tracker state sync §8.5–8.6) → preflight (§6.3) → fetch eligible → dispatch.
   Dispatch: claim → spawn an agent runner task under the Task.Supervisor → monitor.
-  Exit:     normal exit → completed (or continuation retry); crash → backoff retry.
+  Exit:     normal exit → completed (force `review` if tracker still active);
+  crash → backoff retry. Multi-turn re-spawn is not used: runners that need
+  another turn should return an explicit continue signal in a future revision.
   Retry:    `delay = min(10_000 * 2^(attempt-1), max_retry_backoff_ms)`.
 
   Reconcile now syncs running/claimed tasks against the tracker adapter (external
@@ -581,11 +583,12 @@ defmodule Svarm.Orchestrator do
           post_run_summary(state, task_id, :ok)
           %{state | completed: MapSet.put(state.completed, task_id)}
         else
-          # Runner reported success (exit 0). Re-spawning burns tokens and
-          # rate-limits GitHub when status patches fail — force review once.
+          # Runner reported success (exit 0). Do not re-spawn (burns tokens /
+          # rate-limits). Force terminal review; retry status patch so GitHub
+          # label sticks across process restarts when possible.
           Logger.warning("task #{task_id} exited ok but status=#{task.status}; forcing review")
 
-          state.tracker.update_status(state.tracker_config, task_id, "review")
+          force_terminal_status(state, task_id, "review")
           post_run_summary(state, task_id, :ok)
           %{state | completed: MapSet.put(state.completed, task_id)}
         end
@@ -605,6 +608,39 @@ defmodule Svarm.Orchestrator do
       end
 
     schedule_retry(%{state | completed: MapSet.delete(state.completed, task_id)}, task, reason)
+  end
+
+  # Best-effort: move tracker to a terminal status after a successful run.
+  # `completed` still skips re-dispatch this boot if the patch never sticks.
+  defp force_terminal_status(state, task_id, status) do
+    Enum.reduce_while(1..3, :error, fn attempt, _acc ->
+      state.tracker.update_status(state.tracker_config, task_id, status)
+
+      case state.tracker.get_issue(state.tracker_config, task_id) do
+        {:ok, t} ->
+          if t.status in state.terminal_states do
+            {:halt, :ok}
+          else
+            retry_or_give_up(task_id, attempt)
+          end
+
+        _ ->
+          retry_or_give_up(task_id, attempt)
+      end
+    end)
+  end
+
+  defp retry_or_give_up(_task_id, attempt) when attempt < 3 do
+    Process.sleep(400 * attempt)
+    {:cont, :error}
+  end
+
+  defp retry_or_give_up(task_id, attempt) do
+    Logger.warning(
+      "task #{task_id}: status still non-terminal after #{attempt} tries (session skip via completed)"
+    )
+
+    {:halt, :error}
   end
 
   defp post_run_summary(state, task_id, result) do

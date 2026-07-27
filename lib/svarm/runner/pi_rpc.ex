@@ -151,7 +151,14 @@ defmodule Svarm.Runner.PiRPC do
 
         send_json(port, %{id: "prompt-1", type: "prompt", message: prompt})
 
-        session0 = %{error: false, settled: false, reason: nil, exit_status: nil}
+        session0 = %{
+          error: false,
+          settled: false,
+          reason: nil,
+          exit_status: nil,
+          tool_stdout_streamed: false
+        }
+
         deadline = System.monotonic_time(:millisecond) + timeout_ms
 
         {log, usage, session} =
@@ -500,27 +507,39 @@ defmodule Svarm.Runner.PiRPC do
     {log, usage, session}
   end
 
-  defp handle_event(%{"type" => "tool_execution_update"} = event, task_id, log, usage, session) do
-    case LogFormat.unwrap(event["partialResult"]) do
-      nil ->
-        :ok
+  defp handle_event(%{"type" => "tool_execution_start"} = event, task_id, log, usage, session) do
+    name = event["toolName"] || "tool"
+    args = event["args"] || event["input"] || event["arguments"]
+    Events.broadcast_agent_line(task_id, LogFormat.tool_start(name, args))
+    {log, usage, %{session | tool_stdout_streamed: false}}
+  end
 
-      text ->
-        line = if String.ends_with?(text, "\n"), do: text, else: text <> "\n"
-        Events.broadcast_agent_line(task_id, line)
-    end
+  defp handle_event(%{"type" => "tool_execution_update"} = event, task_id, log, usage, session) do
+    session =
+      case broadcast_tool_text(task_id, event["partialResult"]) do
+        :ok -> session
+        :streamed -> %{session | tool_stdout_streamed: true}
+      end
 
     {log, usage, session}
   end
 
   defp handle_event(%{"type" => "tool_execution_end"} = event, task_id, log, usage, session) do
-    # Success stdout already streamed via tool_execution_update; only log failures here.
-    if event["isError"] do
-      name = event["toolName"] || "tool"
-      Events.broadcast_agent_line(task_id, LogFormat.tool_fail(name, event["result"]))
+    name = event["toolName"] || "tool"
+
+    cond do
+      event["isError"] ->
+        Events.broadcast_agent_line(task_id, LogFormat.tool_fail(name, event["result"]))
+
+      session[:tool_stdout_streamed] ->
+        :ok
+
+      true ->
+        # Tools that only report on end (no partial updates).
+        _ = broadcast_tool_text(task_id, event["result"] || event["partialResult"])
     end
 
-    {log, usage, session}
+    {log, usage, %{session | tool_stdout_streamed: false}}
   end
 
   defp handle_event(%{"type" => "compaction_end"} = event, task_id, log, usage, session) do
@@ -572,6 +591,18 @@ defmodule Svarm.Runner.PiRPC do
   defp handle_event(_other, _task_id, log, usage, session), do: {log, usage, session}
 
   # -- helpers --
+
+  defp broadcast_tool_text(task_id, payload) do
+    case LogFormat.unwrap(payload) do
+      nil ->
+        :ok
+
+      text ->
+        line = if String.ends_with?(text, "\n"), do: text, else: text <> "\n"
+        Events.broadcast_agent_line(task_id, line)
+        :streamed
+    end
+  end
 
   defp build_args(agent_config) do
     args = ["--mode", "rpc", "--no-session"]

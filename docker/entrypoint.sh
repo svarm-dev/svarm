@@ -39,6 +39,3 @@ git config --global user.email "${SVARM_GIT_EMAIL:-svarm-bot@users.noreply.githu
 git config --global user.name "${SVARM_GIT_NAME:-Svärm Agent}"
 
 exec "$@"
-export SVARM_AGENTS_PATH="${SVARM_AGENTS_PATH:-$CONFIG_DIR/agents.toml}"
-
-exec "$@"
