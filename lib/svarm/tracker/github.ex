@@ -126,7 +126,8 @@ defmodule Svarm.Tracker.GitHub do
 
         {:ok,
          issues
-         |> Enum.map(&Normalize.from_api_response(&1, normalized_config))}
+         |> Enum.map(&Normalize.from_api_response(&1, normalized_config))
+         |> Enum.filter(&Eligibility.board_visible?(&1, normalized_config))}
 
       _ ->
         {:ok, []}
