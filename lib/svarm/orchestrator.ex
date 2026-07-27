@@ -739,3 +739,38 @@ defmodule Svarm.Orchestrator do
     }
   end
 end
+
+defimpl Inspect, for: Svarm.Orchestrator do
+  @moduledoc false
+  # GenServer crash dumps call inspect(state) — never print tokens.
+
+  def inspect(%Svarm.Orchestrator{} = state, opts) do
+    data =
+      state
+      |> Map.from_struct()
+      |> Map.update(:tracker_config, %{}, &Svarm.Redact.map/1)
+      |> Map.update(:workflow, nil, &redact_workflow/1)
+      |> Map.update(:agents, %{}, &redact_agents/1)
+
+    Inspect.Algebra.concat(["%Svarm.Orchestrator", Inspect.Algebra.to_doc(data, opts)])
+  end
+
+  defp redact_workflow(%Svarm.Workflow{} = wf) do
+    %{path: wf.path, config: Svarm.Redact.map(wf.config || %{})}
+  end
+
+  defp redact_workflow(other), do: other
+
+  defp redact_agents(agents) when is_map(agents) do
+    Map.new(agents, fn {name, cfg} ->
+      cfg =
+        cfg
+        |> Map.update(:env, %{}, &Svarm.Redact.map/1)
+        |> Map.drop([:api_key, "api_key"])
+
+      {name, cfg}
+    end)
+  end
+
+  defp redact_agents(other), do: other
+end
