@@ -477,34 +477,7 @@ defmodule Svarm.Runner.PiRPC do
 
   defp handle_event(%{"type" => "message_end"} = event, _task_id, log, usage, session) do
     msg = event["message"] || %{}
-    msg_usage = msg["usage"] || %{}
-
-    cost =
-      get_in(msg_usage, ["cost", "total"]) ||
-        get_in(msg_usage, ["cost", "total_cost"]) ||
-        case msg_usage["cost"] do
-          c when is_number(c) -> c
-          _ -> nil
-        end ||
-        get_in(msg, ["cost", "total"])
-
-    usage =
-      usage
-      |> Map.update(:prompt_tokens, msg_usage["input"] || 0, &(&1 + (msg_usage["input"] || 0)))
-      |> Map.update(
-        :completion_tokens,
-        msg_usage["output"] || 0,
-        &(&1 + (msg_usage["output"] || 0))
-      )
-
-    usage =
-      if is_number(cost) do
-        Map.update(usage, :provider_cost, cost, &(&1 + cost))
-      else
-        usage
-      end
-
-    {log, usage, session}
+    {log, merge_message_usage(usage, msg), session}
   end
 
   defp handle_event(%{"type" => "tool_execution_start"} = event, task_id, log, usage, session) do
@@ -591,6 +564,35 @@ defmodule Svarm.Runner.PiRPC do
   defp handle_event(_other, _task_id, log, usage, session), do: {log, usage, session}
 
   # -- helpers --
+
+  defp merge_message_usage(usage, msg) do
+    msg_usage = msg["usage"] || %{}
+
+    usage
+    |> Map.update(:prompt_tokens, msg_usage["input"] || 0, &(&1 + (msg_usage["input"] || 0)))
+    |> Map.update(
+      :completion_tokens,
+      msg_usage["output"] || 0,
+      &(&1 + (msg_usage["output"] || 0))
+    )
+    |> maybe_add_provider_cost(extract_usage_cost(msg, msg_usage))
+  end
+
+  defp extract_usage_cost(msg, msg_usage) do
+    get_in(msg_usage, ["cost", "total"]) ||
+      get_in(msg_usage, ["cost", "total_cost"]) ||
+      numeric_cost(msg_usage["cost"]) ||
+      get_in(msg, ["cost", "total"])
+  end
+
+  defp numeric_cost(c) when is_number(c), do: c
+  defp numeric_cost(_), do: nil
+
+  defp maybe_add_provider_cost(usage, cost) when is_number(cost) do
+    Map.update(usage, :provider_cost, cost, &(&1 + cost))
+  end
+
+  defp maybe_add_provider_cost(usage, _), do: usage
 
   defp broadcast_tool_text(task_id, payload) do
     case LogFormat.unwrap(payload) do

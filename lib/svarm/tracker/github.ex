@@ -236,9 +236,7 @@ defmodule Svarm.Tracker.GitHub do
           Logger.info("github: posted run summary (run #{run_id})")
 
         {:ok, %{status: 403} = resp} ->
-          Logger.warning(
-            "github: comment forbidden for run #{run_id}: #{format_forbidden(resp)}"
-          )
+          Logger.warning("github: comment forbidden for run #{run_id}: #{format_forbidden(resp)}")
 
         other ->
           Logger.warning("github: post_run_summary failed for run #{run_id}: #{inspect(other)}")
@@ -354,7 +352,6 @@ defmodule Svarm.Tracker.GitHub do
     end
   end
 
-
   # Never log Authorization. Surface GitHub's message + rate headers so we can
   # tell secondary rate limits from missing scopes / SSO / fine-grained perms.
   defp format_forbidden(%{headers: headers, body: body}) do
@@ -371,17 +368,15 @@ defmodule Svarm.Tracker.GitHub do
     "message=#{inspect(msg)} remaining=#{remaining} reset=#{reset} retry_after=#{retry}"
   end
 
-  defp format_forbidden(_), do: "forbidden"
-
   defp header_value(headers, name) when is_map(headers) do
+    lower = String.downcase(name)
+
     get_in(headers, [name, Access.at(0)]) ||
-      get_in(headers, [String.downcase(name), Access.at(0)]) ||
+      get_in(headers, [lower, Access.at(0)]) ||
       Map.get(headers, name) ||
-      Map.get(headers, String.downcase(name)) ||
+      Map.get(headers, lower) ||
       "-"
   end
-
-  defp header_value(_, _), do: "-"
 
   defp error(type, message, retry_after \\ nil) do
     %{type: type, message: message, retry_after: retry_after}

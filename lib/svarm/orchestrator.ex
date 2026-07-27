@@ -615,19 +615,23 @@ defmodule Svarm.Orchestrator do
   defp force_terminal_status(state, task_id, status) do
     Enum.reduce_while(1..3, :error, fn attempt, _acc ->
       state.tracker.update_status(state.tracker_config, task_id, status)
-
-      case state.tracker.get_issue(state.tracker_config, task_id) do
-        {:ok, t} ->
-          if t.status in state.terminal_states do
-            {:halt, :ok}
-          else
-            retry_or_give_up(task_id, attempt)
-          end
-
-        _ ->
-          retry_or_give_up(task_id, attempt)
-      end
+      force_terminal_step(state, task_id, attempt)
     end)
+  end
+
+  defp force_terminal_step(state, task_id, attempt) do
+    case state.tracker.get_issue(state.tracker_config, task_id) do
+      {:ok, t} -> force_terminal_after_fetch(t, state.terminal_states, task_id, attempt)
+      _ -> retry_or_give_up(task_id, attempt)
+    end
+  end
+
+  defp force_terminal_after_fetch(task, terminal_states, task_id, attempt) do
+    if task.status in terminal_states do
+      {:halt, :ok}
+    else
+      retry_or_give_up(task_id, attempt)
+    end
   end
 
   defp retry_or_give_up(_task_id, attempt) when attempt < 3 do

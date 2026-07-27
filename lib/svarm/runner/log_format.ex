@@ -75,11 +75,8 @@ defmodule Svarm.Runner.LogFormat do
   end
 
   defp args_summary(args) when is_map(args) do
-    cond do
-      is_binary(args["command"]) -> args_summary(args["command"])
-      is_binary(args[:command]) -> args_summary(args[:command])
-      true -> nil
-    end
+    cmd = Map.get(args, "command") || Map.get(args, :command)
+    if is_binary(cmd), do: args_summary(cmd), else: nil
   end
 
   defp args_summary(_), do: nil
