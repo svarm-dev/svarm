@@ -10,10 +10,10 @@ Agent workflows for real projects — not lights-off factories.
 
 > *Move fast without torching the repo.*
 
-Self-hosted, open source (MIT), built in Elixir.
+Self-hosted, source available (FSL-1.1-MIT → MIT after 2 years), built in Elixir.
 
 [![CI](https://github.com/svarm-dev/svarm/actions/workflows/ci.yml/badge.svg)](https://github.com/svarm-dev/svarm/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: FSL-1.1-MIT](https://img.shields.io/badge/license-FSL--1.1--MIT-green.svg)](LICENSE)
 [![Elixir](https://img.shields.io/badge/Elixir-1.20+-6e4a7e?logo=elixir&logoColor=white)](https://elixir-lang.org)
 [![OTP](https://img.shields.io/badge/OTP-29-blue)](https://www.erlang.org)
 
@@ -148,3 +148,17 @@ Optional UI config after the demo: open `/setup` (same auth as `/approvals` in D
 ## Why self-hosted?
 
 Source code and API keys stay on your machines. You can run a local tracker and keep LLM traffic on whatever provider you configure. There is no Svärm cloud in the middle of that path.
+
+## License
+
+Svärm is licensed under the **[Functional Source License, Version 1.1, MIT Future License](LICENSE)** ([FSL-1.1-MIT](https://fsl.software/)).
+
+**In plain language:**
+
+- **You can** run Svärm for your own team (homelab or company), study it, modify it, and contribute back.
+- **You cannot** offer Svärm (or a substantially similar product) to others as a competing commercial product or hosted service without a commercial agreement with us.
+- **Each released version** becomes **MIT** two years after we make it available.
+
+This is **source available / Fair Source**, not an OSI “Open Source” license. We chose FSL so internal users stay free while competing multi-tenant clones are not a free ride. Details: [fsl.software](https://fsl.software/).
+
+**Commercial / Competing Use / support:** see [svarm.dev](https://svarm.dev) — priority support and Pro tiers; separate terms if you need to host or resell.

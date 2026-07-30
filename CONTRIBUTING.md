@@ -67,3 +67,7 @@ Read [AGENTS.md](AGENTS.md) for the module boundaries and supervision tree. Key 
 ## Coding agents
 
 If you're a coding agent (pi, Claude Code, etc.) editing this repo, see [AGENTS.md](AGENTS.md) for the full contract.
+
+## License
+
+By contributing, you agree that your contributions are licensed under the same terms as the project: [FSL-1.1-MIT](LICENSE) (Functional Source License → MIT after two years per version). See [README](README.md#license) for a plain-language summary.
