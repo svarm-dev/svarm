@@ -1,6 +1,8 @@
 defmodule Svarm.Dispatch do
   @moduledoc """
-  Decomposed tasks → kanban.db. Routes each task to an agent via ProfileRouter.
+  Decomposed tasks → kanban.db.
+
+  Keeps an explicit task assignee when present; otherwise routes via ProfileRouter.
   Auto-wires dependencies: priority N tasks depend on all priority N-1 tasks.
   """
   alias Svarm.ProfileRouter
@@ -13,7 +15,7 @@ defmodule Svarm.Dispatch do
     created =
       Enum.map(tasks, fn task ->
         t = normalize_task(task)
-        assignee = ProfileRouter.assign("#{t[:title]} #{t[:body]}")
+        assignee = resolve_assignee(t)
 
         {:ok, issue} =
           tracker.create_issue(%{}, %{
@@ -45,6 +47,17 @@ defmodule Svarm.Dispatch do
       assignee: get.(:assignee),
       priority: get.(:priority)
     }
+  end
+
+  defp resolve_assignee(%{assignee: assignee}) when is_binary(assignee) do
+    case String.trim(assignee) do
+      "" -> ProfileRouter.assign("")
+      name -> name
+    end
+  end
+
+  defp resolve_assignee(%{title: title, body: body}) do
+    ProfileRouter.assign("#{title} #{body}")
   end
 
   defp wire_dependencies(created) do

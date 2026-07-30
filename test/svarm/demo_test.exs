@@ -4,9 +4,14 @@ defmodule Svarm.DemoTest do
   alias Svarm.{Demo, KanbanBridge}
 
   test "seed creates demo tasks on the board" do
+    KanbanBridge.delete_all_tasks()
     assert {:ok, count} = Demo.seed("test goal")
-    assert count >= 1
-    assert Enum.any?(KanbanBridge.list_tasks([]), &String.contains?(&1.title, "Demo:"))
+    assert count == 3
+    tasks = KanbanBridge.list_tasks([])
+    assert Enum.any?(tasks, &String.contains?(&1.title, "Demo:"))
+
+    assert Enum.map(tasks, & &1.assignee) |> Enum.sort() ==
+             ["demo_code", "demo_docs", "demo_research"]
   end
 
   test "seed_if_empty skips when board has tasks" do
