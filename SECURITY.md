@@ -42,14 +42,29 @@ Svärm is self-hosted. The operator controls:
 - **Workspace sandbox**: `Workspace.ensure/2` validates paths stay within the configured root
 - **Secrets in transit**: never appear in task metadata, PubSub messages, or issue comments
 
-The first-run approval gate (`approval.mode: untrusted`) prevents unattended execution until the operator explicitly approves. Demo assignees (`demo_*`) skip the gate for zero-key onboarding.
+The first-run approval gate (`approval.mode: untrusted`) prevents unattended execution until the operator explicitly approves. Under `mode: untrusted`, only assignees listed in `approval.trusted_assignees` skip the gate. The default template trusts `default`, `demo_research`, and `demo_docs`; **`demo_code` is gated** so the approval UX is visible during zero-key onboarding. Demo seed also applies a runtime overlay (trusts only `demo_research` and `demo_docs`) while a demo profile flag is active (`SVARM_SEED_DEMO` / `SVARM_DEMO_ROUTES` / dev routes). The overlay never weakens a WORKFLOW `mode: all` policy (everyone stays gated).
+
+### Sticky demo approval overlay
+
+While any of `seed_demo_on_boot`, `demo_routes`, or `dev_routes` is active, a prior Seed’s process-global `:approval_overlay` stays merged into Orchestrator approval state until process exit or a non-demo boot that clears it. Operators editing WORKFLOW trust lists in a long-lived `mix phx.server` (which typically runs with `dev_routes`) should expect the overlay to win for trusted assignees until restart or an env without those flags. Demo profile includes `dev_routes` by design; there is no mid-session UI to clear the overlay today.
+
+### Approvals surfaces
+
+| Surface | Auth model |
+|---------|------------|
+| `/approvals` | Basic Auth when `APPROVALS_USER` / `APPROVALS_PASSWORD` are set |
+| `/board` LiveView approve / reject | **Not** behind ApprovalsAuth — anyone who can reach the app can approve or reject pending tasks |
+
+That is intentional for self-hosted network trust: bind or firewall the UI; do not expose the board on a shared host without network controls. Board Basic Auth is not implemented today.
 
 ## Production hardening
 
 For team/production deployments:
 
-- Set `APPROVALS_USER` and `APPROVALS_PASSWORD` in `.env`
+- Bind or firewall the UI so only trusted operators reach `/board` (board approve/reject has no Basic Auth)
+- Set strong `APPROVALS_USER` and `APPROVALS_PASSWORD` in `.env` (gates `/approvals` and `/setup` in Docker)
 - Use a real `SECRET_KEY_BASE` (not the auto-generated one)
 - Keep `approval.mode: untrusted` (the default)
 - Review agent commands in `agents.toml` before enabling
+- Do **not** expose the demo profile on shared hosts (`SVARM_DEMO_ROUTES` / `SVARM_SEED_DEMO`)
 - Rotate API keys if a team member with access leaves
