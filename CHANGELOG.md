@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Docker demo seed keeps `demo_*` assignees (Dispatch no longer overwrites them with ProfileRouter → Pi/OpenRouter)
 - Dashboard session token totals with negative monotonic timestamps; completed runs without assignee count on the right agent
 - Approve/reject gates use the active tracker (Local or GitHub), not a Local-only path ([#19](https://github.com/svarm-dev/svarm/pull/19))
 - GitHub board no longer fills **Todo** with pull requests and unlabeled closed issues ([#23](https://github.com/svarm-dev/svarm/pull/23))
