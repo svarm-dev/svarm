@@ -11,7 +11,7 @@ defmodule SvarmWeb.DevDemoController do
     case Svarm.Demo.seed(goal) do
       {:ok, count} ->
         conn
-        |> put_flash(:info, "Queued #{count} demo tasks on the board.")
+        |> put_flash(:info, "Cleared board and queued #{count} demo tasks.")
         |> redirect(to: ~p"/board")
 
       {:error, reason} ->

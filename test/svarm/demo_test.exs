@@ -14,6 +14,18 @@ defmodule Svarm.DemoTest do
              ["demo_code", "demo_docs", "demo_research"]
   end
 
+  test "seed clears previous tickets" do
+    KanbanBridge.delete_all_tasks()
+    assert {:ok, 3} = Demo.seed("first")
+    assert length(KanbanBridge.list_tasks([])) == 3
+    assert {:ok, 3} = Demo.seed("second")
+    tasks = KanbanBridge.list_tasks([])
+    assert length(tasks) == 3
+
+    assert Enum.map(tasks, & &1.assignee) |> Enum.sort() ==
+             ["demo_code", "demo_docs", "demo_research"]
+  end
+
   test "seed_if_empty skips when board has tasks" do
     assert {:ok, _} = Demo.seed("first")
     assert :already_has_tasks = Demo.seed_if_empty("second")

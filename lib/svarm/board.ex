@@ -210,6 +210,28 @@ defmodule Svarm.Board do
     |> Enum.find(&(is_binary(&1) and &1 != ""))
   end
 
+  @doc """
+  Mark a task in `review` as `done` (human accepted the agent result).
+
+  Used on the local board when there is no PR to open; also works after a GitHub PR review.
+  """
+  def complete_review(id) when is_binary(id) do
+    config = tracker_config()
+    adapter = tracker()
+
+    case adapter.get_issue(config, id) do
+      {:ok, %{status: "review"}} ->
+        adapter.update_status(config, id, "done")
+        :ok
+
+      {:ok, _} ->
+        {:error, :not_in_review}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   defp meta_get(meta, key) when is_map(meta) do
     Map.get(meta, key) || Map.get(meta, Atom.to_string(key))
   end

@@ -91,6 +91,23 @@ defmodule SvarmWeb.BoardLive do
     end
   end
 
+  def handle_event("complete_review", %{"id" => id}, socket) do
+    case Board.complete_review(id) do
+      :ok ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Marked #{id} done")
+         |> load_board()
+         |> then(fn s -> if s.assigns.selected_task_id == id, do: select_task(s, id), else: s end)}
+
+      {:error, :not_in_review} ->
+        {:noreply, put_flash(socket, :error, "Task is not awaiting review")}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Could not mark done: #{inspect(reason)}")}
+    end
+  end
+
   def handle_event("board_keydown", %{"key" => key}, socket) do
     {:noreply, handle_board_key(socket, key)}
   end
@@ -860,23 +877,35 @@ defmodule SvarmWeb.BoardLive do
             <div class="rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-sm">
               <p class="font-medium">Awaiting human review</p>
               <p class="mt-0.5 opacity-80">
-                Agent finished. Review the PR on your tracker before merge.
+                <%= if Board.pr_url(@task, @meta) do %>
+                  Agent finished. Review the PR before merge, then mark done here.
+                <% else %>
+                  Agent finished. No PR on the local board — check the log/cost, then mark done.
+                <% end %>
               </p>
               <%= if Board.reviewer(@task) do %>
                 <p class="mt-1 text-xs opacity-70">Reviewer: {Board.reviewer(@task)}</p>
               <% end %>
-              <%= if pr = Board.pr_url(@task, @meta) do %>
-                <a
-                  href={pr}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="btn btn-sm btn-outline mt-2"
+              <div class="mt-2 flex flex-wrap gap-2">
+                <%= if pr = Board.pr_url(@task, @meta) do %>
+                  <a
+                    href={pr}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="btn btn-sm btn-outline"
+                  >
+                    Open PR
+                  </a>
+                <% end %>
+                <button
+                  type="button"
+                  phx-click="complete_review"
+                  phx-value-id={@task.id}
+                  class="btn btn-sm btn-primary"
                 >
-                  Open PR
-                </a>
-              <% else %>
-                <p class="mt-1 text-xs opacity-60">Review on tracker/GitHub</p>
-              <% end %>
+                  Mark done
+                </button>
+              </div>
             </div>
           <% end %>
 

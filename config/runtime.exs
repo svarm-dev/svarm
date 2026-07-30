@@ -33,11 +33,13 @@ if is_binary(approvals_user) and approvals_user != "" and is_binary(approvals_pa
   config :svarm, :approvals_auth, %{username: approvals_user, password: approvals_pass}
 end
 
-# Seed demo routes + boot seed (no API keys). Docker demo profile sets these.
+# Demo knobs (prod release keeps these off unless env is set):
+#   SVARM_SEED_DEMO=1   → boot-seed mock tasks when board empty (Docker demo)
+#   SVARM_DEMO_ROUTES=1 → Seed demo button + POST /dev/demo/seed (not implied by SEED)
 seed_demo? = System.get_env("SVARM_SEED_DEMO") in ~w(1 true TRUE yes YES on ON)
 demo_routes? = System.get_env("SVARM_DEMO_ROUTES") in ~w(1 true TRUE yes YES on ON)
 
-if seed_demo? or demo_routes? do
+if demo_routes? do
   config :svarm, :demo_routes, true
 end
 

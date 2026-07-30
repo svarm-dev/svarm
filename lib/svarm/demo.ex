@@ -10,19 +10,20 @@ defmodule Svarm.Demo do
   @default_goal "Showcase the Svärm orchestrator loop"
 
   @doc """
-  Seed mock demo tasks onto the current board and kick the orchestrator.
+  Clear the local board, seed mock demo tasks, and kick the orchestrator.
 
   Returns `{:ok, count}` or `{:error, reason}`.
   """
   def seed(goal \\ @default_goal) when is_binary(goal) do
     goal = goal |> String.trim() |> then(fn g -> if g == "", do: @default_goal, else: g end)
 
+    # Fresh board each seed — old failed/demo cards should not pile up.
+    Svarm.Tracker.Local.delete_all(%{})
+
     with {:ok, %{tasks: tasks}} <- Svarm.Decompose.run(%{goal: goal, research: ""}, mock: true),
-         {:ok, %{created_count: count}} <- Svarm.Dispatch.run(%{tasks: tasks, goal: goal}) do
-      # Seed synthetic usage records so cost receipts show real dollar amounts
-      # Fetch created tasks with IDs (Dispatch assigns IDs during creation)
-      created_tasks = Svarm.Board.list_tasks()
-      seed_usage_records(created_tasks)
+         {:ok, %{created_count: count, tasks: created}} <-
+           Svarm.Dispatch.run(%{tasks: tasks, goal: goal}) do
+      seed_usage_records(created)
       # One task at a time: research → code → docs; faster poll between stages
       Application.put_env(:svarm, :orchestrator_max_concurrent, 1)
       Application.put_env(:svarm, :orchestrator_poll_interval_ms, 2_000)
@@ -75,7 +76,7 @@ defmodule Svarm.Demo do
 
       Svarm.Usage.Ledger.append(%{
         run_id: run_id,
-        task_id: task.id,
+        task_id: task_id(task),
         tenant: "demo",
         source: "worker",
         provider: "openrouter",
@@ -86,4 +87,8 @@ defmodule Svarm.Demo do
       })
     end
   end
+
+  defp task_id(%{id: id}), do: id
+  defp task_id(%{"id" => id}), do: id
+  defp task_id(_), do: "unknown"
 end

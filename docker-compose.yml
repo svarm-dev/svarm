@@ -36,7 +36,7 @@ services:
       - ./svarm-config:/app/config
     restart: unless-stopped
 
-  # Zero-key path: same image, auto-seed + Seed demo button, no GitHub/OpenRouter.
+  # Zero-key path: same image, auto-seed + optional re-seed button, no GitHub/OpenRouter.
   svarm-demo:
     profiles: ["demo"]
     build: .
@@ -53,6 +53,8 @@ services:
       - PHX_HOST=${PHX_HOST:-localhost}
       - SVARM_BASE_URL=${SVARM_BASE_URL:-http://localhost:${SVARM_PORT:-4000}}
       - SVARM_SEED_DEMO=1
+      # Re-seed button + /dev/demo/seed (explicit; not implied by SEED alone).
+      - SVARM_DEMO_ROUTES=1
       - FORCE_SSL=${FORCE_SSL:-true}
       # Demo agents are trusted; Basic Auth still unlocks /approvals for exploration.
       - APPROVALS_USER=${APPROVALS_USER:-svarm}

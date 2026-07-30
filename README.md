@@ -122,7 +122,8 @@ Docker mounts `./svarm-config/` as a directory. On first boot, missing files are
 | `GITHUB_TOKEN` | PAT for GitHub Issues (`repo` scope) |
 | `OPENROUTER_API_KEY` | LLM access for agents |
 | `SVARM_BASE_URL` | Links in issue comments (e.g. `http://localhost:4000`) |
-| `SVARM_SEED_DEMO=1` | Boot-seed mock tasks when board is empty |
+| `SVARM_SEED_DEMO=1` | Boot-seed mock tasks when board is empty (no UI button) |
+| `SVARM_DEMO_ROUTES=1` | Seed demo button + `/dev/demo/seed` (Docker demo sets this) |
 
 GitHub App identity (bot comments): [docs/github-app.md](docs/github-app.md).
 </details>

@@ -1,7 +1,7 @@
 defmodule SvarmWeb.Plugs.DemoRoutes do
   @moduledoc """
-  Gates `/dev/demo/*` — available in local dev (`dev_routes`) or when
-  `SVARM_DEMO_ROUTES=1` / `SVARM_SEED_DEMO=1` is set at runtime.
+  Gates `/dev/demo/*` — available in local Mix dev (`dev_routes`) or when
+  `SVARM_DEMO_ROUTES=1` is set at runtime. Not enabled by `SVARM_SEED_DEMO` alone.
   """
   import Plug.Conn
 
