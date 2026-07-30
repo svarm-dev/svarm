@@ -15,7 +15,7 @@ Self-hosted, source available (FSL-1.1-MIT → MIT after 2 years), built in Elix
 
 ## Why Svärm?
 
-Your team already uses AI coding agents (pi, Claude Code, Cursor, Copilot). They open PRs and touch real code. Most of that work is hard to see, hard to approve, and hard to cost.
+You are already using AI coding agents (pi, Claude Code, Cursor, Copilot). They open PRs and touch real code. Most of that work is hard to see, hard to approve, and hard to cost.
 
 Svärm pulls work from GitHub Issues (or a local board) and dispatches an **external** agent in a per-ticket workspace directory (path-escape guard / cwd isolation — not a chroot or container). The agent is **prompted** (WORKFLOW) to branch, push, and open a PR; Svärm itself does not create PRs. Successful runs land in `review` with a cost receipt. **Humans keep the merge button.**
 
@@ -155,6 +155,4 @@ Svärm is licensed under the **[Functional Source License, Version 1.1, MIT Futu
 - **You cannot** offer Svärm (or a substantially similar product) to others as a competing commercial product or hosted service without a commercial agreement with us.
 - **Each released version** becomes **MIT** two years after we make it available.
 
-This is **source available / Fair Source**, not an OSI “Open Source” license. We chose FSL so internal users stay free while competing multi-tenant clones are not a free ride. Details: [fsl.software](https://fsl.software/).
-
-**Commercial / Competing Use / support:** see [svarm.dev](https://svarm.dev) — priority support and Pro tiers; separate terms if you need to host or resell.
+Details: [fsl.software](https://fsl.software/).
