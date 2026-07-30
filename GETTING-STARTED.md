@@ -136,9 +136,9 @@ Svärm tracks GitHub work with **labels**. Your eligibility label (e.g. `ai-task
 | Step | Do this |
 |------|---------|
 | Bot identity | [docs/github-app.md](docs/github-app.md); comments as `svarm[bot]` |
-| Approvals | Strong `APPROVALS_USER` / `APPROVALS_PASSWORD`; keep `approval.mode: untrusted` |
+| Approvals | Strong `APPROVALS_USER` / `APPROVALS_PASSWORD` for `/approvals`; keep `approval.mode: untrusted`. **`/board` approve/reject is not Basic-Auth gated** — firewall the UI (see [SECURITY.md](SECURITY.md)) |
 | Agents | Edit `svarm-config/agents.toml` models; add CLI agents if needed |
-| Smoke-only off | Never leave `approval.mode: off` on a shared repo |
+| Smoke-only off | Never leave `approval.mode: off` on a shared repo; do not leave `SVARM_DEMO_ROUTES` / `SVARM_SEED_DEMO` on production |
 | Base URL | Point `SVARM_BASE_URL` at the deployed host |
 
 ---

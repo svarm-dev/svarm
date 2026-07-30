@@ -19,7 +19,18 @@ defmodule Svarm.Orchestrator do
 
   require Logger
 
-  alias Svarm.{AgentRunner, Approval, Events, Settings, Tracker, Usage, Workflow, Workspace}
+  alias Svarm.{
+    AgentRunner,
+    Approval,
+    Demo,
+    Events,
+    Settings,
+    Tracker,
+    Usage,
+    Workflow,
+    Workspace
+  }
+
   alias Svarm.Workflow.Config, as: WorkflowConfig
 
   @default_poll_interval_ms 30_000
@@ -416,11 +427,24 @@ defmodule Svarm.Orchestrator do
     %{state | approval: merge_approval_overlay(Approval.config_from_map(wf.config))}
   end
 
+  # Demo seed may leave :approval_overlay in Application env. Only merge while a
+  # demo profile flag is active so long-lived non-demo VMs keep WORKFLOW policy.
+  # Restrict-only: never weaken base mode: :all (gate everyone stays gated).
   defp merge_approval_overlay(base) when is_map(base) do
-    case Application.get_env(:svarm, :approval_overlay) do
-      %{} = overlay -> Map.merge(base, overlay)
-      _ -> base
+    if Demo.demo_profile_active?() do
+      case Application.get_env(:svarm, :approval_overlay) do
+        %{} = overlay -> restrict_merge_approval(base, overlay)
+        _ -> base
+      end
+    else
+      base
     end
+  end
+
+  defp restrict_merge_approval(%{mode: :all} = base, _overlay), do: base
+
+  defp restrict_merge_approval(base, overlay) when is_map(base) and is_map(overlay) do
+    Map.merge(base, overlay)
   end
 
   defp resolve_tracker(state) do

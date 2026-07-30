@@ -56,7 +56,7 @@ services:
       # Re-seed button + /dev/demo/seed (explicit; not implied by SEED alone).
       - SVARM_DEMO_ROUTES=1
       - FORCE_SSL=${FORCE_SSL:-true}
-      # Demo agents are trusted; Basic Auth still unlocks /approvals for exploration.
+      # Demo: research/docs trusted, demo_code gated (runtime overlay). Basic Auth for /approvals.
       - APPROVALS_USER=${APPROVALS_USER:-svarm}
       - APPROVALS_PASSWORD=${APPROVALS_PASSWORD:-svarm}
     volumes:

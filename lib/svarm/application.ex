@@ -35,11 +35,19 @@ defmodule Svarm.Application do
 
     case Supervisor.start_link(children, opts) do
       {:ok, pid} ->
+        maybe_clear_stale_approval_overlay()
         maybe_seed_demo()
         {:ok, pid}
 
       other ->
         other
+    end
+  end
+
+  # Drop leftover :approval_overlay when this process is not a demo profile.
+  defp maybe_clear_stale_approval_overlay do
+    unless Svarm.Demo.demo_profile_active?() do
+      Svarm.Demo.clear_approval_overlay()
     end
   end
 

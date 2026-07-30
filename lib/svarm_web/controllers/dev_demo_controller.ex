@@ -16,7 +16,7 @@ defmodule SvarmWeb.DevDemoController do
 
       {:error, reason} ->
         conn
-        |> put_flash(:error, "Demo seed failed: #{inspect(reason)}")
+        |> put_flash(:error, Svarm.Demo.flash_error(reason))
         |> redirect(to: ~p"/board")
     end
   end

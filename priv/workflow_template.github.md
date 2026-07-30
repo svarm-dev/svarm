@@ -19,7 +19,7 @@ agent:
   stall_timeout_ms: 2700000
 approval:
   mode: untrusted
-  trusted_assignees: ["default", "demo_research", "demo_code", "demo_docs"]
+  trusted_assignees: ["default", "demo_research", "demo_docs"]
 workspace:
   root: ~/svarm_workspaces
 ---
