@@ -6,10 +6,6 @@
 
 **Svärm — control for your agent loop**
 
-Agent workflows for real projects — not lights-off factories.
-
-> *Move fast without torching the repo.*
-
 Self-hosted, source available (FSL-1.1-MIT → MIT after 2 years), built in Elixir.
 
 [![CI](https://github.com/svarm-dev/svarm/actions/workflows/ci.yml/badge.svg)](https://github.com/svarm-dev/svarm/actions/workflows/ci.yml)
