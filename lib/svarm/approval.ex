@@ -118,18 +118,7 @@ defmodule Svarm.Approval do
 
   def approve(task_id) when is_binary(task_id) do
     {adapter, config} = resolve_tracker()
-
-    case adapter.get_issue(config, task_id) do
-      {:ok, %{assignee: assignee}} when is_binary(assignee) and assignee != "" ->
-        if demo_assignee?(assignee) do
-          {:error, :demo_task}
-        else
-          do_approve(adapter, config, task_id)
-        end
-
-      _ ->
-        do_approve(adapter, config, task_id)
-    end
+    do_approve(adapter, config, task_id)
   end
 
   defp do_approve(adapter, config, task_id) do
@@ -158,16 +147,6 @@ defmodule Svarm.Approval do
 
   defp do_reject(adapter, config, task_id, to_status) do
     case adapter.get_issue(config, task_id) do
-      {:ok, %{assignee: assignee, status: @status_pending}}
-      when is_binary(assignee) and assignee != "" ->
-        if demo_assignee?(assignee) do
-          {:error, :demo_task}
-        else
-          :ok = adapter.update_status(config, task_id, to_status)
-          broadcast(:rejected, task_id)
-          :ok
-        end
-
       {:ok, %{status: @status_pending}} ->
         :ok = adapter.update_status(config, task_id, to_status)
         broadcast(:rejected, task_id)
@@ -184,7 +163,6 @@ defmodule Svarm.Approval do
   @doc "User-facing flash message for approval API errors."
   def flash_error(reason)
 
-  def flash_error(:demo_task), do: "Demo tasks cannot be approved or rejected."
   def flash_error(:not_found), do: "Task not found."
   def flash_error(:invalid_status), do: "Invalid reject status."
   def flash_error({:not_pending, status}), do: "Task is not pending approval (status: #{status})."
@@ -195,7 +173,6 @@ defmodule Svarm.Approval do
     Phoenix.PubSub.broadcast(Svarm.PubSub, Svarm.Events.topic(), {event, task_id})
   end
 
-  defp demo_assignee?(assignee), do: String.starts_with?(assignee, "demo_")
 
   # Same settings/workflow resolve path as Board / Orchestrator.
   defp resolve_tracker do

@@ -71,6 +71,20 @@ defmodule Svarm.ApprovalTest do
       task = %{status: "todo", assignee: "cody", title: "x", body: ""}
       assert Approval.required?(cfg, task, @agents)
     end
+
+    test "untrusted mode gates demo_code but not trusted demo_research" do
+      cfg = %{
+        mode: :untrusted,
+        trusted_assignees: MapSet.new(["demo_research", "demo_docs"])
+      }
+
+      research = %{status: "todo", assignee: "demo_research", title: "r", body: ""}
+      code = %{status: "todo", assignee: "demo_code", title: "c", body: ""}
+      agents = %{"demo_research" => %{}, "demo_code" => %{}, "demo_docs" => %{}}
+
+      refute Approval.required?(cfg, research, agents)
+      assert Approval.required?(cfg, code, agents)
+    end
   end
 
   describe "reject/2" do
@@ -166,10 +180,9 @@ defmodule Svarm.ApprovalTest do
       assert {:ok, %{status: "review"}} = FakeTracker.get_issue(%{}, "sva_pending")
     end
 
-    test "demo assignees cannot be approved or rejected" do
-      assert {:error, :demo_task} = Approval.approve("sva_demo")
-      assert {:error, :demo_task} = Approval.reject("sva_demo")
-      assert {:ok, %{status: "pending_approval"}} = FakeTracker.get_issue(%{}, "sva_demo")
+    test "demo assignees can be approved when gated (code agent path)" do
+      assert :ok = Approval.approve("sva_demo")
+      assert {:ok, %{status: "todo"}} = FakeTracker.get_issue(%{}, "sva_demo")
     end
 
     test "approve of non-pending returns not_pending" do

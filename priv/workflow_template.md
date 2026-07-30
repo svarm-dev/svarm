@@ -30,9 +30,10 @@ agent:
   stall_timeout_ms: 2700000      # 45 min; keep >= PiRPC run timeout
 approval:
   # off | all | untrusted — gate agent runs before first dispatch from todo
-  # Default untrusted: real agents need human go-ahead; demo_* / default skip.
+  # Default untrusted: real agents need human go-ahead.
+  # Demo path: research + docs trusted; code gated so the approval chip is visible.
   mode: untrusted
-  trusted_assignees: ["default", "demo_research", "demo_code", "demo_docs"]
+  trusted_assignees: ["default", "demo_research", "demo_docs"]
 workspace:
   root: ~/svarm_workspaces
 ---

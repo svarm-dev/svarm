@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Demo approval: **code** gated (`demo_code` untrusted); research + docs trusted; approve allowed on demo tasks
 - Seed demo clears the board before re-seeding; review cards get **Mark done** on local board (no PR required)
 - `SVARM_SEED_DEMO` no longer enables the Seed demo UI — needs `SVARM_DEMO_ROUTES` (or Mix `dev_routes`)
 - Docker demo seed keeps `demo_*` assignees (Dispatch no longer overwrites them with ProfileRouter → Pi/OpenRouter)

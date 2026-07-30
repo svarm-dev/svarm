@@ -795,7 +795,7 @@ defmodule SvarmWeb.BoardLive do
                 <% end %>
               </button>
 
-              <%= if card.wait_reason == :approval and not demo_task?(task) do %>
+              <%= if card.wait_reason == :approval do %>
                 <div class="mt-2 flex gap-1">
                   <button
                     type="button"
@@ -918,7 +918,7 @@ defmodule SvarmWeb.BoardLive do
             </div>
           <% end %>
 
-          <%= if @task.status == Approval.pending_status() and not demo_task?(@task) do %>
+          <%= if @task.status == Approval.pending_status() do %>
             <div class="flex flex-wrap items-center gap-2">
               <button
                 type="button"
@@ -1416,8 +1416,4 @@ defmodule SvarmWeb.BoardLive do
 
   defp monogram(_), do: "?"
 
-  defp demo_task?(%{assignee: assignee}) when is_binary(assignee),
-    do: String.starts_with?(assignee, "demo_")
-
-  defp demo_task?(_), do: false
 end
