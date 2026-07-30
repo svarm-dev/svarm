@@ -13,6 +13,15 @@ TEMPLATES_DIR="${SVARM_TEMPLATES_DIR:-/app/templates}"
 
 mkdir -p "$CONFIG_DIR" /app/data /app/tmp
 
+# Docker demo profile: always refresh WORKFLOW from template so approval gates
+# (research/docs trusted, code untrusted) and local tracker match the release.
+if [ "${SVARM_SEED_DEMO:-}" = "1" ] || [ "${SVARM_SEED_DEMO:-}" = "true" ]; then
+  if [ -f "$TEMPLATES_DIR/WORKFLOW.md" ]; then
+    cp "$TEMPLATES_DIR/WORKFLOW.md" "$CONFIG_DIR/WORKFLOW.md"
+    echo "svarm: demo profile — refreshed WORKFLOW.md from template"
+  fi
+fi
+
 if [ ! -f "$CONFIG_DIR/WORKFLOW.md" ]; then
   if [ -f "$TEMPLATES_DIR/WORKFLOW.md" ]; then
     cp "$TEMPLATES_DIR/WORKFLOW.md" "$CONFIG_DIR/WORKFLOW.md"

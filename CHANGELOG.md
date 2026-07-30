@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Board card cost no longer shows a stray `#` before the dollar amount
+- Docker/demo seed forces approval overlay: research + docs trusted, **code** gated (even if host WORKFLOW still trusts all demo agents)
 - Demo approval: **code** gated (`demo_code` untrusted); research + docs trusted; approve allowed on demo tasks
 - Seed demo clears the board before re-seeding; review cards get **Mark done** on local board (no PR required)
 - `SVARM_SEED_DEMO` no longer enables the Seed demo UI — needs `SVARM_DEMO_ROUTES` (or Mix `dev_routes`)

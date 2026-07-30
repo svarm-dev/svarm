@@ -410,10 +410,17 @@ defmodule Svarm.Orchestrator do
   end
 
   defp put_approval_config(%{workflow: nil} = state),
-    do: %{state | approval: Approval.config_from_map(%{})}
+    do: %{state | approval: merge_approval_overlay(Approval.config_from_map(%{}))}
 
   defp put_approval_config(%{workflow: wf} = state) do
-    %{state | approval: Approval.config_from_map(wf.config)}
+    %{state | approval: merge_approval_overlay(Approval.config_from_map(wf.config))}
+  end
+
+  defp merge_approval_overlay(base) when is_map(base) do
+    case Application.get_env(:svarm, :approval_overlay) do
+      %{} = overlay -> Map.merge(base, overlay)
+      _ -> base
+    end
   end
 
   defp resolve_tracker(state) do

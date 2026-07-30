@@ -31,6 +31,31 @@ defmodule Svarm.DemoTest do
     assert :already_has_tasks = Demo.seed_if_empty("second")
   end
 
+  test "seed applies approval overlay so demo_code is gated" do
+    Application.delete_env(:svarm, :approval_overlay)
+    assert {:ok, _} = Demo.seed("gate me")
+
+    overlay = Application.get_env(:svarm, :approval_overlay)
+    assert overlay.mode == :untrusted
+    assert MapSet.member?(overlay.trusted_assignees, "demo_research")
+    refute MapSet.member?(overlay.trusted_assignees, "demo_code")
+
+    cfg = Map.merge(%{mode: :off, trusted_assignees: MapSet.new()}, overlay)
+    agents = %{"demo_research" => %{}, "demo_code" => %{}, "demo_docs" => %{}}
+
+    refute Svarm.Approval.required?(
+             cfg,
+             %{status: "todo", assignee: "demo_research", title: "r", body: ""},
+             agents
+           )
+
+    assert Svarm.Approval.required?(
+             cfg,
+             %{status: "todo", assignee: "demo_code", title: "c", body: ""},
+             agents
+           )
+  end
+
   test "routes_enabled? follows demo_routes or dev_routes" do
     prev_demo = Application.get_env(:svarm, :demo_routes)
     prev_dev = Application.get_env(:svarm, :dev_routes)

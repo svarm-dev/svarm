@@ -19,6 +19,7 @@ defmodule Svarm.Demo do
 
     # Fresh board each seed — old failed/demo cards should not pile up.
     Svarm.Tracker.Local.delete_all(%{})
+    apply_demo_approval_overlay()
 
     with {:ok, %{tasks: tasks}} <- Svarm.Decompose.run(%{goal: goal, research: ""}, mock: true),
          {:ok, %{created_count: count, tasks: created}} <-
@@ -63,6 +64,15 @@ defmodule Svarm.Demo do
   def truthy?(""), do: false
   def truthy?(v) when v in [true, "1", "true", "TRUE", "yes", "YES", "on", "ON"], do: true
   def truthy?(_), do: false
+
+  # Demo path always gates code agent; research + docs stay trusted.
+  # Survives host WORKFLOW.md that still lists demo_code as trusted or mode: off.
+  defp apply_demo_approval_overlay do
+    Application.put_env(:svarm, :approval_overlay, %{
+      mode: :untrusted,
+      trusted_assignees: MapSet.new(["default", "demo_research", "demo_docs"])
+    })
+  end
 
   # Seed synthetic usage records for demo tasks so cost receipts show real amounts.
   # Uses gpt-4.1 via openrouter at real market rates — clearly labeled as demo data.

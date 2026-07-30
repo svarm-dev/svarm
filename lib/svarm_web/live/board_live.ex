@@ -789,7 +789,7 @@ defmodule SvarmWeb.BoardLive do
                       "inline-block text-[10px] font-mono px-1.5 py-0.5 rounded badge-ghost",
                       cost.estimated && "opacity-70"
                     ]}>
-                      {if cost.estimated, do: "est. ", else: ""}$#{cost.total_cost_usd}
+                      {if cost.estimated, do: "est. ", else: ""}${cost.total_cost_usd}
                     </span>
                   </div>
                 <% end %>
