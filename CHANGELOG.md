@@ -19,7 +19,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - License: **FSL-1.1-MIT** (Fair Source / source available → MIT after 2 years per version); was MIT
-- Public messaging: lead with “control for your agent loop” / human judgment; drop blended-workforce teammate hype from README, homepage, board, and dashboard
 - Successful agent runs that leave the tracker in an active status move to **review** once (no endless re-dispatch) ([#23](https://github.com/svarm-dev/svarm/pull/23))
 - Run cost prefers **provider-reported USD** when present, then the rate table ([#23](https://github.com/svarm-dev/svarm/pull/23))
 
