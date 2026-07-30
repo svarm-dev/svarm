@@ -17,10 +17,10 @@ defmodule Svarm.DemoTest do
   test "seed clears previous tickets" do
     KanbanBridge.delete_all_tasks()
     assert {:ok, 3} = Demo.seed("first")
-    assert length(KanbanBridge.list_tasks([])) == 3
+    assert match?([_, _, _], KanbanBridge.list_tasks([]))
     assert {:ok, 3} = Demo.seed("second")
     tasks = KanbanBridge.list_tasks([])
-    assert length(tasks) == 3
+    assert match?([_, _, _], tasks)
 
     assert Enum.map(tasks, & &1.assignee) |> Enum.sort() ==
              ["demo_code", "demo_docs", "demo_research"]

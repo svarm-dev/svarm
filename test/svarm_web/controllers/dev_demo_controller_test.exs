@@ -6,7 +6,7 @@ defmodule SvarmWeb.DevDemoControllerTest do
       post(conn, ~p"/dev/demo/seed?goal=test+goal")
 
     assert redirected_to(conn) == ~p"/board"
-    assert Phoenix.Flash.get(conn.assigns.flash, :info) =~ "Queued"
+    assert Phoenix.Flash.get(conn.assigns.flash, :info) =~ "queued"
     assert Enum.any?(Svarm.KanbanBridge.list_tasks([]), &String.contains?(&1.title, "Demo:"))
   end
 end

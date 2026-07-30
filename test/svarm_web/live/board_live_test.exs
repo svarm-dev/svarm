@@ -121,7 +121,8 @@ defmodule SvarmWeb.BoardLiveTest do
     html = render(view)
 
     assert html =~ "Awaiting human review"
-    assert html =~ "Review on tracker/GitHub"
+    assert html =~ "Mark done"
+    assert html =~ "No PR on the local board"
     refute html =~ "Open PR"
   end
 
