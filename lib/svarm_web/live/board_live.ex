@@ -1415,5 +1415,4 @@ defmodule SvarmWeb.BoardLive do
   end
 
   defp monogram(_), do: "?"
-
 end

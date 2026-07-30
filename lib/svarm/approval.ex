@@ -173,7 +173,6 @@ defmodule Svarm.Approval do
     Phoenix.PubSub.broadcast(Svarm.PubSub, Svarm.Events.topic(), {event, task_id})
   end
 
-
   # Same settings/workflow resolve path as Board / Orchestrator.
   defp resolve_tracker do
     case Process.get(@tracker_override) do
