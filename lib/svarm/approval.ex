@@ -125,6 +125,8 @@ defmodule Svarm.Approval do
     case adapter.get_issue(config, task_id) do
       {:ok, %{status: @status_pending}} ->
         :ok = adapter.update_status(config, task_id, "todo")
+        # One-shot: next poll may dispatch without re-entering pending_approval
+        Svarm.Orchestrator.mark_approved(task_id)
         broadcast(:approved, task_id)
         :ok
 

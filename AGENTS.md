@@ -32,7 +32,7 @@ svarm/
 │   │   ├── kanban_bridge.ex      # Task CRUD via Ecto (GenServer API)
 │   │   ├── kanban/task.ex        # Ecto schema for tasks
 │   │   ├── repo.ex               # Ecto Repo (SQLite)
-│   │   ├── workspace.ex          # Per-task sandbox directories
+│   │   ├── workspace.ex          # Per-task workspace directories (path isolation)
 │   │   ├── workflow.ex           # WORKFLOW.md parsing (Config/Render/Store)
 │   │   ├── approval.ex           # First-run human-in-the-loop gating
 │   │   ├── board.ex              # Read API for the dashboard
@@ -261,14 +261,14 @@ mix test --only <tag>
 
 - **Usage ledger is append-only** — never update or delete ledger rows; correct with new records.
 - **Store tokens + model_id; compute cost at query time** from rate tables (not a frozen dollar column as source of truth).
-- **Budget checks belong in preflight/dispatch**, not only on dashboards after spend.
+- **Budget checks belong in preflight/dispatch**, not only on dashboards after spend. Hard caps (`SVARM_BUDGET_*` / WORKFLOW `budget.*`) hard-stop **new** spawns; estimated spend counts toward the cap; in-flight runs are not killed.
 - **Flag estimates** — never present estimated costs as exact.
 
 ## Security
 
 - **Never commit API keys or auth tokens.** Agents expect credentials from the operator's environment (`GITHUB_TOKEN`, `OPENROUTER_API_KEY`, etc.).
 - **Secrets never appear in task metadata, logs, or PubSub messages.**
-- **Workspace paths are sandboxed** — `Workspace.ensure/2` validates paths stay within the configured root. Never bypass this guard.
+- **Workspace paths are root-bounded** — `Workspace.ensure/2` validates paths stay within the configured root (directory isolation / path-escape guard, not OS sandbox). Never bypass this guard.
 - **Agent shell commands are high trust** — agents run arbitrary commands in isolated workspace directories. The first-run approval gate (`approval.*` in WORKFLOW.md) prevents unattended execution until the operator explicitly approves.
 - **Production approvals** require Basic Auth: `config :svarm, approvals_auth: %{username: ..., password: ...}`. Dev mode uses `dev_routes: true` for unauthenticated access.
 - **Config secrets** use `System.get_env/1` or `System.fetch_env!/1` in `runtime.exs` — never hardcoded in `.exs` files checked into git.

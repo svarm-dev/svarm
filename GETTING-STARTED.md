@@ -6,7 +6,7 @@ Three journeys. Pick one; do not interleave.
 |------|------|--------|
 | **A** · feel the board | ~1 min | Docker (`--profile demo` auto-seeds) or Elixir + Seed demo; no API keys |
 | **B** · real GitHub loop | ~15 min | PAT, OpenRouter, pi (Docker installs pi) |
-| **C** · team hardening | after B | App auth, real approvals password, budgets |
+| **C** · team hardening | after B | GitHub App auth + strong APPROVALS_*; optional hard budget caps |
 
 ---
 
@@ -136,8 +136,9 @@ Svärm tracks GitHub work with **labels**. Your eligibility label (e.g. `ai-task
 | Step | Do this |
 |------|---------|
 | Bot identity | [docs/github-app.md](docs/github-app.md); comments as `svarm[bot]` |
-| Approvals | Strong `APPROVALS_USER` / `APPROVALS_PASSWORD` for `/approvals`; keep `approval.mode: untrusted`. **`/board` approve/reject is not Basic-Auth gated** — firewall the UI (see [SECURITY.md](SECURITY.md)) |
-| Agents | Edit `svarm-config/agents.toml` models; add CLI agents if needed |
+| Approvals | Strong `APPROVALS_USER` / `APPROVALS_PASSWORD` for `/approvals`, `/setup`, and board approve/reject/mark-done. Keep `approval.mode: untrusted`. Board **reads** stay open — still firewall the UI (see [SECURITY.md](SECURITY.md)) |
+| Agents | Edit `svarm-config/agents.toml` models; list required API keys in each agent’s `env` (no full host inheritance) |
+| Budgets | Optional: `SVARM_BUDGET_MAX_USD_PER_TICKET` / `SVARM_BUDGET_MAX_USD_PER_DAY` or WORKFLOW `budget.*` — hard-stop **new** spawns when spent ≥ cap |
 | Smoke-only off | Never leave `approval.mode: off` on a shared repo; do not leave `SVARM_DEMO_ROUTES` / `SVARM_SEED_DEMO` on production |
 | Base URL | Point `SVARM_BASE_URL` at the deployed host |
 
@@ -180,4 +181,4 @@ rm -rf ~/svarm_workspaces/ && mix phx.server
 | Use Claude Code | [docs/agents.md](docs/agents.md) copy-paste blocks, or edit **agents.toml** |
 | Bot identity on comments | [docs/github-app.md](docs/github-app.md) |
 | Other trackers (Linear/Jira) | Not in OSS yet. GitHub + local only today |
-| Export costs to CSV | Not shipped yet. Costs are on the board and in GitHub comments |
+| Export costs to CSV/JSON | `mix svarm.export_usage --format csv` (or `json`; optional `--out path`). Costs also on the board and in GitHub comments |

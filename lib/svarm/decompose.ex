@@ -87,7 +87,7 @@ defmodule Svarm.Decompose do
       model_id: to_string(usage[:model] || model),
       prompt_tokens: usage[:prompt_tokens],
       completion_tokens: usage[:completion_tokens],
-      estimated: false
+      estimated: true
     })
   end
 

@@ -136,9 +136,9 @@ GitHub App identity (bot comments): [docs/github-app.md](docs/github-app.md).
 
 ## Status
 
-**Working now:** local board + GitHub Issues + pi/CLI agents + OpenRouter, with approvals, per-ticket cost, optional **in-app `/setup`** (encrypted keys; file/env still work), and Stage B human-wait visibility on board/dashboard.
+**Working now:** local board + GitHub Issues + pi/CLI agents + OpenRouter, with approvals (one-shot after human approve), per-ticket cost (estimated labeled), optional hard daily/per-ticket USD caps that block **new** spawns, usage ledger export (`mix svarm.export_usage`), board mutation auth when `APPROVALS_*` is set, optional **in-app `/setup`** (encrypted keys; file/env still work), and Stage B human-wait visibility on board/dashboard.
 
-**Not shipped yet:** Linear/Jira trackers, multi-provider/multi-agent registry UI, managed hosting, hard budget enforcement. "Adapter-ready" means the behaviours exist; it does not mean every adapter is built.
+**Not shipped yet:** Linear/Jira trackers, multi-provider/multi-agent registry UI, managed hosting, mid-run budget kill of in-flight workers. "Adapter-ready" means the behaviours exist; it does not mean every adapter is built.
 
 Optional UI config after the demo: open `/setup` (same auth as `/approvals` in Docker). Details: [GETTING-STARTED.md](GETTING-STARTED.md).
 

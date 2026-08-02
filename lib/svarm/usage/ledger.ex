@@ -26,7 +26,8 @@ defmodule Svarm.Usage.Ledger do
       completion_tokens: Map.get(attrs, :completion_tokens),
       estimated: Map.get(attrs, :estimated, false),
       provider_cost_usd: Map.get(attrs, :provider_cost_usd),
-      recorded_at: System.monotonic_time(:millisecond)
+      recorded_at: System.monotonic_time(:millisecond),
+      inserted_at: DateTime.utc_now()
     }
     |> Repo.insert!()
   end
@@ -38,6 +39,23 @@ defmodule Svarm.Usage.Ledger do
     import Ecto.Query, only: [from: 2]
 
     from(r in Record, where: r.task_id == ^task_id, order_by: [desc: r.recorded_at])
+    |> Repo.all()
+  end
+
+  @doc """
+  Returns records with wall-clock `inserted_at` on the given UTC calendar day.
+  Rows with nil `inserted_at` (legacy backfill) are excluded.
+  """
+  def for_utc_day(%Date{} = day) do
+    import Ecto.Query, only: [from: 2]
+
+    start_dt = DateTime.new!(day, ~T[00:00:00.000000], "Etc/UTC")
+    end_dt = DateTime.add(start_dt, 86_400, :second)
+
+    from(r in Record,
+      where: not is_nil(r.inserted_at) and r.inserted_at >= ^start_dt and r.inserted_at < ^end_dt,
+      order_by: [desc: r.inserted_at]
+    )
     |> Repo.all()
   end
 

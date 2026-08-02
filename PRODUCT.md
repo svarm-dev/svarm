@@ -14,9 +14,9 @@ Both are already using coding agents (pi, Claude Code, etc.). Their job on any g
 
 ## Product Purpose
 
-Svärm is the self-hosted control plane for a blended engineering team: humans and coding agents working from the same tickets. It connects trackers, agents, and LLM providers you already use; dispatches agent work into isolated workspaces; enforces approvals and budgets at the provisioning layer; and attaches an auditable cost receipt to every ticket.
+Svärm is the self-hosted control plane for a blended engineering team: humans and coding agents working from the same tickets. It connects trackers, agents, and LLM providers you already use; dispatches agent work into path-isolated workspaces; supports optional first-run approvals (one-shot after human approve); records spend in an append-only usage ledger; attaches a cost receipt to every ticket; and can hard-stop new spawns when optional daily or per-ticket USD caps are exceeded. Approximate costs are labeled estimated.
 
-Near-term success is a polished board and governance experience: activity and costs feel authoritative, agents have clear names on the work, and the system feels alive and under control. Richer team features (profiles, performance history, team composition) come later.
+Near-term success is a polished board and governance experience: activity and costs are clear (and labeled when approximate), agents have clear names on the work, and the system feels alive and under control. Richer team features (profiles, performance history, team composition) come later.
 
 ## Positioning
 

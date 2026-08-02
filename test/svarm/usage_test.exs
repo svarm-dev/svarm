@@ -109,7 +109,8 @@ defmodule Svarm.UsageTest do
       report = Usage.task_cost(task_id)
       assert report.task_id == task_id
       assert report.total_cost_usd == 16.75
-      assert report.estimated == false
+      # Rate-table-only rows are approximate
+      assert report.estimated == true
       assert report.record_count == 2
       assert map_size(report.breakdown) == 2
     end
@@ -132,6 +133,39 @@ defmodule Svarm.UsageTest do
       report = Usage.task_cost(task_id)
       assert report.total_cost_usd == 0.0148
       assert report.estimated == false
+    end
+
+    test "rate-table-only is estimated even when estimated flag is false" do
+      task_id = "task_rate_est"
+
+      Usage.append(%{
+        run_id: "r_est",
+        task_id: task_id,
+        source: "worker",
+        provider: "openrouter",
+        model_id: "claude-sonnet-4-20250514",
+        prompt_tokens: 1000,
+        completion_tokens: 100,
+        estimated: false
+      })
+
+      report = Usage.task_cost(task_id)
+      assert report.estimated == true
+    end
+
+    test "appends wall-clock inserted_at" do
+      record =
+        Usage.append(%{
+          run_id: "r_ts",
+          task_id: "task_ts",
+          source: "worker",
+          provider: "openrouter",
+          model_id: "claude-sonnet-4-20250514",
+          prompt_tokens: 10,
+          completion_tokens: 5
+        })
+
+      assert %DateTime{} = record.inserted_at
     end
   end
 end

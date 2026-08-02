@@ -27,22 +27,12 @@ defmodule Svarm.Runner do
   @doc """
   Helper for Port env options. Shared by CLI and PiRPC runners.
 
-  Empty override map → omit `env` (Port inherits the full process environment).
-
-  Non-empty override map → merge overrides onto a **small allowlist** of host
-  vars (PATH, HOME, locale, temp, shell). Does not forward API keys or other
-  secrets unless the agent config lists them explicitly.
+  Always sets Port `env` to an allowlist base (PATH, HOME, locale, temp, shell)
+  plus any explicit agent overrides. Empty override map still uses the allowlist
+  only — never full host inheritance (API keys must be listed in agents.toml).
   """
-  def maybe_add_env(opts, env_map) when map_size(env_map) == 0, do: opts
-
-  def maybe_add_env(opts, env_map) do
-    base =
-      Enum.reduce(@inherited_env, %{}, fn key, acc ->
-        case System.get_env(key) do
-          nil -> acc
-          val -> Map.put(acc, String.to_charlist(key), String.to_charlist(val))
-        end
-      end)
+  def maybe_add_env(opts, env_map) when is_map(env_map) do
+    base = allowlisted_host_env()
 
     env =
       Enum.reduce(env_map, base, fn {k, v}, acc ->
@@ -51,6 +41,15 @@ defmodule Svarm.Runner do
       |> Map.to_list()
 
     opts ++ [{:env, env}]
+  end
+
+  defp allowlisted_host_env do
+    Enum.reduce(@inherited_env, %{}, fn key, acc ->
+      case System.get_env(key) do
+        nil -> acc
+        val -> Map.put(acc, String.to_charlist(key), String.to_charlist(val))
+      end
+    end)
   end
 
   @doc """

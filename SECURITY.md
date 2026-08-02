@@ -21,7 +21,7 @@ Do **not** open a public GitHub Issue for security vulnerabilities.
 **In scope:**
 - Authentication bypass (approvals, dev routes)
 - Secret injection or exfiltration via agent commands
-- Workspace path escape (breaking out of the sandbox)
+- Workspace path escape (breaking out of the configured workspace root)
 - Remote code execution via crafted WORKFLOW.md or agents.toml
 - SQL injection through Ecto/Elixir layer
 - Cross-site scripting (XSS) in the LiveView dashboard
@@ -38,11 +38,11 @@ Svärm is self-hosted. The operator controls:
 
 - **API keys**: stored in `.env` or environment variables, never in config files or logs
 - **Agent commands**: agents run arbitrary commands in isolated workspace directories
-- **Approval gates**: `approval.mode: untrusted` requires human approval before first dispatch
-- **Workspace sandbox**: `Workspace.ensure/2` validates paths stay within the configured root
+- **Approval gates**: `approval.mode: untrusted` holds tasks until a human approves (see sticky-approval note below)
+- **Workspace path isolation**: `Workspace.ensure/2` keeps per-ticket directories under a configured root (cwd + path-escape guard — not a chroot or container)
 - **Secrets in transit**: never appear in task metadata, PubSub messages, or issue comments
 
-The first-run approval gate (`approval.mode: untrusted`) prevents unattended execution until the operator explicitly approves. Under `mode: untrusted`, only assignees listed in `approval.trusted_assignees` skip the gate. The default template trusts `default`, `demo_research`, and `demo_docs`; **`demo_code` is gated** so the approval UX is visible during zero-key onboarding. Demo seed also applies a runtime overlay (trusts only `demo_research` and `demo_docs`) while a demo profile flag is active (`SVARM_SEED_DEMO` / `SVARM_DEMO_ROUTES` / dev routes). The overlay never weakens a WORKFLOW `mode: all` policy (everyone stays gated).
+The first-run approval gate (`approval.mode: untrusted`) prevents unattended execution until the operator explicitly approves. **One-shot sticky approval:** after a human approves, the orchestrator records the task id and the next poll may dispatch without re-entering `pending_approval`. The one-shot bit is cleared after the first spawn attempt — if the agent fails back to `todo`, a later poll can re-gate. Use `trusted_assignees` for agents that should skip the gate entirely. Under `mode: untrusted`, only assignees listed in `approval.trusted_assignees` skip the gate. The default template trusts `default`, `demo_research`, and `demo_docs`; **`demo_code` is gated** so the approval UX is visible during zero-key onboarding. Demo seed also applies a runtime overlay (trusts only `demo_research` and `demo_docs`) while a demo profile flag is active (`SVARM_SEED_DEMO` / `SVARM_DEMO_ROUTES` / dev routes). The overlay never weakens a WORKFLOW `mode: all` policy (everyone stays gated).
 
 ### Sticky demo approval overlay
 
@@ -53,18 +53,29 @@ While any of `seed_demo_on_boot`, `demo_routes`, or `dev_routes` is active, a pr
 | Surface | Auth model |
 |---------|------------|
 | `/approvals` | Basic Auth when `APPROVALS_USER` / `APPROVALS_PASSWORD` are set |
-| `/board` LiveView approve / reject | **Not** behind ApprovalsAuth — anyone who can reach the app can approve or reject pending tasks |
+| `/setup` | Same Basic Auth (or `dev_routes` in local Mix) |
+| `/board` LiveView **reads** | Open when the process is reachable (still firewall for real repos) |
+| `/board` approve / reject / mark done | Same `APPROVALS_*` credentials when configured; mutations fail closed without proof. When credentials are **unset**, open local/dev behaviour (firewall the UI) |
 
-That is intentional for self-hosted network trust: bind or firewall the UI; do not expose the board on a shared host without network controls. Board Basic Auth is not implemented today.
+A successful Basic Auth request (e.g. `/approvals`) sets a sticky session flag for board mutations; follow-up requests without the Authorization header keep mutation rights until the session ends. Browsers that re-send Basic Auth after a challenge also work. Without credentials configured, board mutations stay open for the firewalled-operator model.
+
+### Agent child environment
+
+Agent Port processes receive a **small allowlist** of host env vars (PATH, HOME, locale, temp, shell) plus keys listed in the agent’s `env` map in `agents.toml`. Empty `env` does **not** inherit the full host environment — API keys such as `OPENROUTER_API_KEY` must be listed explicitly (e.g. `OPENROUTER_API_KEY = "$OPENROUTER_API_KEY"`). GitHub App mode still injects installation tokens as `GITHUB_TOKEN` / `GH_TOKEN` when the tracker uses App auth.
+
+### Hard spend caps
+
+Optional hard caps at preflight: `SVARM_BUDGET_MAX_USD_PER_TICKET` / `SVARM_BUDGET_MAX_USD_PER_DAY` (env) and WORKFLOW `budget.max_usd_per_ticket` / `budget.max_usd_per_day`. When both sources set a field, the **stricter** (lower) value wins. Caps block **new** spawns; in-flight runs are not killed. Estimated ledger rows count toward the cap. Unset = no hard stop.
 
 ## Production hardening
 
 For team/production deployments:
 
-- Bind or firewall the UI so only trusted operators reach `/board` (board approve/reject has no Basic Auth)
-- Set strong `APPROVALS_USER` and `APPROVALS_PASSWORD` in `.env` (gates `/approvals` and `/setup` in Docker)
+- Set strong `APPROVALS_USER` and `APPROVALS_PASSWORD` in `.env` (gates `/approvals`, `/setup`, and board approve/reject/mark-done)
+- Bind or firewall the UI so only trusted operators reach the process (board **reads** are not Basic-Auth gated)
 - Use a real `SECRET_KEY_BASE` (not the auto-generated one)
 - Keep `approval.mode: untrusted` (the default)
-- Review agent commands in `agents.toml` before enabling
+- Review agent commands and `env` keys in `agents.toml` before enabling (no silent full-env inheritance)
+- Optionally set hard budget caps for design-partner / Show HN deploys
 - Do **not** expose the demo profile on shared hosts (`SVARM_DEMO_ROUTES` / `SVARM_SEED_DEMO`)
 - Rotate API keys if a team member with access leaves

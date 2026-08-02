@@ -15,7 +15,7 @@ command = "pi"
 adapter = "pi_rpc"
 provider = "openrouter"
 model = "openrouter/free"
-env = { GITHUB_TOKEN = "$GITHUB_TOKEN" }
+env = { GITHUB_TOKEN = "$GITHUB_TOKEN", OPENROUTER_API_KEY = "$OPENROUTER_API_KEY" }
 ```
 
 ## Claude Code (CLI)
@@ -64,7 +64,7 @@ Trusted under default `approval.mode: untrusted`. Used by Seed demo / `SVARM_SEE
 | `adapter` | `pi_rpc` or `cli` |
 | `provider` / `model` | LLM routing for adapters that use them |
 | `args` | CLI only |
-| `env` | Extra env; `$VAR` expands from the process environment |
+| `env` | Extra env for the child Port; `$VAR` expands from the **host** process. Empty/absent `env` does **not** inherit the full host environment — only PATH/HOME/locale/temp/shell plus listed keys. Put API keys here explicitly (e.g. `OPENROUTER_API_KEY = "$OPENROUTER_API_KEY"`). |
 
 ## Pi RPC profile (Path B default)
 
