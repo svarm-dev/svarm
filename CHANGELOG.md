@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-08-02
+
+Governance trust floor for self-hosted operators: honest docs, board mutation auth, hard spend caps, usage export, allowlisted agent env, and one-shot approval — plus Path B dogfood and demo hardening since 0.1.2.
+
+**Breaking:** empty agent `env` no longer inherits the full host process environment. List API keys explicitly in `agents.toml` (e.g. `OPENROUTER_API_KEY = "$OPENROUTER_API_KEY"`). Default agent block was updated; custom agents need the same.
+
 ### Added
 
-- **Governance floor** ([#30](https://github.com/svarm-dev/svarm/issues/30)): board approve/reject/mark-done gated by the same `APPROVALS_*` Basic Auth when configured ([#32](https://github.com/svarm-dev/svarm/issues/32)); hard daily/per-ticket USD caps block **new** spawns (`SVARM_BUDGET_*` / WORKFLOW `budget.*`) ([#34](https://github.com/svarm-dev/svarm/issues/34)); `mix svarm.export_usage` CSV/JSON ledger export ([#35](https://github.com/svarm-dev/svarm/issues/35)); one-shot sticky approval after human approve ([#37](https://github.com/svarm-dev/svarm/issues/37))
+- **Governance floor** ([#30](https://github.com/svarm-dev/svarm/issues/30), [#41](https://github.com/svarm-dev/svarm/pull/41)): board approve/reject/mark-done gated by the same `APPROVALS_*` Basic Auth when configured ([#32](https://github.com/svarm-dev/svarm/issues/32)); hard daily/per-ticket USD caps block **new** spawns (`SVARM_BUDGET_*` / WORKFLOW `budget.*`) ([#34](https://github.com/svarm-dev/svarm/issues/34)); `mix svarm.export_usage` CSV/JSON ledger export ([#35](https://github.com/svarm-dev/svarm/issues/35)); one-shot sticky approval after human approve ([#37](https://github.com/svarm-dev/svarm/issues/37))
 - **Setup preflight** (`/setup`): live readiness (key source, default model, form-scoped tracker probe), model suggestions after OpenRouter test, single Apply path ([#5](https://github.com/svarm-dev/svarm/pull/5))
 - **Dashboard** governance spine: human-wait first, windowed spend/tokens from one summary, busy-first agent roster ([#5](https://github.com/svarm-dev/svarm/pull/5))
 - GitHub issue/PR templates and Dependabot for Hex + Actions ([#6](https://github.com/svarm-dev/svarm/pull/6))
@@ -128,7 +134,8 @@ Shipped surface in this cut: **local board + GitHub Issues + pi/CLI + OpenRouter
 
 - Agent credentials and API keys must come from the environment; never written into task metadata, PubSub events, or tracked config files
 
-[Unreleased]: https://github.com/svarm-dev/svarm/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/svarm-dev/svarm/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/svarm-dev/svarm/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/svarm-dev/svarm/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/svarm-dev/svarm/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/svarm-dev/svarm/releases/tag/v0.1.0
