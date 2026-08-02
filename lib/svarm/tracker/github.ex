@@ -456,7 +456,15 @@ defmodule Svarm.Tracker.GitHub do
     end
   end
 
-  defp format_cost(cost), do: to_string(Float.round(cost.total_cost_usd, 2))
+  defp format_cost(cost) do
+    amount = to_string(Float.round(cost.total_cost_usd, 2))
+
+    if Map.get(cost, :estimated) == true do
+      amount <> " est."
+    else
+      amount
+    end
+  end
 
   defp build_meta_rows(summary) do
     rows = []

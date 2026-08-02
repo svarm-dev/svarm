@@ -21,5 +21,7 @@ defmodule Svarm.Usage.Record do
     field(:estimated, :boolean, default: false)
     field(:provider_cost_usd, :float)
     field(:recorded_at, :integer)
+    # Wall-clock for daily budget windows and export (recorded_at is monotonic ms)
+    field(:inserted_at, :utc_datetime_usec)
   end
 end

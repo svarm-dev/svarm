@@ -3,6 +3,17 @@ defmodule Svarm.OrchestratorTest do
 
   alias Svarm.{Approval, KanbanBridge, Orchestrator, Workspace}
 
+  defp wait_until(fun, attempts \\ 40) do
+    Enum.reduce_while(1..attempts, false, fn _, _ ->
+      if fun.() do
+        {:halt, true}
+      else
+        Process.sleep(25)
+        {:cont, false}
+      end
+    end)
+  end
+
   # ponytail: one runnable check for the non-trivial logic.
   describe "Workspace.sanitize/1" do
     test "only allows [A-Za-z0-9._-], replaces the rest with _" do
@@ -108,6 +119,161 @@ defmodule Svarm.OrchestratorTest do
 
       pending = Approval.pending_status()
       assert %{status: ^pending} = KanbanBridge.get_task(task.id)
+    end
+
+    test "one-shot: approve skips re-pending; spawn clears bit; next cycle re-gates" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "one shot sticky",
+          status: Approval.pending_status(),
+          assignee: "demo"
+        })
+
+      original = :sys.get_state(Orchestrator)
+
+      local_config = %{
+        kind: :local,
+        active_states: ["todo", "in_progress"],
+        terminal_states: ["done", "failed", "review"],
+        ignored_assignees: []
+      }
+
+      # Gate everyone (would re-pending without one-shot). CLI `true` exits 0 fast.
+      demo_agent = %{
+        command: "true",
+        args: [],
+        env: %{},
+        adapter: "cli",
+        display_name: "Demo",
+        name: "demo"
+      }
+
+      agents = Map.put(original.agents, "demo", demo_agent)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | tracker: Svarm.Tracker.Local,
+            tracker_config: local_config,
+            approval: %{mode: :all, trusted_assignees: MapSet.new()},
+            agents: agents,
+            budget_caps: %{},
+            claimed: MapSet.delete(state.claimed, task.id),
+            running: Map.delete(state.running, task.id),
+            completed: MapSet.delete(state.completed, task.id),
+            approved_once: MapSet.new(),
+            last_budget_block: nil
+        }
+      end)
+
+      try do
+        assert :ok = Approval.approve(task.id)
+        assert KanbanBridge.get_task(task.id).status == "todo"
+
+        assert wait_until(fn ->
+                 MapSet.member?(:sys.get_state(Orchestrator).approved_once, task.id)
+               end)
+
+        send(Orchestrator, :tick)
+
+        assert wait_until(fn ->
+                 st = :sys.get_state(Orchestrator)
+                 t = KanbanBridge.get_task(task.id)
+
+                 t.status != Approval.pending_status() and
+                   (Map.has_key?(st.running, task.id) or MapSet.member?(st.claimed, task.id) or
+                      t.status in ["in_progress", "review", "failed", "done"])
+               end)
+
+        # Spawn attempt clears one-shot
+        refute MapSet.member?(:sys.get_state(Orchestrator).approved_once, task.id)
+
+        # Wait for worker to finish if still running
+        wait_until(fn -> not Map.has_key?(:sys.get_state(Orchestrator).running, task.id) end)
+
+        # Return to todo without one-shot → next tick re-gates
+        :ok = Svarm.Tracker.Local.update_status(local_config, task.id, "todo")
+
+        :sys.replace_state(Orchestrator, fn state ->
+          %{
+            state
+            | claimed: MapSet.delete(state.claimed, task.id),
+              running: Map.delete(state.running, task.id),
+              completed: MapSet.delete(state.completed, task.id),
+              approved_once: MapSet.new()
+          }
+        end)
+
+        send(Orchestrator, :tick)
+
+        assert wait_until(fn ->
+                 KanbanBridge.get_task(task.id).status == Approval.pending_status()
+               end)
+      after
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "budget_exceeded sets last_budget_block and does not claim task" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "over budget",
+          status: "todo",
+          assignee: "demo"
+        })
+
+      Svarm.Repo.delete_all("usage_records")
+
+      Svarm.Usage.append(%{
+        run_id: "rb",
+        task_id: task.id,
+        source: "worker",
+        provider: "openrouter",
+        model_id: "x",
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        provider_cost_usd: 10.0,
+        estimated: false
+      })
+
+      original = :sys.get_state(Orchestrator)
+
+      local_config = %{
+        kind: :local,
+        active_states: ["todo", "in_progress"],
+        terminal_states: ["done", "failed", "review"],
+        ignored_assignees: []
+      }
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | tracker: Svarm.Tracker.Local,
+            tracker_config: local_config,
+            budget_caps: %{max_usd_per_ticket: 1.0},
+            approval: %{mode: :off, trusted_assignees: MapSet.new()},
+            claimed: MapSet.delete(state.claimed, task.id),
+            running: Map.delete(state.running, task.id),
+            completed: MapSet.delete(state.completed, task.id),
+            last_budget_block: nil
+        }
+      end)
+
+      try do
+        send(Orchestrator, :tick)
+
+        assert wait_until(fn ->
+                 block = Orchestrator.status().last_budget_block
+                 is_map(block) and block.task_id == task.id
+               end)
+
+        status = Orchestrator.status()
+        assert status.last_budget_block.task_id == task.id
+        refute task.id in status.running_ids
+        refute MapSet.member?(:sys.get_state(Orchestrator).claimed, task.id)
+      after
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
     end
   end
 

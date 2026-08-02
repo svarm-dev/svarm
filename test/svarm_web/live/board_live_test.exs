@@ -81,6 +81,174 @@ defmodule SvarmWeb.BoardLiveTest do
     assert updated.status == "todo"
   end
 
+  test "auth configured without credentials blocks approve", %{conn: conn} do
+    prev_auth = Application.get_env(:svarm, :approvals_auth)
+    Application.put_env(:svarm, :approvals_auth, %{username: "op", password: "secret"})
+
+    on_exit(fn ->
+      if prev_auth == nil,
+        do: Application.delete_env(:svarm, :approvals_auth),
+        else: Application.put_env(:svarm, :approvals_auth, prev_auth)
+    end)
+
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Auth gate",
+        status: Approval.pending_status(),
+        assignee: "demo"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/board")
+    view |> element("button", "Approve") |> render_click()
+
+    assert render(view) =~ "Authentication required"
+    assert KanbanBridge.get_task(task.id).status == Approval.pending_status()
+  end
+
+  test "auth configured with valid Basic Auth allows approve", %{conn: conn} do
+    prev_auth = Application.get_env(:svarm, :approvals_auth)
+    Application.put_env(:svarm, :approvals_auth, %{username: "op", password: "secret"})
+
+    on_exit(fn ->
+      if prev_auth == nil,
+        do: Application.delete_env(:svarm, :approvals_auth),
+        else: Application.put_env(:svarm, :approvals_auth, prev_auth)
+    end)
+
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Auth ok",
+        status: Approval.pending_status(),
+        assignee: "demo"
+      })
+
+    creds = Base.encode64("op:secret")
+
+    {:ok, view, _html} =
+      conn
+      |> put_req_header("authorization", "Basic #{creds}")
+      |> live(~p"/board")
+
+    view |> element("button", "Approve") |> render_click()
+    assert KanbanBridge.get_task(task.id).status == "todo"
+  end
+
+  test "sticky board auth: session proof survives header-less follow-up", %{conn: conn} do
+    prev_auth = Application.get_env(:svarm, :approvals_auth)
+    Application.put_env(:svarm, :approvals_auth, %{username: "op", password: "secret"})
+
+    on_exit(fn ->
+      if prev_auth == nil,
+        do: Application.delete_env(:svarm, :approvals_auth),
+        else: Application.put_env(:svarm, :approvals_auth, prev_auth)
+    end)
+
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Sticky auth",
+        status: Approval.pending_status(),
+        assignee: "demo"
+      })
+
+    creds = Base.encode64("op:secret")
+
+    # First request establishes session board_auth_ok
+    conn =
+      conn
+      |> put_req_header("authorization", "Basic #{creds}")
+      |> get(~p"/board")
+
+    assert html_response(conn, 200)
+
+    # Recycle keeps session; no Authorization header on follow-up
+    {:ok, view, _html} = live(recycle(conn), ~p"/board")
+    view |> element("button", "Approve") |> render_click()
+    assert KanbanBridge.get_task(task.id).status == "todo"
+  end
+
+  test "auth configured without credentials blocks reject and complete_review", %{conn: conn} do
+    prev_auth = Application.get_env(:svarm, :approvals_auth)
+    Application.put_env(:svarm, :approvals_auth, %{username: "op", password: "secret"})
+
+    on_exit(fn ->
+      if prev_auth == nil,
+        do: Application.delete_env(:svarm, :approvals_auth),
+        else: Application.put_env(:svarm, :approvals_auth, prev_auth)
+    end)
+
+    KanbanBridge.delete_all_tasks()
+
+    pending =
+      KanbanBridge.create_task(%{
+        title: "Reject blocked",
+        status: Approval.pending_status(),
+        assignee: "demo"
+      })
+
+    review =
+      KanbanBridge.create_task(%{
+        title: "Done blocked",
+        status: "review",
+        assignee: "demo"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/board")
+
+    render_click(view, "reject_task", %{"id" => pending.id})
+    assert render(view) =~ "Authentication required"
+    assert KanbanBridge.get_task(pending.id).status == Approval.pending_status()
+
+    render_click(view, "complete_review", %{"id" => review.id})
+    assert render(view) =~ "Authentication required"
+    assert KanbanBridge.get_task(review.id).status == "review"
+  end
+
+  test "auth configured with Basic Auth allows reject and complete_review", %{conn: conn} do
+    prev_auth = Application.get_env(:svarm, :approvals_auth)
+    Application.put_env(:svarm, :approvals_auth, %{username: "op", password: "secret"})
+
+    on_exit(fn ->
+      if prev_auth == nil,
+        do: Application.delete_env(:svarm, :approvals_auth),
+        else: Application.put_env(:svarm, :approvals_auth, prev_auth)
+    end)
+
+    KanbanBridge.delete_all_tasks()
+
+    pending =
+      KanbanBridge.create_task(%{
+        title: "Reject ok",
+        status: Approval.pending_status(),
+        assignee: "demo"
+      })
+
+    review =
+      KanbanBridge.create_task(%{
+        title: "Done ok",
+        status: "review",
+        assignee: "demo"
+      })
+
+    creds = Base.encode64("op:secret")
+
+    {:ok, view, _html} =
+      conn
+      |> put_req_header("authorization", "Basic #{creds}")
+      |> live(~p"/board")
+
+    render_click(view, "reject_task", %{"id" => pending.id})
+    assert KanbanBridge.get_task(pending.id).status == "failed"
+
+    render_click(view, "complete_review", %{"id" => review.id})
+    assert KanbanBridge.get_task(review.id).status == "done"
+  end
+
   test "pending approval and review cards show wait chips", %{conn: conn} do
     KanbanBridge.delete_all_tasks()
 

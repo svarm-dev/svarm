@@ -22,6 +22,7 @@ defmodule Svarm.Orchestrator do
   alias Svarm.{
     AgentRunner,
     Approval,
+    Budget,
     Demo,
     Events,
     Settings,
@@ -56,12 +57,15 @@ defmodule Svarm.Orchestrator do
     :tracker,
     :tracker_config,
     :runner,
+    :last_budget_block,
     active_states: @default_active_states,
     terminal_states: @default_terminal_states,
     running: %{},
     retry_attempts: %{},
     claimed: MapSet.new(),
     completed: MapSet.new(),
+    approved_once: MapSet.new(),
+    budget_caps: %{},
     last_run_entries: %{},
     last_tick_mono_ms: nil
   ]
@@ -73,6 +77,14 @@ defmodule Svarm.Orchestrator do
 
   @doc "Run one poll cycle immediately (used by `mix svarm.demo`)."
   def kick, do: send(__MODULE__, :tick)
+
+  @doc """
+  Record a human one-shot approval so the next poll can dispatch without
+  re-entering `pending_approval`. Cleared after the first spawn attempt.
+  """
+  def mark_approved(task_id) when is_binary(task_id) do
+    GenServer.cast(__MODULE__, {:mark_approved, task_id})
+  end
 
   @doc """
   Reload agents from file+Settings and re-apply workflow/tracker overlay.
@@ -220,7 +232,8 @@ defmodule Svarm.Orchestrator do
 
   defp retry_or_spawn(state, task, task_id, entry) do
     if slots_available?(state) do
-      spawn_worker(state, task)
+      # Same hard caps as first dispatch — retries are still new agent processes
+      maybe_budget_or_spawn(state, task)
     else
       timer = Process.send_after(self(), {:retry, task_id}, @continuation_retry_ms)
       retry = Map.put(entry || %{}, :timer, timer)
@@ -266,6 +279,11 @@ defmodule Svarm.Orchestrator do
 
     broadcast_status(state)
     {:reply, {:ok, summary}, state}
+  end
+
+  @impl true
+  def handle_cast({:mark_approved, task_id}, state) when is_binary(task_id) do
+    {:noreply, %{state | approved_once: MapSet.put(state.approved_once, task_id)}}
   end
 
   ## reconcile: stall detection + tracker state sync (§8.5–§8.6)
@@ -383,11 +401,16 @@ defmodule Svarm.Orchestrator do
       ignored_assignees: []
     }
 
-    %{state | tracker_config: Settings.Resolve.tracker_overlay(base)}
+    %{
+      state
+      | tracker_config: Settings.Resolve.tracker_overlay(base),
+        budget_caps: Budget.load_caps(nil)
+    }
   end
 
   defp apply_workflow_config(%{workflow: wf} = state) do
     cfg = WorkflowConfig.from(wf)
+    raw_config = if is_map(wf.config), do: wf.config, else: %{}
 
     poll_ms =
       case Application.get_env(:svarm, :orchestrator_poll_interval_ms) do
@@ -416,7 +439,8 @@ defmodule Svarm.Orchestrator do
         workspace_root: workspace_root,
         active_states: cfg.active_states,
         terminal_states: cfg.terminal_states,
-        tracker_config: Settings.Resolve.tracker_overlay(cfg.tracker_config)
+        tracker_config: Settings.Resolve.tracker_overlay(cfg.tracker_config),
+        budget_caps: Budget.load_caps(raw_config)
     }
   end
 
@@ -537,12 +561,31 @@ defmodule Svarm.Orchestrator do
   end
 
   defp maybe_gate_or_spawn(state, task) do
-    if Approval.required?(state.approval, task, state.agents) do
+    one_shot? = MapSet.member?(state.approved_once, task.id)
+
+    if not one_shot? and Approval.required?(state.approval, task, state.agents) do
       :ok = state.tracker.update_status(state.tracker_config, task.id, Approval.pending_status())
       Logger.info("task #{task.id} held for human approval")
       state
     else
-      spawn_worker(state, task)
+      maybe_budget_or_spawn(state, task)
+    end
+  end
+
+  defp maybe_budget_or_spawn(state, task) do
+    case Budget.check(task.id, state.budget_caps || %{}) do
+      :ok ->
+        spawn_worker(state, task)
+
+      {:error, :budget_exceeded, meta} ->
+        Logger.warning(
+          "budget_exceeded task=#{task.id} scope=#{meta.scope} spent=#{meta.spent} cap=#{meta.cap}"
+        )
+
+        block = Map.merge(meta, %{task_id: task.id, at: System.system_time(:second)})
+        state = %{state | last_budget_block: block}
+        broadcast_status(state)
+        state
     end
   end
 
@@ -558,6 +601,9 @@ defmodule Svarm.Orchestrator do
   end
 
   defp spawn_worker(state, task) do
+    # One-shot approval: clear after first spawn attempt (re-gate if agent fails back to todo)
+    state = %{state | approved_once: MapSet.delete(state.approved_once, task.id)}
+
     run_id = "run_" <> Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)
 
     opts = [
@@ -799,7 +845,9 @@ defmodule Svarm.Orchestrator do
       active_assignees: active_assignees,
       active_agent_count: length(active_assignees),
       running_started: running_started,
-      last_tick_mono_ms: state.last_tick_mono_ms
+      last_tick_mono_ms: state.last_tick_mono_ms,
+      budget_caps: state.budget_caps || %{},
+      last_budget_block: state.last_budget_block
     }
   end
 end

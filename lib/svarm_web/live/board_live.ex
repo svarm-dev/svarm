@@ -3,12 +3,14 @@ defmodule SvarmWeb.BoardLive do
   use SvarmWeb, :live_view
 
   alias Svarm.{AgentRegistry, AgentRunner, Approval, Board, Events, Usage}
+  alias SvarmWeb.Plugs.ApprovalsAuth
 
   @max_log_lines 400
 
   @impl true
-  def mount(_params, _session, socket) do
+  def mount(_params, session, socket) do
     agents = AgentRunner.load_agents()
+    board_auth_ok = ApprovalsAuth.board_mutation_authorized?(session)
 
     socket =
       socket
@@ -28,6 +30,7 @@ defmodule SvarmWeb.BoardLive do
       |> assign(:dev_routes, Application.get_env(:svarm, :dev_routes, false))
       |> assign(:demo_routes, Svarm.Demo.routes_enabled?())
       |> assign(:checklist, Svarm.Board.instance_status())
+      |> assign(:board_auth_ok, board_auth_ok)
       |> assign(:connected, false)
 
     socket =
@@ -64,47 +67,86 @@ defmodule SvarmWeb.BoardLive do
   end
 
   def handle_event("approve_task", %{"id" => id}, socket) do
-    case Approval.approve(id) do
-      :ok ->
+    case authorize_board_mutation(socket) do
+      {:error, :unauthorized} ->
         {:noreply,
-         socket
-         |> put_flash(:info, "Approved #{id}")
-         |> load_board()
-         |> then(fn s -> if s.assigns.selected_task_id == id, do: select_task(s, id), else: s end)}
+         put_flash(
+           socket,
+           :error,
+           "Authentication required to approve. Sign in via /approvals (same APPROVALS_* credentials), then return to the board."
+         )}
 
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, Approval.flash_error(reason))}
+      :ok ->
+        case Approval.approve(id) do
+          :ok ->
+            {:noreply,
+             socket
+             |> put_flash(:info, "Approved #{id}")
+             |> load_board()
+             |> then(fn s ->
+               if s.assigns.selected_task_id == id, do: select_task(s, id), else: s
+             end)}
+
+          {:error, reason} ->
+            {:noreply, put_flash(socket, :error, Approval.flash_error(reason))}
+        end
     end
   end
 
   def handle_event("reject_task", %{"id" => id}, socket) do
-    case Approval.reject(id) do
-      :ok ->
+    case authorize_board_mutation(socket) do
+      {:error, :unauthorized} ->
         {:noreply,
-         socket
-         |> put_flash(:info, "Rejected #{id}")
-         |> load_board()
-         |> then(fn s -> if s.assigns.selected_task_id == id, do: select_task(s, id), else: s end)}
+         put_flash(
+           socket,
+           :error,
+           "Authentication required to reject. Sign in via /approvals (same APPROVALS_* credentials), then return to the board."
+         )}
 
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, Approval.flash_error(reason))}
+      :ok ->
+        case Approval.reject(id) do
+          :ok ->
+            {:noreply,
+             socket
+             |> put_flash(:info, "Rejected #{id}")
+             |> load_board()
+             |> then(fn s ->
+               if s.assigns.selected_task_id == id, do: select_task(s, id), else: s
+             end)}
+
+          {:error, reason} ->
+            {:noreply, put_flash(socket, :error, Approval.flash_error(reason))}
+        end
     end
   end
 
   def handle_event("complete_review", %{"id" => id}, socket) do
-    case Board.complete_review(id) do
-      :ok ->
+    case authorize_board_mutation(socket) do
+      {:error, :unauthorized} ->
         {:noreply,
-         socket
-         |> put_flash(:info, "Marked #{id} done")
-         |> load_board()
-         |> then(fn s -> if s.assigns.selected_task_id == id, do: select_task(s, id), else: s end)}
+         put_flash(
+           socket,
+           :error,
+           "Authentication required to mark done. Sign in via /approvals (same APPROVALS_* credentials), then return to the board."
+         )}
 
-      {:error, :not_in_review} ->
-        {:noreply, put_flash(socket, :error, "Task is not awaiting review")}
+      :ok ->
+        case Board.complete_review(id) do
+          :ok ->
+            {:noreply,
+             socket
+             |> put_flash(:info, "Marked #{id} done")
+             |> load_board()
+             |> then(fn s ->
+               if s.assigns.selected_task_id == id, do: select_task(s, id), else: s
+             end)}
 
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Could not mark done: #{inspect(reason)}")}
+          {:error, :not_in_review} ->
+            {:noreply, put_flash(socket, :error, "Task is not awaiting review")}
+
+          {:error, reason} ->
+            {:noreply, put_flash(socket, :error, "Could not mark done: #{inspect(reason)}")}
+        end
     end
   end
 
@@ -112,13 +154,21 @@ defmodule SvarmWeb.BoardLive do
     {:noreply, handle_board_key(socket, key)}
   end
 
-  @impl true
   def handle_event("refresh", _params, socket) do
     {:noreply, load_board(socket)}
   end
 
   def handle_event("board_tick", _params, socket) do
     {:noreply, assign(socket, :now_mono, System.monotonic_time(:millisecond))}
+  end
+
+  defp authorize_board_mutation(socket) do
+    # Re-check config on every event (credentials may be set after mount)
+    if ApprovalsAuth.authorize_board_mutation?(socket.assigns.board_auth_ok) do
+      :ok
+    else
+      {:error, :unauthorized}
+    end
   end
 
   @impl true
@@ -638,6 +688,19 @@ defmodule SvarmWeb.BoardLive do
 
     ~H"""
     <div class="flex flex-col gap-2 w-full max-w-5xl">
+      <%= if budget_block = Map.get(@orchestrator, :last_budget_block) do %>
+        <p
+          class="text-sm rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-warning-content"
+          role="status"
+        >
+          Budget cap blocked new spawn for
+          <span class="font-mono">{budget_block[:task_id] || budget_block["task_id"]}</span>
+          ({budget_block[:scope] || budget_block["scope"]}: spent ${budget_block[:spent] ||
+            budget_block["spent"]} / cap ${budget_block[:cap] || budget_block["cap"]}).
+          In-flight runs continue; raise or clear caps to dispatch more.
+        </p>
+      <% end %>
+
       <%= if Map.get(@orchestrator, :running, 0) > 0 do %>
         <p class="text-sm font-medium flex items-center gap-2">
           <span class="inline-block w-2 h-2 rounded-full bg-primary motion-safe:animate-pulse" />
@@ -1290,6 +1353,9 @@ defmodule SvarmWeb.BoardLive do
 
   defp session_cost_line(o) when is_map(o) do
     case Map.get(o, :session_cost) do
+      %{record_count: n, total_cost_usd: usd, estimated: true} when is_integer(n) and n > 0 ->
+        "$#{usd} est."
+
       %{record_count: n, total_cost_usd: usd} when is_integer(n) and n > 0 ->
         "$#{usd}"
 

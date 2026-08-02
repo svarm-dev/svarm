@@ -104,6 +104,30 @@ defmodule Svarm.Runner.PiRPCTest do
     assert "PATH" in keys
   end
 
+  test "empty env map still uses allowlist only (no full host inheritance)" do
+    System.put_env("OPENROUTER_API_KEY", "sk-test-should-not-leak")
+    System.put_env("SVARM_TEST_SECRET_EMPTY", "nope")
+
+    on_exit(fn ->
+      System.delete_env("OPENROUTER_API_KEY")
+      System.delete_env("SVARM_TEST_SECRET_EMPTY")
+    end)
+
+    opts = Svarm.Runner.maybe_add_env([], %{})
+    env = Keyword.fetch!(opts, :env)
+    keys = Enum.map(env, fn {k, _} -> List.to_string(k) end)
+
+    refute "OPENROUTER_API_KEY" in keys
+    refute "SVARM_TEST_SECRET_EMPTY" in keys
+    assert "PATH" in keys
+  end
+
+  test "with_github_token leaves env unchanged without App auth" do
+    env = %{"FOO" => "bar", "GITHUB_TOKEN" => "pat"}
+    assert env == Svarm.Runner.with_github_token(env, %{auth: :token})
+    assert env == Svarm.Runner.with_github_token(env, %{})
+  end
+
   describe "take_lines/1" do
     test "holds partial line as remainder" do
       assert {"{\"a\":", []} = PiRPC.take_lines("{\"a\":")

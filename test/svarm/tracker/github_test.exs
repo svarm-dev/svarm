@@ -26,6 +26,7 @@ defmodule Svarm.Tracker.GitHubTest do
       assert comment =~ "✅ **Reece** finished"
       assert comment =~ "Add retry logic to API client"
       assert comment =~ "$0.47"
+      refute comment =~ "est."
       assert comment =~ "2.3k tokens"
       assert comment =~ "4m"
       assert comment =~ "**Harness**"
@@ -39,6 +40,27 @@ defmodule Svarm.Tracker.GitHubTest do
       assert comment =~ "**Awaiting human review**"
       assert comment =~ "Branch: `feat/retry-logic`"
       refute comment =~ ~r/merged|reviewed by/i
+    end
+
+    test "appends est. when cost.estimated is true" do
+      summary = %{
+        run_id: "run_est",
+        task_id: "sva_est",
+        task: %{title: "Estimated cost", source_id: "7"},
+        result: :ok,
+        duration_ms: 1000,
+        agent_name: "Pi",
+        agent_role: nil,
+        harness: "Pi",
+        model: "free",
+        total_tokens: 100,
+        cost: %{total_cost_usd: 0.05, record_count: 1, estimated: true},
+        branch: nil,
+        exit_code: 0
+      }
+
+      comment = GitHub.build_comment(summary)
+      assert comment =~ "$0.05 est."
     end
 
     test "renders failure comment with exit code" do

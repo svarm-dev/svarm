@@ -20,7 +20,8 @@ command = "pi"
 adapter = "pi_rpc"
 provider = "openrouter"
 model = "openrouter/free"
-env = { GITHUB_TOKEN = "$GITHUB_TOKEN" }
+# Explicit keys only — empty env no longer inherits the full host environment.
+env = { GITHUB_TOKEN = "$GITHUB_TOKEN", OPENROUTER_API_KEY = "$OPENROUTER_API_KEY" }
 
 # CLI fallback (uncomment if pi RPC isn't available):
 # [agent.fallback]

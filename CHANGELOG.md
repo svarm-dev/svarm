@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Governance floor** ([#30](https://github.com/svarm-dev/svarm/issues/30)): board approve/reject/mark-done gated by the same `APPROVALS_*` Basic Auth when configured ([#32](https://github.com/svarm-dev/svarm/issues/32)); hard daily/per-ticket USD caps block **new** spawns (`SVARM_BUDGET_*` / WORKFLOW `budget.*`) ([#34](https://github.com/svarm-dev/svarm/issues/34)); `mix svarm.export_usage` CSV/JSON ledger export ([#35](https://github.com/svarm-dev/svarm/issues/35)); one-shot sticky approval after human approve ([#37](https://github.com/svarm-dev/svarm/issues/37))
 - **Setup preflight** (`/setup`): live readiness (key source, default model, form-scoped tracker probe), model suggestions after OpenRouter test, single Apply path ([#5](https://github.com/svarm-dev/svarm/pull/5))
 - **Dashboard** governance spine: human-wait first, windowed spend/tokens from one summary, busy-first agent roster ([#5](https://github.com/svarm-dev/svarm/pull/5))
 - GitHub issue/PR templates and Dependabot for Hex + Actions ([#6](https://github.com/svarm-dev/svarm/pull/6))
@@ -18,12 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Approximate costs (rate-table / incomplete rows) are labeled **estimated** everywhere; provider-reported USD stays exact ([#33](https://github.com/svarm-dev/svarm/issues/33))
+- Empty agent `env` uses allowlist Port env only (no full host inheritance); list API keys in `agents.toml` ([#36](https://github.com/svarm-dev/svarm/issues/36))
 - License: **FSL-1.1-MIT** (Fair Source / source available → MIT after 2 years per version); was MIT
 - Successful agent runs that leave the tracker in an active status move to **review** once (no endless re-dispatch) ([#23](https://github.com/svarm-dev/svarm/pull/23))
 - Run cost prefers **provider-reported USD** when present, then the rate table ([#23](https://github.com/svarm-dev/svarm/pull/23))
 
 ### Fixed
 
+- Public docs no longer claim OS sandbox or hard budgets before they ship; path-isolation wording ([#31](https://github.com/svarm-dev/svarm/issues/31))
 - Board card cost no longer shows a stray `#` before the dollar amount
 - Docker/demo seed forces approval overlay: research + docs trusted, **code** gated (even if host WORKFLOW still trusts all demo agents)
 - Demo approval: **code** gated (`demo_code` untrusted); research + docs trusted; approve allowed on demo tasks
@@ -39,6 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Board high-trust mutations require the same Basic Auth as `/approvals` when `APPROVALS_*` is set ([#32](https://github.com/svarm-dev/svarm/issues/32))
+- Agent child processes no longer inherit the full host environment by default ([#36](https://github.com/svarm-dev/svarm/issues/36))
 - Redact API keys and tokens from orchestrator crash dumps, board agent lines, and persisted run logs ([#23](https://github.com/svarm-dev/svarm/pull/23))
 
 

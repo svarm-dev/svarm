@@ -61,4 +61,18 @@ defmodule SvarmWeb.Plugs.ApprovalsAuthTest do
     assert body =~ "APPROVALS_USER"
     assert body =~ "APPROVALS_PASSWORD"
   end
+
+  test "credentials_configured? and board_mutation_authorized?" do
+    Application.delete_env(:svarm, :approvals_auth)
+    refute SvarmWeb.Plugs.ApprovalsAuth.credentials_configured?()
+    assert SvarmWeb.Plugs.ApprovalsAuth.board_mutation_authorized?(%{})
+    assert SvarmWeb.Plugs.ApprovalsAuth.authorize_board_mutation?(false)
+
+    Application.put_env(:svarm, :approvals_auth, %{username: "a", password: "b"})
+    assert SvarmWeb.Plugs.ApprovalsAuth.credentials_configured?()
+    refute SvarmWeb.Plugs.ApprovalsAuth.board_mutation_authorized?(%{})
+    assert SvarmWeb.Plugs.ApprovalsAuth.board_mutation_authorized?(%{"board_auth_ok" => true})
+    refute SvarmWeb.Plugs.ApprovalsAuth.authorize_board_mutation?(false)
+    assert SvarmWeb.Plugs.ApprovalsAuth.authorize_board_mutation?(true)
+  end
 end

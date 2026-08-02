@@ -7,6 +7,7 @@ defmodule Svarm.Usage do
 
   defdelegate append(attrs), to: Ledger
   defdelegate for_task(task_id), to: Ledger
+  defdelegate list_all(), to: Ledger
   defdelegate task_cost(task_id), to: Query
   defdelegate task_cost_summary(task_id), to: Query
   defdelegate session_cost_summary(), to: Query

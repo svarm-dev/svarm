@@ -8,6 +8,8 @@ defmodule SvarmWeb.Router do
     plug :put_root_layout, html: {SvarmWeb.Layouts, :root}
     plug :protect_from_forgery
     plug :put_secure_browser_headers
+    # Capture Basic Auth proof for board mutations (does not block reads)
+    plug SvarmWeb.Plugs.BoardAuthCapture
   end
 
   pipeline :api do

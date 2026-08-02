@@ -83,9 +83,16 @@ defmodule Svarm.Usage.Query do
     )
   end
 
-  defp estimated_record?(%{provider_cost_usd: cost}) when is_number(cost), do: false
-  defp estimated_record?(%{estimated: true}), do: true
-  defp estimated_record?(_), do: false
+  @doc """
+  Whether a ledger row's dollars are approximate.
+
+  - Provider-reported `provider_cost_usd` → exact (not estimated)
+  - Explicit `estimated: true` → estimated
+  - Rate-table / incomplete rows → estimated (fail closed on honesty)
+  """
+  def estimated_record?(%{provider_cost_usd: cost}) when is_number(cost), do: false
+  def estimated_record?(%{estimated: true}), do: true
+  def estimated_record?(_), do: true
 
   @doc """
   Returns a session-wide spend summary: cost, tokens, and estimate flag.
@@ -93,6 +100,14 @@ defmodule Svarm.Usage.Query do
   """
   def session_cost_summary do
     Ledger.list_all() |> summarize_records()
+  end
+
+  @doc """
+  Spend summary for records whose wall-clock `inserted_at` falls on the
+  given UTC calendar day. Rows with nil `inserted_at` are excluded.
+  """
+  def utc_day_cost_summary(%Date{} = day) do
+    Ledger.for_utc_day(day) |> summarize_records()
   end
 
   @doc """
