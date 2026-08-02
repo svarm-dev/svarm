@@ -70,7 +70,7 @@ defmodule Svarm.MixProject do
        depth: 1},
       {:daisyui,
        github: "saadeghi/daisyui",
-       tag: "v5.7.4",
+       tag: "v5.7.8",
        sparse: "packages/bundle",
        app: false,
        compile: false,
