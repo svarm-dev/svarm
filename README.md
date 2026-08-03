@@ -21,7 +21,7 @@ Svärm pulls work from GitHub Issues (or a local board) and dispatches an **exte
 
 - **Watch agents work.** Cards on a board with live logs and per-ticket cost.
 - **Human gates.** Optional approval before dispatch; wait chips for approval and review.
-- **Cost on the ticket.** Tokens, model, and dollar amount (append-only ledger).
+- **Cost on the ticket.** Tokens, model, and dollar amount (append-only ledger; approximate rows labeled **estimated**).
 
 ## Quick start
 
@@ -54,6 +54,7 @@ mix phx.server
 | [`/dashboard`](http://localhost:4000/dashboard) | Ops overview: agent roster, cost, waiting on humans |
 | [`/`](http://localhost:4000/) | Instance overview (tracker, agents, workflow) |
 | [`/approvals`](http://localhost:4000/approvals) | First-run gates (Basic Auth: `svarm` / `svarm` in demo) |
+| [`/setup`](http://localhost:4000/setup) | Optional in-app keys + default model (same auth as `/approvals` in Docker) |
 
 Demo agents run without API keys. They simulate work so you can see the board in action. Click **Seed demo** on `/board` to re-seed after clearing.
 
@@ -118,12 +119,15 @@ Docker mounts `./svarm-config/` as a directory. On first boot, missing files are
 | Variable | Purpose |
 |----------|---------|
 | `SECRET_KEY_BASE` | Cookie signing, required for Docker/prod (`openssl rand -base64 48`) |
-| `APPROVALS_USER` / `APPROVALS_PASSWORD` | Basic Auth for `/approvals` in Docker/prod |
+| `APPROVALS_USER` / `APPROVALS_PASSWORD` | Basic Auth for `/approvals` and `/setup`; also gates board approve/reject/mark-done when set (see [SECURITY.md](SECURITY.md)) |
 | `GITHUB_TOKEN` | PAT for GitHub Issues (`repo` scope) |
-| `OPENROUTER_API_KEY` | LLM access for agents |
+| `OPENROUTER_API_KEY` | LLM access for agents — must also be listed in the agent `env` block in `agents.toml` |
+| `SVARM_BUDGET_MAX_USD_PER_TICKET` / `SVARM_BUDGET_MAX_USD_PER_DAY` | Optional hard USD caps (or WORKFLOW `budget.*`); hard-stop **new** spawns only |
 | `SVARM_BASE_URL` | Links in issue comments (e.g. `http://localhost:4000`) |
 | `SVARM_SEED_DEMO=1` | Boot-seed mock tasks when board is empty (no UI button) |
 | `SVARM_DEMO_ROUTES=1` | Seed demo button + `/dev/demo/seed` (Docker demo sets this) |
+
+Empty agent `env` does **not** inherit the full host environment — list API keys explicitly in [`agents.toml`](docs/agents.md).
 
 GitHub App identity (bot comments): [docs/github-app.md](docs/github-app.md).
 </details>
@@ -131,12 +135,17 @@ GitHub App identity (bot comments): [docs/github-app.md](docs/github-app.md).
 ## Documentation
 
 - [GETTING-STARTED.md](GETTING-STARTED.md) full setup walkthrough
-- [docs/agents.md](docs/agents.md) agent.toml copy-paste blocks
+- [docs/agents.md](docs/agents.md) `agents.toml` copy-paste blocks
 - [AGENTS.md](AGENTS.md) for coding agents editing this repo
+- [SECURITY.md](SECURITY.md) trust model, auth, workspace isolation
+- [CHANGELOG.md](CHANGELOG.md) release notes
+- [CONTRIBUTING.md](CONTRIBUTING.md) how to contribute
 
 ## Status
 
-**Working now:** local board + GitHub Issues + pi/CLI agents + OpenRouter, with approvals (one-shot after human approve), per-ticket cost (estimated labeled), optional hard daily/per-ticket USD caps that block **new** spawns, usage ledger export (`mix svarm.export_usage`), board mutation auth when `APPROVALS_*` is set, optional **in-app `/setup`** (encrypted keys; file/env still work), and Stage B human-wait visibility on board/dashboard.
+**Current release: v0.1.3**
+
+**Working now:** local board + GitHub Issues + pi/CLI agents + OpenRouter, with approvals (one-shot after human approve), per-ticket cost (estimated labeled), optional hard daily/per-ticket USD caps that block **new** spawns, allowlisted agent child env, usage ledger export (`mix svarm.export_usage`), board mutation auth when `APPROVALS_*` is set, optional **in-app `/setup`** (encrypted keys; file/env still work), and human-wait visibility on board/dashboard.
 
 **Not shipped yet:** Linear/Jira trackers, multi-provider/multi-agent registry UI, managed hosting, mid-run budget kill of in-flight workers. "Adapter-ready" means the behaviours exist; it does not mean every adapter is built.
 
