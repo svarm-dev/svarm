@@ -149,6 +149,21 @@ defmodule Svarm.Runner.PiRPCTest do
     assert_agent_line("sva_happy", "hello from fake pi")
   end
 
+  test "workspace run.log is redacted on disk", %{workspace_root: root, statuses: statuses} do
+    id = "sva_secrets_disk"
+    assert :ok = PiRPC.run(task(id), agent_config("secrets"), run_opts(root, statuses))
+    assert last_status(statuses, id) == "review"
+
+    log_path = Path.join([root, id, "run.log"])
+    assert File.exists?(log_path), "expected run.log under workspace"
+    on_disk = File.read!(log_path)
+
+    refute on_disk =~ "SECRETVALUE"
+    refute on_disk =~ "github_pat_11AAAA_SECRET"
+    assert on_disk =~ "OPENROUTER_API_KEY=[redacted]"
+    assert on_disk =~ "GITHUB_TOKEN=[redacted]"
+  end
+
   test "timeout: wall-clock abort/kill → error, no zombie", %{
     workspace_root: root,
     statuses: statuses
