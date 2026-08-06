@@ -243,10 +243,17 @@ defmodule Svarm.Settings do
 
   defp put_secret_field(acc, field, _val, _existing), do: Map.delete(acc, field)
 
-  defp stringify_keys(map) do
-    Map.new(map, fn
-      {k, v} when is_atom(k) -> {Atom.to_string(k), v}
-      {k, v} when is_binary(k) -> {k, v}
+  # Prefer atom-derived keys when both atom and string forms exist for the same name.
+  defp stringify_keys(map) when is_map(map) do
+    strings =
+      Enum.reduce(map, %{}, fn
+        {k, v}, acc when is_binary(k) -> Map.put(acc, k, v)
+        {_k, _v}, acc -> acc
+      end)
+
+    Enum.reduce(map, strings, fn
+      {k, v}, acc when is_atom(k) -> Map.put(acc, Atom.to_string(k), v)
+      {_k, _v}, acc -> acc
     end)
   end
 

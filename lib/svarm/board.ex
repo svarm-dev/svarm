@@ -154,15 +154,12 @@ defmodule Svarm.Board do
   def counts_by_assignee(tasks) when is_list(tasks) do
     tasks
     |> Enum.reject(&(&1.status in ["done", "failed"]))
-    |> Enum.group_by(&(&1.assignee || "default"))
-    |> Map.new(fn {assignee, list} -> {assignee, length(list)} end)
+    |> Enum.frequencies_by(&(&1.assignee || "default"))
   end
 
   @doc "Task counts grouped by kanban status."
   def counts_by_status(tasks) when is_list(tasks) do
-    tasks
-    |> Enum.group_by(& &1.status)
-    |> Map.new(fn {status, list} -> {status, length(list)} end)
+    Enum.frequencies_by(tasks, & &1.status)
   end
 
   @doc """
