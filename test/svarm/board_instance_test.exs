@@ -14,4 +14,11 @@ defmodule Svarm.BoardInstanceTest do
     assert is_boolean(status.setup_complete?)
     assert status.tracker_source in ["settings", "file"]
   end
+
+  test "list_agents returns agent config map for board UI" do
+    agents = Svarm.Board.list_agents()
+    assert is_map(agents)
+    assert map_size(agents) >= 1
+    assert agents == Svarm.AgentRunner.load_agents()
+  end
 end
