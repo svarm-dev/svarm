@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Post-0.1.3: CI failure resume loop, denser board run console, docs/deps polish.
+
+### Added
+
+- **CI resume + circuit breaker** ([#44](https://github.com/svarm-dev/svarm/issues/44), [#60](https://github.com/svarm-dev/svarm/pull/60)): when enabled, poll GitHub Checks for managed PRs in **review** and re-dispatch a **fresh** agent run with failure context until **N** attempts open a durable circuit; board chip **“CI retries exhausted”**; default **off** (`ci_resume` in WORKFLOW / `SVARM_CI_RESUME_*`); durable `task_coordination` (PR link, counts); GitHub `todo` strips status labels; PR owner/repo bound to tracker; resume skips re-approval after first human gate; Checks HTTP timeouts + max polls/tick
+- **Run console** on the board ([#43](https://github.com/svarm-dev/svarm/issues/43), [#47](https://github.com/svarm-dev/svarm/pull/47)): dense mono console with agent/model/status/cost chrome, late-join hydrate from `RunLog`, attach deep links; agent lines and run markers persist once in `Events` (zero open boards still record; multiple LiveViews never double-write)
+
+### Changed
+
+- README aligned with v0.1.3 governance floor: `/setup`, `APPROVALS_*` / budget env, agent env allowlist, estimated cost label, docs links ([#42](https://github.com/svarm-dev/svarm/pull/42))
+
+### Fixed
+
+- Orchestrator test isolation and pre-existing `mix ci` reach smells (frequencies, budget float coercion, flaky dispatch ticks) as part of [#47](https://github.com/svarm-dev/svarm/pull/47)
+
+### Dependencies
+
+- `phoenix_live_reload` 1.6.2 → 1.7.0 (dev) ([#39](https://github.com/svarm-dev/svarm/pull/39))
+
 ## [0.1.3] - 2026-08-02
 
 Governance trust floor for self-hosted operators: honest docs, board mutation auth, hard spend caps, usage export, allowlisted agent env, and one-shot approval — plus Path B dogfood and demo hardening since 0.1.2.
