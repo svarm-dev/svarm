@@ -2,12 +2,17 @@ defmodule Svarm.Orchestrator do
   @moduledoc """
   Orchestrator: Symphony-compatible poll loop. Plain GenServer.
 
-  Tick:     reconcile (stall + tracker state sync §8.5–8.6) → preflight (§6.3) → fetch eligible → dispatch.
+  Tick:     reconcile (stall + tracker state sync §8.5–8.6) → maybe_ci_resume →
+            preflight (§6.3) → fetch eligible → dispatch.
   Dispatch: claim → spawn an agent runner task under the Task.Supervisor → monitor.
   Exit:     normal exit → completed (force `review` if tracker still active);
   crash → backoff retry. Multi-turn re-spawn is not used: runners that need
   another turn should return an explicit continue signal in a future revision.
   Retry:    `delay = min(10_000 * 2^(attempt-1), max_retry_backoff_ms)`.
+
+  CI resume (optional): when `ci_resume.enabled`, poll GitHub Checks for managed
+  PRs in review and re-open for a fresh agent run with failure context until the
+  circuit opens after N attempts. See `Svarm.CiResume`.
 
   Reconcile now syncs running/claimed tasks against the tracker adapter (external
   terminal states stop workers). Workspace keys use issue source_id per §4.2.
@@ -23,6 +28,8 @@ defmodule Svarm.Orchestrator do
     AgentRunner,
     Approval,
     Budget,
+    CiResume,
+    Coordination,
     Demo,
     Events,
     Settings,
@@ -31,6 +38,8 @@ defmodule Svarm.Orchestrator do
     Workflow,
     Workspace
   }
+
+  alias Svarm.Tracker.GitHub.Checks
 
   alias Svarm.Workflow.Config, as: WorkflowConfig
 
@@ -43,6 +52,7 @@ defmodule Svarm.Orchestrator do
   @default_terminal_states ["done", "failed", "review"]
   @base_backoff_ms 10_000
   @continuation_retry_ms 1_000
+  @ci_resume_max_per_tick 5
 
   defstruct [
     :poll_interval_ms,
@@ -66,6 +76,7 @@ defmodule Svarm.Orchestrator do
     completed: MapSet.new(),
     approved_once: MapSet.new(),
     budget_caps: %{},
+    ci_resume_caps: %{enabled: false, max_attempts: 3, skip_draft: true},
     last_run_entries: %{},
     last_tick_mono_ms: nil
   ]
@@ -145,6 +156,7 @@ defmodule Svarm.Orchestrator do
   @impl true
   def handle_info(:tick, state) do
     state = reconcile(state)
+    state = maybe_ci_resume(state)
     state = if valid_preflight?(state), do: dispatch(state), else: state
     state = %{state | last_tick_mono_ms: System.monotonic_time(:millisecond)}
     Process.send_after(self(), :tick, state.poll_interval_ms)
@@ -404,7 +416,8 @@ defmodule Svarm.Orchestrator do
     %{
       state
       | tracker_config: Settings.Resolve.tracker_overlay(base),
-        budget_caps: Budget.load_caps(nil)
+        budget_caps: Budget.load_caps(nil),
+        ci_resume_caps: CiResume.load_caps(nil)
     }
   end
 
@@ -440,7 +453,8 @@ defmodule Svarm.Orchestrator do
         active_states: cfg.active_states,
         terminal_states: cfg.terminal_states,
         tracker_config: Settings.Resolve.tracker_overlay(cfg.tracker_config),
-        budget_caps: Budget.load_caps(raw_config)
+        budget_caps: Budget.load_caps(raw_config),
+        ci_resume_caps: CiResume.load_caps(raw_config)
     }
   end
 
@@ -591,6 +605,195 @@ defmodule Svarm.Orchestrator do
 
   defp slots_available?(%{running: running, max_concurrent: mc}), do: map_size(running) < mc
 
+  ## CI resume (poll Checks → re-open or open circuit)
+
+  defp maybe_ci_resume(%{ci_resume_caps: %{enabled: true}} = state) do
+    # Local tracker has no Checks API. GitHub adapter (or test doubles) may run.
+    if state.tracker == Tracker.Local do
+      state
+    else
+      caps = state.ci_resume_caps
+
+      Coordination.list_with_pr(limit: @ci_resume_max_per_tick * 2)
+      |> Enum.take(@ci_resume_max_per_tick)
+      |> Enum.reduce(state, fn coord, acc ->
+        maybe_ci_resume_one(acc, coord, caps)
+      end)
+    end
+  end
+
+  defp maybe_ci_resume(state), do: state
+
+  defp maybe_ci_resume_one(state, coord, caps) do
+    task_id = coord.task_id
+
+    cond do
+      Map.has_key?(state.running, task_id) or MapSet.member?(state.claimed, task_id) ->
+        state
+
+      not pr_matches_tracker?(coord, state.tracker_config) ->
+        Logger.debug("ci_resume: skip #{task_id} — PR repo does not match tracker")
+        state
+
+      not review_status?(state, task_id) ->
+        state
+
+      true ->
+        evaluate_ci_for_task(state, coord, caps)
+    end
+  end
+
+  defp pr_matches_tracker?(coord, %{owner: owner, repo: repo})
+       when is_binary(owner) and is_binary(repo) do
+    Coordination.allowed_repo?(
+      %{pr_owner: coord.pr_owner, pr_repo: coord.pr_repo},
+      owner: owner,
+      repo: repo
+    )
+  end
+
+  defp pr_matches_tracker?(_coord, _config), do: true
+
+  defp review_status?(state, task_id) do
+    case safe_get_issue(state.tracker, state.tracker_config, task_id) do
+      {:ok, %{status: "review"}} -> true
+      _ -> false
+    end
+  end
+
+  defp evaluate_ci_for_task(state, coord, caps) do
+    checks_mod = Application.get_env(:svarm, :github_checks_module, Checks)
+
+    case checks_mod.summarize_pr_checks(
+           coord.pr_owner,
+           coord.pr_repo,
+           coord.pr_number,
+           state.tracker_config,
+           skip_draft: caps.skip_draft
+         ) do
+      {:ok, summary} ->
+        apply_ci_decision(state, coord, summary, caps, CiResume.evaluate(coord, summary, caps))
+
+      {:error, reason} ->
+        Logger.debug("ci_resume checks error for #{coord.task_id}: #{inspect(reason)}")
+        state
+    end
+  end
+
+  defp apply_ci_decision(state, coord, summary, _caps, :noop) do
+    maybe_store_conclusion(coord, summary)
+    state
+  end
+
+  defp apply_ci_decision(state, _coord, _summary, _caps, :wait), do: state
+
+  defp apply_ci_decision(state, coord, summary, _caps, :resume) do
+    # Reopen first; only fingerprint after status is active so a failed
+    # reopen cannot burn the head_sha (evaluate would forever :noop).
+    case reopen_for_ci_resume(state, coord.task_id) do
+      :ok ->
+        commit_ci_resume(state, coord, summary)
+
+      {:error, reason} ->
+        Logger.warning(
+          "ci_resume: reopen failed for #{coord.task_id}: #{inspect(reason)} (not fingerprinting)"
+        )
+
+        state
+    end
+  end
+
+  defp apply_ci_decision(state, coord, summary, _caps, :circuit_open) do
+    case Coordination.upsert(coord.task_id, %{
+           ci_circuit_open: true,
+           ci_last_conclusion: "failure",
+           ci_last_head_sha: summary.head_sha || coord.ci_last_head_sha,
+           ci_context_summary: summary.summary || coord.ci_context_summary
+         }) do
+      {:ok, _} ->
+        Logger.warning("ci_resume: circuit open for #{coord.task_id} (CI retries exhausted)")
+
+        Events.broadcast_task_updated(%{
+          id: coord.task_id,
+          status: "review",
+          reason: :ci_circuit
+        })
+
+        broadcast_status(state)
+        state
+
+      {:error, reason} ->
+        Logger.warning(
+          "ci_resume: circuit upsert failed for #{coord.task_id}: #{inspect(reason)}"
+        )
+
+        state
+    end
+  end
+
+  defp reopen_for_ci_resume(state, task_id) do
+    state.tracker.update_status(state.tracker_config, task_id, "todo")
+
+    case safe_get_issue(state.tracker, state.tracker_config, task_id) do
+      {:ok, %{status: status}} when is_binary(status) ->
+        if status in state.active_states do
+          :ok
+        else
+          {:error, {:still_not_active, status}}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp commit_ci_resume(state, coord, summary) do
+    context = CiResume.context_summary(summary)
+    count = (coord.ci_resume_count || 0) + 1
+
+    case Coordination.upsert(coord.task_id, %{
+           ci_resume_count: count,
+           ci_last_head_sha: summary.head_sha,
+           ci_last_conclusion: "failure",
+           ci_context_summary: context,
+           ci_circuit_open: false
+         }) do
+      {:ok, _} ->
+        Logger.info(
+          "ci_resume: re-opened #{coord.task_id} (attempt #{count}) sha=#{summary.head_sha}"
+        )
+
+        Events.broadcast_task_updated(%{
+          id: coord.task_id,
+          status: "todo",
+          reason: :ci_resume
+        })
+
+        %{state | completed: MapSet.delete(state.completed, coord.task_id)}
+
+      {:error, reason} ->
+        Logger.warning(
+          "ci_resume: fingerprint upsert failed for #{coord.task_id}: #{inspect(reason)}"
+        )
+
+        state
+    end
+  end
+
+  defp maybe_store_conclusion(coord, %{conclusion: conclusion} = summary)
+       when conclusion in [:passed, :failed] do
+    atom_str = Atom.to_string(conclusion)
+
+    if coord.ci_last_conclusion != atom_str do
+      Coordination.upsert(coord.task_id, %{
+        ci_last_conclusion: atom_str,
+        ci_last_head_sha: summary.head_sha || coord.ci_last_head_sha
+      })
+    end
+  end
+
+  defp maybe_store_conclusion(_coord, _summary), do: :ok
+
   defp handle_run_exit(state, entry, task_id, result) do
     state =
       state
@@ -725,6 +928,8 @@ defmodule Svarm.Orchestrator do
   end
 
   defp post_run_summary(state, task_id, result) do
+    maybe_capture_pr(state, task_id)
+
     if state.tracker == Tracker.Local do
       :ok
     else
@@ -733,10 +938,43 @@ defmodule Svarm.Orchestrator do
     end
   end
 
+  # Best-effort: parse PR URL from run log (agent stdout) into Coordination.
+  # Bound to tracker owner/repo when known (confused-deputy guard).
+  defp maybe_capture_pr(state, task_id) when is_binary(task_id) do
+    log = Svarm.RunLog.get(task_id)
+    opts = tracker_repo_opts(state.tracker_config)
+
+    case Coordination.extract_pr_url(log) do
+      url when is_binary(url) ->
+        case Coordination.record_pr(task_id, url, opts) do
+          {:ok, _} ->
+            Logger.info("coordination: recorded PR for #{task_id}")
+
+          {:error, :repo_mismatch} ->
+            Logger.warning(
+              "coordination: ignored PR URL for #{task_id} (owner/repo mismatch tracker)"
+            )
+
+          {:error, reason} ->
+            Logger.debug("coordination: PR capture failed for #{task_id}: #{inspect(reason)}")
+        end
+
+      nil ->
+        :ok
+    end
+  end
+
+  defp tracker_repo_opts(%{owner: owner, repo: repo})
+       when is_binary(owner) and is_binary(repo),
+       do: [owner: owner, repo: repo]
+
+  defp tracker_repo_opts(_), do: []
+
   defp build_and_post(state, task_id, result, entry) do
     task = entry.task
     assignee = task.assignee || "default"
     agent = Map.get(state.agents, assignee, %{})
+    pr_url = coordination_pr_url(task_id)
 
     summary = %{
       run_id: entry[:run_id],
@@ -753,10 +991,18 @@ defmodule Svarm.Orchestrator do
       cost: Usage.task_cost(task_id),
       total_tokens: total_tokens_for_task(task_id),
       branch: nil,
+      pr_url: pr_url,
       exit_code: exit_code_from_result(result)
     }
 
     state.tracker.post_run_summary(state.tracker_config, task_id, summary)
+  end
+
+  defp coordination_pr_url(task_id) do
+    case Coordination.get(task_id) do
+      %{pr_url: url} when is_binary(url) and url != "" -> url
+      _ -> nil
+    end
   end
 
   defp harness_label(%{adapter: "pi_rpc"}), do: "Pi"
@@ -847,7 +1093,8 @@ defmodule Svarm.Orchestrator do
       running_started: running_started,
       last_tick_mono_ms: state.last_tick_mono_ms,
       budget_caps: state.budget_caps || %{},
-      last_budget_block: state.last_budget_block
+      last_budget_block: state.last_budget_block,
+      ci_resume: state.ci_resume_caps || %{enabled: false}
     }
   end
 end

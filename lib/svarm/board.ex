@@ -165,16 +165,30 @@ defmodule Svarm.Board do
   @doc """
   Why this task is waiting — human gates first, then agent activity.
 
-  Returns `:approval | :review | :running | :failed | nil`.
+  Returns `:approval | :ci_circuit | :review | :running | :failed | nil`.
+
+  `:ci_circuit` wins over plain `:review` when the CI resume circuit is open
+  (ticket stays in `review` so humans can still merge).
   """
   def wait_reason(%{status: "pending_approval"}), do: :approval
-  def wait_reason(%{status: "review"}), do: :review
+
+  def wait_reason(%{status: "review"} = task) do
+    id = map_get(task, :id)
+
+    if is_binary(id) and Svarm.Coordination.circuit_open?(id) do
+      :ci_circuit
+    else
+      :review
+    end
+  end
+
   def wait_reason(%{status: "in_progress"}), do: :running
   def wait_reason(%{status: "failed"}), do: :failed
   def wait_reason(_), do: nil
 
   @doc "Short UI label for `wait_reason/1`."
   def wait_reason_label(:approval), do: "Needs approval"
+  def wait_reason_label(:ci_circuit), do: "CI retries exhausted"
   def wait_reason_label(:review), do: "Needs review"
   def wait_reason_label(:running), do: "Running"
   def wait_reason_label(:failed), do: "Failed"
@@ -191,9 +205,20 @@ defmodule Svarm.Board do
     %{pending_approval: pending, review: review, total: pending + review}
   end
 
-  @doc "PR URL from run meta or task map when known (no inventing)."
+  @doc "PR URL from coordination, run meta, or task map when known (no inventing)."
   def pr_url(task, meta \\ %{}) do
+    id = map_get(task, :id)
+
+    coord_url =
+      if is_binary(id) do
+        case Svarm.Coordination.get(id) do
+          %{pr_url: url} when is_binary(url) and url != "" -> url
+          _ -> nil
+        end
+      end
+
     [
+      coord_url,
       meta_get(meta, :pr_url),
       map_get(task, :pr_url),
       map_get(task, :pull_request_url)
