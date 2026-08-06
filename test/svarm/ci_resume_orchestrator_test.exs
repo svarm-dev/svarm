@@ -186,6 +186,8 @@ defmodule Svarm.CiResumeOrchestratorTest do
 
     state = :sys.get_state(Orchestrator)
     refute MapSet.member?(state.completed, task_id)
+    # CI resume skips first-run approval re-gate on the next dispatch
+    assert MapSet.member?(state.approved_once, task_id)
 
     # Same sha on next tick: no second resume
     send(Orchestrator, :tick)

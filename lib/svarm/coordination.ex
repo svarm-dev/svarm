@@ -51,6 +51,26 @@ defmodule Svarm.Coordination do
   end
 
   @doc """
+  Batch-fetch coordination rows for many task ids.
+
+  Returns `%{task_id => %Coordination{}}` — missing ids are omitted.
+  """
+  @spec get_many([String.t()]) :: %{optional(String.t()) => t()}
+  def get_many([]), do: %{}
+
+  def get_many(task_ids) when is_list(task_ids) do
+    ids = task_ids |> Enum.filter(&is_binary/1) |> Enum.uniq()
+
+    if ids == [] do
+      %{}
+    else
+      from(c in __MODULE__, where: c.task_id in ^ids)
+      |> Repo.all()
+      |> Map.new(&{&1.task_id, &1})
+    end
+  end
+
+  @doc """
   Upsert coordination fields for `task_id`.
 
   Partial maps merge onto existing row (or empty defaults).

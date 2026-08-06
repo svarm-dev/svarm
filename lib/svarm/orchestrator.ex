@@ -52,7 +52,8 @@ defmodule Svarm.Orchestrator do
   @default_terminal_states ["done", "failed", "review"]
   @base_backoff_ms 10_000
   @continuation_retry_ms 1_000
-  @ci_resume_max_per_tick 5
+  # Bound Checks polls per tick so the GenServer mailbox stays responsive.
+  @ci_resume_max_per_tick 3
 
   defstruct [
     :poll_interval_ms,
@@ -769,7 +770,12 @@ defmodule Svarm.Orchestrator do
           reason: :ci_resume
         })
 
-        %{state | completed: MapSet.delete(state.completed, coord.task_id)}
+        # One-shot: first-run approval already happened; do not re-gate every CI fix loop.
+        %{
+          state
+          | completed: MapSet.delete(state.completed, coord.task_id),
+            approved_once: MapSet.put(state.approved_once, coord.task_id)
+        }
 
       {:error, reason} ->
         Logger.warning(

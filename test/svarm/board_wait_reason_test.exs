@@ -19,10 +19,20 @@ defmodule Svarm.BoardWaitReasonTest do
     assert Board.wait_reason_label(:ci_circuit) == "CI retries exhausted"
   end
 
+  test "wait_reason uses preloaded ci_circuit_open without extra query semantics" do
+    assert Board.wait_reason(%{status: "review", id: "x", ci_circuit_open: true}) == :ci_circuit
+    assert Board.wait_reason(%{status: "review", id: "x", ci_circuit_open: false}) == :review
+  end
+
   test "pr_url prefers coordination row" do
     {:ok, _} =
       Coordination.record_pr("t_pr", "https://github.com/o/r/pull/42")
 
     assert Board.pr_url(%{id: "t_pr"}, %{}) == "https://github.com/o/r/pull/42"
+  end
+
+  test "pr_url uses preloaded field first" do
+    assert Board.pr_url(%{id: "p", pr_url: "https://github.com/o/r/pull/1"}, %{}) ==
+             "https://github.com/o/r/pull/1"
   end
 end

@@ -30,15 +30,21 @@ defmodule Svarm.Board do
   def list_tasks(filters \\ []) do
     config = tracker_config()
     {:ok, issues} = tracker().list_issues(config, filters)
-    Enum.map(issues, &issue_to_map/1)
+    tasks = Enum.map(issues, &issue_to_map/1)
+    attach_coordination(tasks)
   end
 
   def get_task(id) do
     config = tracker_config()
 
     case tracker().get_issue(config, id) do
-      {:ok, issue} -> issue_to_map(issue)
-      {:error, _} -> nil
+      {:ok, issue} ->
+        issue
+        |> issue_to_map()
+        |> attach_coordination_one()
+
+      {:error, _} ->
+        nil
     end
   end
 
@@ -173,9 +179,7 @@ defmodule Svarm.Board do
   def wait_reason(%{status: "pending_approval"}), do: :approval
 
   def wait_reason(%{status: "review"} = task) do
-    id = map_get(task, :id)
-
-    if is_binary(id) and Svarm.Coordination.circuit_open?(id) do
+    if circuit_open_for?(task) do
       :ci_circuit
     else
       :review
@@ -185,6 +189,21 @@ defmodule Svarm.Board do
   def wait_reason(%{status: "in_progress"}), do: :running
   def wait_reason(%{status: "failed"}), do: :failed
   def wait_reason(_), do: nil
+
+  # Prefer preloaded field from list_tasks/get_task; fall back to one query.
+  defp circuit_open_for?(task) do
+    case map_get(task, :ci_circuit_open) do
+      true ->
+        true
+
+      false ->
+        false
+
+      _ ->
+        id = map_get(task, :id)
+        is_binary(id) and Svarm.Coordination.circuit_open?(id)
+    end
+  end
 
   @doc "Short UI label for `wait_reason/1`."
   def wait_reason_label(:approval), do: "Needs approval"
@@ -207,24 +226,31 @@ defmodule Svarm.Board do
 
   @doc "PR URL from coordination, run meta, or task map when known (no inventing)."
   def pr_url(task, meta \\ %{}) do
-    id = map_get(task, :id)
-
-    coord_url =
-      if is_binary(id) do
-        case Svarm.Coordination.get(id) do
-          %{pr_url: url} when is_binary(url) and url != "" -> url
-          _ -> nil
-        end
-      end
-
     [
-      coord_url,
-      meta_get(meta, :pr_url),
       map_get(task, :pr_url),
-      map_get(task, :pull_request_url)
+      meta_get(meta, :pr_url),
+      map_get(task, :pull_request_url),
+      coord_pr_url_fallback(task)
     ]
     |> Enum.find(&(is_binary(&1) and &1 != ""))
   end
+
+  defp coord_pr_url_fallback(task) do
+    # Only hit Repo when list_tasks did not preload pr_url.
+    case map_get(task, :pr_url) do
+      url when is_binary(url) and url != "" -> nil
+      _ -> fetch_coord_pr_url(map_get(task, :id))
+    end
+  end
+
+  defp fetch_coord_pr_url(id) when is_binary(id) do
+    case Svarm.Coordination.get(id) do
+      %{pr_url: url} when is_binary(url) and url != "" -> url
+      _ -> nil
+    end
+  end
+
+  defp fetch_coord_pr_url(_), do: nil
 
   @doc "Reviewer login/name from task when tracker exposes it."
   def reviewer(task) do
@@ -287,6 +313,34 @@ defmodule Svarm.Board do
       created_at: i.created_at,
       tenant: i.tenant
     }
+  end
+
+  # One query for the board: attach ci_circuit_open + pr_url from Coordination.
+  defp attach_coordination(tasks) when is_list(tasks) do
+    ids = Enum.map(tasks, & &1.id)
+    by_id = Svarm.Coordination.get_many(ids)
+
+    Enum.map(tasks, fn task ->
+      merge_coord(task, Map.get(by_id, task.id))
+    end)
+  end
+
+  defp attach_coordination_one(task) when is_map(task) do
+    merge_coord(task, Svarm.Coordination.get(task.id))
+  end
+
+  defp merge_coord(task, nil), do: Map.put(task, :ci_circuit_open, false)
+
+  defp merge_coord(task, %Svarm.Coordination{} = c) do
+    task
+    |> Map.put(:ci_circuit_open, c.ci_circuit_open == true)
+    |> then(fn t ->
+      if is_binary(c.pr_url) and c.pr_url != "" do
+        Map.put(t, :pr_url, c.pr_url)
+      else
+        t
+      end
+    end)
   end
 
   defp column_rank("todo"), do: 0

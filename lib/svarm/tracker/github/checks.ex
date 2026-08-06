@@ -21,6 +21,9 @@ defmodule Svarm.Tracker.GitHub.Checks do
   @api_version "2026-03-10"
   @fail_conclusions ~w(failure timed_out action_required cancelled)
   @page_size 100
+  # Keep orchestrator tick responsive: bound Checks HTTP wall time per request.
+  @default_receive_timeout_ms 5_000
+  @default_connect_timeout_ms 3_000
 
   @type conclusion :: :pending | :in_progress | :failed | :passed | :error
 
@@ -48,19 +51,30 @@ defmodule Svarm.Tracker.GitHub.Checks do
     req = Keyword.get(opts, :req, Req)
     skip_draft? = Keyword.get(opts, :skip_draft, true)
     headers = headers(config)
+    req_opts = req_opts(opts)
 
-    with {:ok, pr} <- fetch_pr(req, owner, repo, pr_number, headers),
+    with {:ok, pr} <- fetch_pr(req, owner, repo, pr_number, headers, req_opts),
          {:ok, head_sha, draft?} <- pr_head(pr) do
-      summarize_after_pr(req, owner, repo, headers, head_sha, draft?, skip_draft?)
+      summarize_after_pr(req, owner, repo, headers, req_opts, head_sha, draft?, skip_draft?)
     end
   end
 
-  defp summarize_after_pr(_req, _o, _r, _h, head_sha, true, true) do
+  defp req_opts(opts) do
+    receive_timeout = Keyword.get(opts, :receive_timeout, @default_receive_timeout_ms)
+    connect_timeout = Keyword.get(opts, :connect_timeout, @default_connect_timeout_ms)
+
+    [
+      receive_timeout: receive_timeout,
+      connect_options: [timeout: connect_timeout]
+    ]
+  end
+
+  defp summarize_after_pr(_req, _o, _r, _h, _ro, head_sha, true, true) do
     {:ok, draft_pending_summary(head_sha)}
   end
 
-  defp summarize_after_pr(req, owner, repo, headers, head_sha, draft?, _skip) do
-    case fetch_all_check_runs(req, owner, repo, head_sha, headers) do
+  defp summarize_after_pr(req, owner, repo, headers, req_opts, head_sha, draft?, _skip) do
+    case fetch_all_check_runs(req, owner, repo, head_sha, headers, req_opts) do
       {:ok, runs} -> {:ok, classify(runs, head_sha, draft?)}
       error -> error
     end
@@ -142,22 +156,23 @@ defmodule Svarm.Tracker.GitHub.Checks do
   defp summary_text(:passed, [], _failed), do: "no check runs"
   defp summary_text(:passed, runs, _failed), do: "CI passed (#{length(runs)} checks)"
 
-  defp fetch_pr(req, owner, repo, pr_number, headers) do
+  defp fetch_pr(req, owner, repo, pr_number, headers, req_opts) do
     url = "#{@base_url}/repos/#{owner}/#{repo}/pulls/#{pr_number}"
-    http_map(req.get(url, headers: headers), "PR")
+    http_map(req.get(url, [headers: headers] ++ req_opts), "PR")
   end
 
-  defp fetch_all_check_runs(req, owner, repo, sha, headers) do
-    fetch_check_runs_page(req, owner, repo, sha, headers, 1, [])
+  defp fetch_all_check_runs(req, owner, repo, sha, headers, req_opts) do
+    ctx = %{req: req, owner: owner, repo: repo, sha: sha, headers: headers, req_opts: req_opts}
+    fetch_check_runs_page(ctx, 1, [])
   end
 
-  defp fetch_check_runs_page(req, owner, repo, sha, headers, page, acc) do
-    url = "#{@base_url}/repos/#{owner}/#{repo}/commits/#{sha}/check-runs"
+  defp fetch_check_runs_page(ctx, page, acc) do
+    url = "#{@base_url}/repos/#{ctx.owner}/#{ctx.repo}/commits/#{ctx.sha}/check-runs"
     params = %{filter: "latest", per_page: @page_size, page: page}
 
-    case req.get(url, params: params, headers: headers) do
+    case ctx.req.get(url, [params: params, headers: ctx.headers] ++ ctx.req_opts) do
       {:ok, %{status: 200, body: body}} ->
-        continue_or_done(req, owner, repo, sha, headers, page, acc, body)
+        continue_or_done(ctx, page, acc, body)
 
       {:ok, %{status: 404}} ->
         {:ok, []}
@@ -167,13 +182,13 @@ defmodule Svarm.Tracker.GitHub.Checks do
     end
   end
 
-  defp continue_or_done(req, owner, repo, sha, headers, page, acc, body) do
+  defp continue_or_done(ctx, page, acc, body) do
     runs = check_runs_from_body(body)
     total = total_count_from_body(body, runs)
     acc = acc ++ runs
 
     if more_pages?(acc, total, runs) do
-      fetch_check_runs_page(req, owner, repo, sha, headers, page + 1, acc)
+      fetch_check_runs_page(ctx, page + 1, acc)
     else
       {:ok, acc}
     end

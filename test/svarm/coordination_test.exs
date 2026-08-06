@@ -13,6 +13,24 @@ defmodule Svarm.CoordinationTest do
     assert Coordination.get("missing") == nil
   end
 
+  test "get_many returns map keyed by task_id" do
+    {:ok, _} = Coordination.upsert("a", %{ci_circuit_open: true})
+
+    {:ok, _} =
+      Coordination.upsert("b", %{
+        pr_url: "https://github.com/o/r/pull/1",
+        pr_owner: "o",
+        pr_repo: "r",
+        pr_number: 1
+      })
+
+    map = Coordination.get_many(["a", "b", "missing"])
+    assert Map.has_key?(map, "a")
+    assert Map.has_key?(map, "b")
+    refute Map.has_key?(map, "missing")
+    assert map["a"].ci_circuit_open == true
+  end
+
   test "upsert inserts and updates fields" do
     assert {:ok, row} =
              Coordination.upsert("task_1", %{
