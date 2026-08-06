@@ -3,7 +3,8 @@ defmodule Svarm.OrchestratorTest do
 
   alias Svarm.{Approval, KanbanBridge, Orchestrator, Workspace}
 
-  defp wait_until(fun, attempts \\ 40) do
+  # Up to ~3s under CI load (was 1s / 40×25ms — flaked on slow ticks).
+  defp wait_until(fun, attempts \\ 120) do
     Enum.reduce_while(1..attempts, false, fn _, _ ->
       if fun.() do
         {:halt, true}
@@ -102,6 +103,35 @@ defmodule Svarm.OrchestratorTest do
   end
 
   describe "dispatch and approval" do
+    # Full suite leaves many todo tasks + orchestrator claims; isolate this describe.
+    setup do
+      KanbanBridge.delete_all_tasks()
+      Svarm.Repo.delete_all(Svarm.Usage.Record)
+
+      original = :sys.get_state(Orchestrator)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | running: %{},
+            claimed: MapSet.new(),
+            completed: MapSet.new(),
+            approved_once: MapSet.new(),
+            retry_attempts: %{},
+            last_budget_block: nil,
+            last_run_entries: %{}
+        }
+      end)
+
+      on_exit(fn ->
+        if Process.whereis(Orchestrator) do
+          :sys.replace_state(Orchestrator, fn _ -> original end)
+        end
+      end)
+
+      :ok
+    end
+
     test "does not spawn worker for tasks already pending_approval" do
       task =
         KanbanBridge.create_task(%{
@@ -222,9 +252,7 @@ defmodule Svarm.OrchestratorTest do
           assignee: "demo"
         })
 
-      Svarm.Repo.delete_all("usage_records")
-
-      Svarm.Usage.append(%{
+      Svarm.Usage.append(
         run_id: "rb",
         task_id: task.id,
         source: "worker",
@@ -234,7 +262,7 @@ defmodule Svarm.OrchestratorTest do
         completion_tokens: 0,
         provider_cost_usd: 10.0,
         estimated: false
-      })
+      )
 
       original = :sys.get_state(Orchestrator)
 

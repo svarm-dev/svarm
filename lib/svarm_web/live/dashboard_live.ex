@@ -5,7 +5,7 @@ defmodule SvarmWeb.DashboardLive do
   """
   use SvarmWeb, :live_view
 
-  alias Svarm.{Dashboard, Events}
+  alias Svarm.{Board, Dashboard, Events}
 
   @impl true
   def mount(_params, _session, socket) do
@@ -192,7 +192,7 @@ defmodule SvarmWeb.DashboardLive do
   attr :summary, :map, required: true
 
   defp human_wait_strip(assigns) do
-    s = assigns.summary || %{pending_approval: 0, review: 0, total: 0}
+    s = assigns.summary || Board.human_wait_summary([])
     assigns = assign(assigns, :summary, s)
 
     ~H"""
@@ -298,7 +298,7 @@ defmodule SvarmWeb.DashboardLive do
   attr :orchestrator, :map, required: true
 
   defp queue_strip(assigns) do
-    total = assigns.task_distribution |> Map.values() |> Enum.sum()
+    total = Enum.reduce(assigns.task_distribution, 0, fn {_k, v}, acc -> acc + v end)
     running = Map.get(assigns.orchestrator || %{}, :running, 0)
 
     assigns = assign(assigns, total_tasks: total, running: running)
@@ -399,7 +399,7 @@ defmodule SvarmWeb.DashboardLive do
   attr :distribution, :map, required: true
 
   defp task_breakdown(assigns) do
-    total = assigns.distribution |> Map.values() |> Enum.sum()
+    total = Enum.reduce(assigns.distribution, 0, fn {_k, v}, acc -> acc + v end)
 
     assigns =
       assign(assigns,
@@ -538,7 +538,7 @@ defmodule SvarmWeb.DashboardLive do
       orchestrator: %{},
       agent_roster: [],
       task_distribution: %{},
-      human_wait: %{pending_approval: 0, review: 0, total: 0},
+      human_wait: Board.human_wait_summary([]),
       session_cost: empty_window_cost(),
       session_totals: %{prompt_tokens: 0, completion_tokens: 0, record_count: 0},
       recent_runs: []

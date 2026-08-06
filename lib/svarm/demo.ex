@@ -193,7 +193,7 @@ defmodule Svarm.Demo do
       prompt_tokens = Enum.random(800..2500)
       completion_tokens = Enum.random(200..900)
 
-      Svarm.Usage.Ledger.append(%{
+      Svarm.Usage.append(
         run_id: run_id,
         task_id: task_id(task),
         tenant: "demo",
@@ -203,7 +203,7 @@ defmodule Svarm.Demo do
         prompt_tokens: prompt_tokens,
         completion_tokens: completion_tokens,
         estimated: true
-      })
+      )
     end
   end
 

@@ -68,14 +68,7 @@ defmodule Svarm.Dashboard do
       assigned_tasks =
         Enum.filter(tasks, &(AgentRegistry.normalize_assignee(&1.assignee) == key))
 
-      completed = Enum.count(assigned_tasks, &(&1.status in ["done", "review"]))
-      failed = Enum.count(assigned_tasks, &(&1.status == "failed"))
-      active = Enum.count(assigned_tasks, &(&1.status == "in_progress"))
-
-      running_task =
-        Enum.find(assigned_tasks, fn t -> Map.has_key?(running_map, t.id) end)
-
-      running_started_ms = running_task && Map.get(running_map, running_task.id)
+      tallies = tally_assigned(assigned_tasks, running_map)
 
       %{
         key: key,
@@ -84,18 +77,48 @@ defmodule Svarm.Dashboard do
         avatar: identity.avatar,
         model: Map.get(agent_config, :model),
         provider: Map.get(agent_config, :provider),
-        active_count: active,
-        completed_count: completed,
-        failed_count: failed,
+        active_count: tallies.active,
+        completed_count: tallies.completed,
+        failed_count: tallies.failed,
         total_assigned: length(assigned_tasks),
         busy?: key in active_assignees,
-        running_task_id: running_task && running_task.id,
-        running_task_title: running_task && running_task.title,
-        running_started_ms: running_started_ms
+        running_task_id: tallies.running_task && tallies.running_task.id,
+        running_task_title: tallies.running_task && tallies.running_task.title,
+        running_started_ms: tallies.running_started_ms
       }
     end)
     |> Enum.sort_by(fn a -> {not a.busy?, -a.active_count, -a.total_assigned} end)
   end
+
+  defp tally_assigned(assigned_tasks, running_map) do
+    Enum.reduce(
+      assigned_tasks,
+      %{completed: 0, failed: 0, active: 0, running_task: nil, running_started_ms: nil},
+      &tally_task(&1, &2, running_map)
+    )
+  end
+
+  defp tally_task(task, acc, running_map) do
+    acc
+    |> bump_status(task.status)
+    |> maybe_set_running(task, running_map)
+  end
+
+  defp bump_status(acc, status) when status in ["done", "review"],
+    do: %{acc | completed: acc.completed + 1}
+
+  defp bump_status(acc, "failed"), do: %{acc | failed: acc.failed + 1}
+  defp bump_status(acc, "in_progress"), do: %{acc | active: acc.active + 1}
+  defp bump_status(acc, _), do: acc
+
+  defp maybe_set_running(%{running_task: nil} = acc, task, running_map) do
+    case Map.get(running_map, task.id) do
+      nil -> acc
+      ms -> %{acc | running_task: task, running_started_ms: ms}
+    end
+  end
+
+  defp maybe_set_running(acc, _task, _running_map), do: acc
 
   @doc """
   Last N completed or failed tasks with cost, newest first.

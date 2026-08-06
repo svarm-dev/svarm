@@ -56,12 +56,12 @@ defmodule Svarm.Budget do
   defp check_ticket(task_id, cap) when is_number(cap) do
     spent =
       case Query.task_cost_summary(task_id) do
-        %{total_cost_usd: usd} when is_number(usd) -> usd * 1.0
+        %{total_cost_usd: usd} when is_number(usd) -> as_float(usd)
         _ -> 0.0
       end
 
     if spent >= cap do
-      {:error, :budget_exceeded, %{scope: :ticket, cap: cap * 1.0, spent: spent}}
+      {:error, :budget_exceeded, %{scope: :ticket, cap: as_float(cap), spent: spent}}
     else
       :ok
     end
@@ -71,14 +71,17 @@ defmodule Svarm.Budget do
 
   defp check_day(cap) when is_number(cap) do
     summary = Query.utc_day_cost_summary(Date.utc_today())
-    spent = summary.total_cost_usd * 1.0
+    spent = as_float(summary.total_cost_usd)
 
     if spent >= cap do
-      {:error, :budget_exceeded, %{scope: :day, cap: cap * 1.0, spent: spent}}
+      {:error, :budget_exceeded, %{scope: :day, cap: as_float(cap), spent: spent}}
     else
       :ok
     end
   end
+
+  defp as_float(n) when is_float(n), do: n
+  defp as_float(n) when is_integer(n), do: :erlang.float(n)
 
   defp workflow_float(nil, _key), do: nil
 

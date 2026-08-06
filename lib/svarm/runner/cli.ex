@@ -205,7 +205,7 @@ defmodule Svarm.Runner.Cli do
   defp record_usage(task, assignee, agent_config, opts) do
     run_id = opts[:run_id] || default_run_id()
 
-    Svarm.Usage.append(%{
+    Svarm.Usage.append(
       run_id: run_id,
       task_id: task.id,
       tenant: task.tenant,
@@ -215,7 +215,7 @@ defmodule Svarm.Runner.Cli do
       prompt_tokens: nil,
       completion_tokens: nil,
       estimated: true
-    })
+    )
   end
 
   defp default_run_id, do: "run_" <> Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)

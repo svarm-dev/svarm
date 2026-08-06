@@ -118,10 +118,17 @@ defmodule Svarm.Settings.Resolve do
   defp maybe_put(map, key, val) when is_binary(val), do: Map.put(map, key, val)
   defp maybe_put(map, _key, _), do: map
 
+  # Prefer atom-derived keys when both atom and string forms exist for the same name.
   defp stringify(map) when is_map(map) do
-    Map.new(map, fn
-      {k, v} when is_atom(k) -> {Atom.to_string(k), v}
-      {k, v} when is_binary(k) -> {k, v}
+    strings =
+      Enum.reduce(map, %{}, fn
+        {k, v}, acc when is_binary(k) -> Map.put(acc, k, v)
+        {_k, _v}, acc -> acc
+      end)
+
+    Enum.reduce(map, strings, fn
+      {k, v}, acc when is_atom(k) -> Map.put(acc, Atom.to_string(k), v)
+      {_k, _v}, acc -> acc
     end)
   end
 

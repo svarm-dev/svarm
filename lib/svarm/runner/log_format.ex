@@ -74,17 +74,8 @@ defmodule Svarm.Runner.LogFormat do
     end
   end
 
-  defp args_summary(args) when is_map(args) do
-    cmd =
-      args
-      |> Map.new(fn
-        {k, v} when is_atom(k) -> {Atom.to_string(k), v}
-        {k, v} -> {k, v}
-      end)
-      |> Map.get("command")
-
-    if is_binary(cmd), do: args_summary(cmd), else: nil
-  end
-
+  defp args_summary(%{command: cmd}) when is_binary(cmd), do: args_summary(cmd)
+  defp args_summary(%{"command" => cmd}) when is_binary(cmd), do: args_summary(cmd)
+  defp args_summary(args) when is_map(args), do: nil
   defp args_summary(_), do: nil
 end

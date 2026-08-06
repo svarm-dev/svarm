@@ -479,7 +479,7 @@ defmodule Svarm.Tracker.GitHub do
   defp build_console_link(summary) do
     case Application.get_env(:svarm, :console_base_url) do
       nil -> nil
-      url -> "→ Full run log: #{url}/board?task=#{summary.task_id}"
+      url -> "→ Full run log: #{url}/board?task=#{summary.task_id}&attach=1"
     end
   end
 

@@ -78,7 +78,7 @@ defmodule Svarm.Decompose do
   end
 
   defp record_decompose_usage(goal, model, usage) do
-    Svarm.Usage.append(%{
+    Svarm.Usage.append(
       run_id: "dec_" <> Base.encode16(:crypto.strong_rand_bytes(6), case: :lower),
       task_id: "decompose",
       tenant: goal,
@@ -88,7 +88,7 @@ defmodule Svarm.Decompose do
       prompt_tokens: usage[:prompt_tokens],
       completion_tokens: usage[:completion_tokens],
       estimated: true
-    })
+    )
   end
 
   defp mock_tasks(goal, research) do
