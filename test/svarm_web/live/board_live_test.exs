@@ -407,4 +407,98 @@ defmodule SvarmWeb.BoardLiveTest do
     refute html =~ "Task queue",
            "todo column should not show the empty hint when it has a task"
   end
+
+  test "selecting a running task focuses the run console", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Live run",
+        status: "in_progress",
+        assignee: "demo"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/board")
+
+    # Simulate orchestrator running state so task_running? is true
+    send(
+      view.pid,
+      {:orchestrator_status,
+       %{
+         running: 1,
+         claimed: 0,
+         retrying: 0,
+         running_ids: [task.id],
+         retry_ids: [],
+         running_started: %{task.id => System.monotonic_time(:millisecond)}
+       }}
+    )
+
+    :sys.get_state(view.pid)
+    render_click(view, "select_task", %{"id" => task.id})
+    html = render(view)
+
+    assert html =~ ~s(id="run-console")
+    assert html =~ ~s(data-focused="true")
+    assert html =~ ~s(id="run-log")
+    assert html =~ "no usage yet"
+  end
+
+  test "attach deep link selects task and focuses console", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+    task = KanbanBridge.create_task(%{title: "Attach me", status: "todo", assignee: "demo"})
+
+    {:ok, _view, html} = live(conn, ~p"/board?task=#{task.id}&attach=1")
+
+    assert html =~ "Attach me"
+    assert html =~ task.id
+    assert html =~ ~s(data-focused="true")
+    assert html =~ ~s(id="run-log")
+  end
+
+  test "late join restores RunLog history then live lines append", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Late join",
+        status: "in_progress",
+        assignee: "demo"
+      })
+
+    # History written before any board (Events single-writer path)
+    Events.broadcast_agent_line(task.id, "[history] prior line\n")
+
+    {:ok, view, _html} = live(conn, ~p"/board")
+    render_click(view, "select_task", %{"id" => task.id})
+
+    html = render(view)
+    assert html =~ "[history] prior line"
+
+    Events.broadcast_agent_line(task.id, "[live] new line\n")
+    :sys.get_state(view.pid)
+
+    html = render(view)
+    assert html =~ "[history] prior line"
+    assert html =~ "[live] new line"
+  end
+
+  test "stream append after select appears in console", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Stream me",
+        status: "in_progress",
+        assignee: "demo"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/board")
+    render_click(view, "select_task", %{"id" => task.id})
+
+    Events.broadcast_agent_line(task.id, "streamed chunk\n")
+    :sys.get_state(view.pid)
+
+    assert render(view) =~ "streamed chunk"
+  end
 end

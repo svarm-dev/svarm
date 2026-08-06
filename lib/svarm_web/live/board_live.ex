@@ -27,6 +27,7 @@ defmodule SvarmWeb.BoardLive do
       |> assign(:running_started, %{})
       |> assign(:now_mono, System.monotonic_time(:millisecond))
       |> assign(:workload, %{})
+      |> assign(:console_focused?, false)
       |> assign(:dev_routes, Application.get_env(:svarm, :dev_routes, false))
       |> assign(:demo_routes, Svarm.Demo.routes_enabled?())
       |> assign(:checklist, Svarm.Board.instance_status())
@@ -49,12 +50,18 @@ defmodule SvarmWeb.BoardLive do
   end
 
   @impl true
-  def handle_params(%{"task" => id}, _uri, socket) when is_binary(id) and id != "" do
-    {:noreply, select_task(socket, id, patch: false)}
+  def handle_params(%{"task" => id} = params, _uri, socket)
+      when is_binary(id) and id != "" do
+    attach? = attach_param?(params)
+    {:noreply, select_task(socket, id, patch: false, attach: attach?)}
   end
 
   def handle_params(_params, _uri, socket) do
-    {:noreply, assign(socket, :selected_task_id, nil)}
+    {:noreply,
+     socket
+     |> assign(:selected_task_id, nil)
+     |> assign(:console_focused?, false)
+     |> assign(:run_logs, %{})}
   end
 
   @impl true
@@ -176,7 +183,7 @@ defmodule SvarmWeb.BoardLive do
     socket =
       socket
       |> update_task_in_columns(task)
-      |> maybe_append_status_line(task)
+      |> maybe_append_status_marker(task)
 
     {:noreply, socket}
   end
@@ -203,6 +210,7 @@ defmodule SvarmWeb.BoardLive do
   def handle_info({:run_started, task_id, meta}, socket) do
     identity = identity_from_meta(meta)
     label = run_started_label(identity, meta)
+    banner = "--- #{label} ---\n"
 
     started_mono = meta[:started_mono_ms] || System.monotonic_time(:millisecond)
 
@@ -210,13 +218,21 @@ defmodule SvarmWeb.BoardLive do
       socket
       |> assign(:run_meta, Map.put(socket.assigns.run_meta, task_id, meta))
       |> assign(:running_started, Map.put(socket.assigns.running_started, task_id, started_mono))
-      |> append_log(task_id, "--- #{label} ---\n")
 
+    # Marker already persisted once in Events.broadcast_run_started/2.
+    # Auto-select hydrates from RunLog; already-selected only updates display.
     socket =
-      if is_nil(socket.assigns.selected_task_id) do
-        select_task(socket, task_id, patch: false)
-      else
-        socket
+      cond do
+        is_nil(socket.assigns.selected_task_id) ->
+          select_task(socket, task_id, patch: false, attach: true)
+
+        socket.assigns.selected_task_id == task_id ->
+          socket
+          |> append_display_log(task_id, banner)
+          |> maybe_focus_running(task_id)
+
+        true ->
+          socket
       end
 
     {:noreply, socket}
@@ -224,7 +240,7 @@ defmodule SvarmWeb.BoardLive do
 
   @impl true
   def handle_info({:agent_line, task_id, line}, socket) do
-    {:noreply, append_log(socket, task_id, line)}
+    {:noreply, append_display_log(socket, task_id, line)}
   end
 
   @impl true
@@ -236,6 +252,7 @@ defmodule SvarmWeb.BoardLive do
     orchestrator = Map.put(socket.assigns.orchestrator, :session_cost, session_cost)
 
     running_started = Map.delete(socket.assigns.running_started, task_id)
+    banner = "\n--- run finished (exit #{exit_code}) ---\n"
 
     socket =
       socket
@@ -243,10 +260,8 @@ defmodule SvarmWeb.BoardLive do
       |> assign(:orchestrator, orchestrator)
       |> assign(:running_started, running_started)
       |> update_costs_for_task(task_id)
-      |> append_log(
-        task_id,
-        "\n--- run finished (exit #{exit_code}) ---\n"
-      )
+      # Marker already persisted once in Events.broadcast_run_finished/2.
+      |> append_display_log(task_id, banner)
 
     {:noreply, socket}
   end
@@ -335,7 +350,7 @@ defmodule SvarmWeb.BoardLive do
               <% end %>
             </div>
 
-            <.run_panel
+            <.run_console
               task_id={@selected_task_id}
               task={selected_task(@columns, @selected_task_id)}
               log={Map.get(@run_logs, @selected_task_id, "")}
@@ -344,6 +359,7 @@ defmodule SvarmWeb.BoardLive do
               cost={Map.get(@task_costs, @selected_task_id)}
               running_started={@running_started}
               now_mono={@now_mono}
+              focused={@console_focused?}
             />
         <% end %>
       </div>
@@ -366,7 +382,6 @@ defmodule SvarmWeb.BoardLive do
     |> assign(:orchestrator, orchestrator)
     |> assign(:workload, Board.counts_by_assignee(tasks))
     |> assign(:running_started, Map.get(orchestrator, :running_started, %{}))
-    |> restore_run_logs(tasks)
   end
 
   defp compute_costs(tasks) do
@@ -416,29 +431,19 @@ defmodule SvarmWeb.BoardLive do
     |> assign(:task_count, task_count)
   end
 
-  defp maybe_append_status_line(socket, %{id: id, status: status}) do
-    append_log(socket, id, "[board] status → #{status}\n")
+  # Marker already persisted once in Events.broadcast_task_updated/1.
+  defp maybe_append_status_marker(socket, %{id: id, status: status}) do
+    append_display_log(socket, id, "[board] status → #{status}\n")
   end
 
-  defp restore_run_logs(socket, tasks) do
-    logs =
-      Enum.reduce(tasks, socket.assigns.run_logs, fn task, acc ->
-        case Svarm.RunLog.get(task.id) do
-          "" -> acc
-          text -> Map.put(acc, task.id, text)
-        end
-      end)
-
-    assign(socket, :run_logs, logs)
-  end
-
-  defp append_log(socket, task_id, chunk) when is_binary(task_id) do
-    Svarm.RunLog.append(task_id, chunk)
-
-    logs = socket.assigns.run_logs
-    prev = Map.get(logs, task_id)
-    text = if prev, do: prev <> chunk, else: chunk
-    assign(socket, :run_logs, Map.put(logs, task_id, trim_log(text)))
+  defp append_display_log(socket, task_id, chunk) when is_binary(task_id) do
+    if socket.assigns.selected_task_id == task_id do
+      logs = socket.assigns.run_logs
+      prev = Map.get(logs, task_id, "")
+      assign(socket, :run_logs, Map.put(logs, task_id, trim_log(prev <> chunk)))
+    else
+      socket
+    end
   end
 
   defp trim_log(text) do
@@ -894,18 +899,39 @@ defmodule SvarmWeb.BoardLive do
   attr :cost, :map, default: nil
   attr :running_started, :map, default: %{}
   attr :now_mono, :integer, default: 0
+  attr :focused, :boolean, default: false
 
-  defp run_panel(assigns) do
+  defp run_console(assigns) do
     identity = panel_identity(assigns)
     assigns = assign(assigns, :identity, identity)
 
     ~H"""
-    <div class="card bg-base-200 shadow-sm">
-      <div class="card-body p-4 gap-3">
+    <div
+      id="run-console"
+      data-focused={to_string(@focused)}
+      class={[
+        "card bg-base-200 shadow-sm transition-shadow",
+        @focused && "ring-1 ring-primary/40 shadow-md"
+      ]}
+    >
+      <div class="card-body p-3 gap-2">
         <%= if @task do %>
-          <div class="flex items-center justify-between gap-2">
-            <.agent_badge identity={@identity} />
-            <div class="flex items-center gap-1">
+          <%!-- Console chrome: agent, model, status, cost, task --%>
+          <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+            <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              <.agent_badge identity={@identity} />
+              <span :if={@meta[:adapter]} class="text-[11px] font-mono opacity-60">
+                {@meta[:adapter]}
+              </span>
+              <span :if={@meta[:model]} class="text-[11px] font-mono opacity-60">
+                {@meta[:model]}
+              </span>
+              <span :if={@meta[:attempt]} class="text-[11px] opacity-50">
+                · attempt {@meta[:attempt]}
+              </span>
+            </div>
+            <div class="flex items-center gap-1.5 shrink-0">
+              <.console_cost cost={@cost} />
               <.run_status_badge
                 task={@task}
                 running_started={@running_started}
@@ -922,19 +948,11 @@ defmodule SvarmWeb.BoardLive do
             </div>
           </div>
 
-          <p class="text-sm">
-            <span class="font-mono text-xs opacity-70">{@task.id}</span>: {@task.title}
+          <p class="text-xs min-w-0 truncate">
+            <span class="font-mono opacity-60">{@task.id}</span>
+            <span class="opacity-40 mx-1">·</span>
+            <span class="opacity-90">{@task.title}</span>
           </p>
-
-          <%= if map_size(@meta) > 0 do %>
-            <p class="text-xs opacity-60 flex flex-wrap gap-x-3 gap-y-1">
-              <span>Attempt {@meta[:attempt] || "?"}</span>
-              <span :if={@meta[:adapter]}>{@meta[:adapter]}</span>
-              <span :if={@meta[:model]}>{@meta[:model]}</span>
-            </p>
-          <% end %>
-
-          <.cost_breakdown cost={@cost} />
 
           <%= if @task.status == "review" do %>
             <div class="rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-sm">
@@ -1003,9 +1021,9 @@ defmodule SvarmWeb.BoardLive do
             </div>
           <% end %>
 
-          <div class="rounded-lg border border-base-300 bg-base-300/40">
-            <div class="flex items-center justify-between px-3 py-1.5 border-b border-base-300">
-              <span class="text-[10px] font-medium opacity-50 uppercase tracking-wide">Output</span>
+          <div class="rounded-lg border border-base-300 bg-base-300/50">
+            <div class="flex items-center justify-between px-2.5 py-1 border-b border-base-300">
+              <span class="text-[10px] font-medium opacity-50 uppercase tracking-wide">Console</span>
               <button
                 id="run-log-copy"
                 type="button"
@@ -1018,10 +1036,12 @@ defmodule SvarmWeb.BoardLive do
             <div
               id="run-log"
               phx-hook="RunLogScroll"
+              data-task-id={@task.id}
+              data-attach={to_string(@focused)}
               role="log"
               aria-live="polite"
               aria-relevant="additions"
-              class="p-3 text-xs font-mono max-h-96 overflow-y-auto whitespace-pre-wrap break-all space-y-0.5"
+              class="p-2.5 text-[11px] leading-relaxed font-mono max-h-[min(28rem,50vh)] overflow-y-auto whitespace-pre-wrap break-all space-y-0.5"
             >
               <%= for {line, cls} <- classify_log(@log) do %>
                 <div class={cls}>{line}</div>
@@ -1029,7 +1049,7 @@ defmodule SvarmWeb.BoardLive do
             </div>
           </div>
         <% else %>
-          <p class="text-sm font-medium">Run detail</p>
+          <p class="text-sm font-medium">Run console</p>
           <p class="text-sm opacity-70">
             Select a card (<kbd class="font-mono text-xs rounded bg-base-300 px-1">j</kbd>/<kbd class="font-mono text-xs rounded bg-base-300 px-1">k</kbd>)
             for live agent output and per-ticket cost.
@@ -1042,23 +1062,17 @@ defmodule SvarmWeb.BoardLive do
 
   attr :cost, :map, default: nil
 
-  defp cost_breakdown(assigns) do
+  defp console_cost(assigns) do
     ~H"""
     <%= if @cost && @cost.record_count > 0 do %>
-      <div class="mt-1 flex flex-wrap items-center gap-2 text-xs">
-        <div class="badge badge-ghost gap-1 font-mono">
+      <span class="inline-flex items-center gap-1 text-[11px] font-mono">
+        <span class="badge badge-ghost badge-sm font-mono gap-0.5">
           ${@cost.total_cost_usd}
-        </div>
-        <div :if={@cost.estimated} class="badge badge-ghost text-[10px] opacity-70">
-          estimated
-        </div>
-
-        <%= for {{source, provider, model}, source_cost} <- @cost.breakdown do %>
-          <div class="badge badge-ghost gap-1 text-[10px] font-mono opacity-80">
-            {source} · {model} ${Float.round(source_cost, 4)}
-          </div>
-        <% end %>
-      </div>
+        </span>
+        <span :if={@cost.estimated} class="text-[10px] opacity-60">est.</span>
+      </span>
+    <% else %>
+      <span class="text-[11px] opacity-50">no usage yet</span>
     <% end %>
     """
   end
@@ -1234,15 +1248,21 @@ defmodule SvarmWeb.BoardLive do
 
   defp select_task(socket, id, opts \\ []) do
     patch? = Keyword.get(opts, :patch, true)
+    attach? = Keyword.get(opts, :attach, false)
     costs = fetch_task_cost(id, socket.assigns.task_costs)
+    log = Svarm.RunLog.get(id) |> trim_log()
+    focused? = attach? or task_running?(socket, id)
 
     socket =
       socket
       |> assign(:selected_task_id, id)
       |> assign(:task_costs, costs)
+      |> assign(:run_logs, %{id => log})
+      |> assign(:console_focused?, focused?)
 
     if patch? do
-      push_patch(socket, to: ~p"/board?#{[task: id]}", replace: true)
+      query = if attach?, do: [task: id, attach: 1], else: [task: id]
+      push_patch(socket, to: ~p"/board?#{query}", replace: true)
     else
       socket
     end
@@ -1251,7 +1271,25 @@ defmodule SvarmWeb.BoardLive do
   defp clear_selection(socket) do
     socket
     |> assign(:selected_task_id, nil)
+    |> assign(:console_focused?, false)
+    |> assign(:run_logs, %{})
     |> push_patch(to: ~p"/board", replace: true)
+  end
+
+  defp attach_param?(%{"attach" => v}) when v in ["1", "true"], do: true
+  defp attach_param?(_), do: false
+
+  defp task_running?(socket, id) do
+    running = Map.get(socket.assigns.orchestrator, :running_ids, [])
+    id in running or Map.has_key?(socket.assigns.running_started, id)
+  end
+
+  defp maybe_focus_running(socket, task_id) do
+    if socket.assigns.selected_task_id == task_id and task_running?(socket, task_id) do
+      assign(socket, :console_focused?, true)
+    else
+      socket
+    end
   end
 
   defp handle_board_key(socket, "Escape"), do: clear_selection(socket)

@@ -1,6 +1,10 @@
 defmodule Svarm.Events do
   @moduledoc """
   PubSub topics for the LiveView board.
+
+  Agent output and run markers are persisted once here (`RunLog.append`) then
+  broadcast so late join works with zero open boards and N boards never
+  double-write.
   """
   @topic "board"
 
@@ -11,6 +15,13 @@ defmodule Svarm.Events do
   end
 
   def broadcast_task_updated(task) when is_map(task) do
+    id = Map.get(task, :id)
+    status = Map.get(task, :status)
+
+    if is_binary(id) and is_binary(status) do
+      persist_agent_line(id, "[board] status → #{status}\n")
+    end
+
     broadcast({:task_updated, task})
   end
 
@@ -22,19 +33,54 @@ defmodule Svarm.Events do
     broadcast({:orchestrator_status, status})
   end
 
+  @doc """
+  Redact, persist to `RunLog`, then broadcast `{:agent_line, task_id, line}`.
+
+  Single writer for run transcript lines — callers must not also call `RunLog.append/2`.
+  """
   def broadcast_agent_line(task_id, line) when is_binary(task_id) and is_binary(line) do
-    broadcast({:agent_line, task_id, Svarm.Redact.text(line)})
+    line = persist_agent_line(task_id, line)
+    broadcast({:agent_line, task_id, line})
   end
 
+  @doc """
+  Persist a transcript chunk once (redacted). Used by broadcast helpers.
+
+  Prefer `broadcast_agent_line/2` / `broadcast_run_started/2` / `broadcast_run_finished/2`
+  so PubSub and RunLog stay in lockstep.
+  """
+  def persist_agent_line(task_id, line) when is_binary(task_id) and is_binary(line) do
+    line = Svarm.Redact.text(line)
+    Svarm.RunLog.append(task_id, line)
+    line
+  end
+
+  @doc """
+  Persist the run-started banner once, then broadcast `{:run_started, task_id, meta}`.
+  """
   def broadcast_run_started(task_id, meta) when is_map(meta) do
+    persist_agent_line(task_id, "--- #{run_started_label(meta)} ---\n")
     broadcast({:run_started, task_id, meta})
   end
 
+  @doc """
+  Persist the run-finished banner once, then broadcast `{:run_finished, task_id, exit_code}`.
+  """
   def broadcast_run_finished(task_id, exit_code) when is_integer(exit_code) do
+    persist_agent_line(task_id, "\n--- run finished (exit #{exit_code}) ---\n")
     broadcast({:run_finished, task_id, exit_code})
   end
 
   defp broadcast(message) do
     Phoenix.PubSub.broadcast(Svarm.PubSub, @topic, message)
+  end
+
+  # Callers (AgentRegistry.run_started_meta / runners) always use atom keys.
+  defp run_started_label(meta) when is_map(meta) do
+    display = meta[:display_name] || meta[:assignee] || "Agent"
+    role = meta[:role]
+    attempt = meta[:attempt] || "?"
+    role_suffix = if role, do: " (#{role})", else: ""
+    "#{display}#{role_suffix} started · attempt #{attempt}"
   end
 end

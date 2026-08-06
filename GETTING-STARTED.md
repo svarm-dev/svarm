@@ -122,7 +122,7 @@ Example receipt shape:
 | **Model** | … |
 | **Session** | `run_…` |
 
-→ Full run log: http://localhost:4000/board?task=…
+→ Full run log: http://localhost:4000/board?task=…&attach=1
 ```
 
 ### Labels and states

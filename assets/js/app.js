@@ -25,8 +25,47 @@ import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/svarm"
 import topbar from "../vendor/topbar"
 
+const NEAR_BOTTOM_PX = 48
+
 const RunLogScroll = {
+  mounted() {
+    this.pinned = true
+    this.taskId = this.el.dataset.taskId
+    this.scrollToBottom()
+    if (this.el.dataset.attach === "true") {
+      this.el.scrollIntoView({ block: "nearest" })
+    }
+  },
   updated() {
+    const taskId = this.el.dataset.taskId
+    if (taskId !== this.taskId) {
+      this.taskId = taskId
+      this.pinned = true
+      this.scrollToBottom()
+      if (this.el.dataset.attach === "true") {
+        this.el.scrollIntoView({ block: "nearest" })
+      }
+      return
+    }
+
+    if (this.el.dataset.attach === "true" && !this._attachedOnce) {
+      this._attachedOnce = true
+      this.pinned = true
+      this.scrollToBottom()
+      this.el.scrollIntoView({ block: "nearest" })
+      return
+    }
+
+    if (this.pinned || this.nearBottom()) {
+      this.pinned = true
+      this.scrollToBottom()
+    }
+  },
+  nearBottom() {
+    const { scrollTop, scrollHeight, clientHeight } = this.el
+    return scrollHeight - scrollTop - clientHeight <= NEAR_BOTTOM_PX
+  },
+  scrollToBottom() {
     this.el.scrollTop = this.el.scrollHeight
   },
 }
