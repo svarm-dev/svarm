@@ -49,6 +49,7 @@ defmodule Svarm.Workflow.Render do
 
     allowed = [
       "attempt",
+      "ci_feedback",
       "issue.id",
       "issue.source_id",
       "issue.title",
@@ -113,14 +114,50 @@ defmodule Svarm.Workflow.Render do
   @doc """
   Resolve the prompt template (from WORKFLOW.md or default) and render it
   for the given task + attempt. Shared by runners.
+
+  When `Svarm.Coordination` has a `ci_context_summary` for the task (CI resume),
+  that block is appended after the template so the agent sees failure context.
+  Optional template placeholder `{{ci_feedback}}` is also substituted when present.
   """
   def render_prompt(task, attempt) do
-    template =
-      case Svarm.Workflow.Store.get() do
-        %Svarm.Workflow{prompt_template: t} when is_binary(t) and t != "" -> t
-        _ -> default_template()
-      end
+    template = resolve_template()
+    ci = ci_feedback_for(task)
+    {template, inject_mode} = place_ci_feedback(template, ci)
 
-    render(template, task, attempt)
+    case render(template, task, attempt) do
+      {:ok, rendered} -> {:ok, maybe_append_ci(rendered, ci, inject_mode)}
+      err -> err
+    end
+  end
+
+  defp resolve_template do
+    case Svarm.Workflow.Store.get() do
+      %Svarm.Workflow{prompt_template: t} when is_binary(t) and t != "" -> t
+      _ -> default_template()
+    end
+  end
+
+  defp place_ci_feedback(template, ci) do
+    if String.contains?(template, "{{ci_feedback}}") do
+      {String.replace(template, "{{ci_feedback}}", ci || ""), :placeholder}
+    else
+      {template, :append}
+    end
+  end
+
+  defp maybe_append_ci(rendered, ci, :append) when is_binary(ci) and ci != "" do
+    rendered <> "\n\n" <> ci
+  end
+
+  defp maybe_append_ci(rendered, _ci, _mode), do: rendered
+
+  defp ci_feedback_for(%{id: id}) when is_binary(id), do: coord_ci_summary(id)
+  defp ci_feedback_for(_), do: nil
+
+  defp coord_ci_summary(id) do
+    case Svarm.Coordination.get(id) do
+      %{ci_context_summary: s} when is_binary(s) and s != "" -> s
+      _ -> nil
+    end
   end
 end

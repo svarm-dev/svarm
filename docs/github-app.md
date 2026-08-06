@@ -55,14 +55,15 @@ Never put PEM contents in WORKFLOW.md, git, logs, or PubSub.
 | Metadata | Read | Required |
 | Contents | Read & write | Clone/push when agent uses App token |
 | Pull requests | Read & write | Open PR |
+| **Checks** | **Read** | CI resume: poll check-runs on managed PRs (optional feature) |
 
-Webhook: disabled for v1 (poll loop).
+Webhook: disabled for v1 (poll loop). CI resume also uses poll-on-tick, not webhooks.
 
 ## Operator setup checklist
 
 1. GitHub → Settings → Developer settings → **New GitHub App**
 2. **Name:** any free slug (not the product trademark). Try `svarm-bot` / `svarm-orchestrator` if `svarm` is taken. Webhook **inactive**.
-3. Permissions: Issues RW, Contents RW, PRs RW, Metadata R
+3. Permissions: Issues RW, Contents RW, PRs RW, Metadata R; Checks R if using CI resume
 4. Generate private key → store PEM outside the repo
 5. Install App on the target repo(s)
 6. Set env vars; WORKFLOW `auth: app`

@@ -819,7 +819,8 @@ defmodule SvarmWeb.BoardLive do
                 "border-transparent bg-base-100/80 hover:border-base-300",
               card.running && "ring-2 ring-primary/50 bg-primary/5",
               card.retrying && "ring-2 ring-warning/40",
-              card.wait_reason in [:approval, :review] && "border-dashed border-warning/60"
+              card.wait_reason in [:approval, :review, :ci_circuit] &&
+                "border-dashed border-warning/60"
             ]}>
               <button
                 type="button"
@@ -1134,9 +1135,15 @@ defmodule SvarmWeb.BoardLive do
       <%= if @card.retrying do %>
         <span class="badge badge-warning badge-xs shrink-0">retry</span>
       <% else %>
-        <%= if @card.wait_reason in [:approval, :review] do %>
+        <%= if @card.wait_reason in [:approval, :review, :ci_circuit] do %>
           <span
-            class="badge badge-warning badge-outline badge-xs shrink-0"
+            class={[
+              "badge badge-outline badge-xs shrink-0",
+              if(@card.wait_reason == :ci_circuit,
+                do: "badge-error",
+                else: "badge-warning"
+              )
+            ]}
             title={Board.wait_reason_label(@card.wait_reason)}
           >
             {Board.wait_reason_label(@card.wait_reason)}

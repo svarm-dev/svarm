@@ -172,10 +172,26 @@ defmodule Svarm.Tracker.GitHub do
         :ok
 
       issue ->
-        label = Map.get(reverse_labels, status)
-        new_labels = update_label_list(issue.labels, label, reverse_labels)
+        new_labels = labels_for_status(issue.labels, status, reverse_labels)
         patch_issue(config, issue.source_id, new_labels, status)
     end
+  end
+
+  # `"todo"` has no status label — strip in/out-progress/review/done/failed labels
+  # so Normalize maps the issue back to `hd(active_states)` (todo). Without this,
+  # `Map.get(reverse_labels, "todo")` is nil and the old no-op left `status: review`.
+  defp labels_for_status(current_labels, "todo", reverse_labels) do
+    strip_status_labels(current_labels, reverse_labels)
+  end
+
+  defp labels_for_status(current_labels, status, reverse_labels) do
+    label = Map.get(reverse_labels, status)
+    update_label_list(current_labels, label, reverse_labels)
+  end
+
+  defp strip_status_labels(current_labels, reverse_labels) do
+    status_values = Map.values(reverse_labels)
+    Enum.reject(current_labels, &(&1 in status_values))
   end
 
   @impl true
@@ -282,11 +298,12 @@ defmodule Svarm.Tracker.GitHub do
 
   defp maybe_close(body, _status), do: body
 
+  # Unknown status (no reverse label): leave labels unchanged (legacy behavior).
   defp update_label_list(current_labels, nil, _reverse_labels), do: current_labels
 
   defp update_label_list(current_labels, new_label, reverse_labels) do
     status_values = Map.values(reverse_labels)
-    cleaned = Enum.reject(current_labels, &(&1 in status_values))
+    cleaned = strip_status_labels(current_labels, reverse_labels)
 
     if new_label in status_values do
       [new_label | cleaned]

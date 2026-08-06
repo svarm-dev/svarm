@@ -139,8 +139,38 @@ Svärm tracks GitHub work with **labels**. Your eligibility label (e.g. `ai-task
 | Approvals | Strong `APPROVALS_USER` / `APPROVALS_PASSWORD` for `/approvals`, `/setup`, and board approve/reject/mark-done. Keep `approval.mode: untrusted`. Board **reads** stay open — still firewall the UI (see [SECURITY.md](SECURITY.md)) |
 | Agents | Edit `svarm-config/agents.toml` models; list required API keys in each agent’s `env` (no full host inheritance) |
 | Budgets | Optional: `SVARM_BUDGET_MAX_USD_PER_TICKET` / `SVARM_BUDGET_MAX_USD_PER_DAY` or WORKFLOW `budget.*` — hard-stop **new** spawns when spent ≥ cap |
+| CI resume | Optional: re-dispatch when a managed PR’s Checks fail (see below). **Off by default.** |
 | Smoke-only off | Never leave `approval.mode: off` on a shared repo; do not leave `SVARM_DEMO_ROUTES` / `SVARM_SEED_DEMO` on production |
 | Base URL | Point `SVARM_BASE_URL` at the deployed host |
+
+### CI resume (optional)
+
+When a Svärm-managed ticket lands in **review** with a PR, and **GitHub Checks** later fail, Svärm can **re-open the ticket** and spawn a **fresh** agent run with a short CI failure summary in the prompt (not a magic pi session resume). After **N** resume attempts, a **circuit** opens: no more auto-resume; the board shows **“CI retries exhausted”** while the card stays in `review` so you can still merge or intervene.
+
+**Default is off** — enable only when you want automatic re-dispatch costs.
+
+```yaml
+# WORKFLOW.md front matter
+ci_resume:
+  enabled: true
+  max_attempts: 3   # circuit after this many resume spawns
+  skip_draft: true  # ignore draft PRs until ready
+```
+
+Env overrides:
+
+| Variable | Effect |
+|----------|--------|
+| `SVARM_CI_RESUME_ENABLED` | `true` / `1` / `yes` enables |
+| `SVARM_CI_RESUME_MAX_ATTEMPTS` | Positive integer (default 3) |
+
+**Requirements:**
+
+- GitHub tracker (Local has no Checks API)
+- App/PAT permissions: **Checks: Read**, **Pull requests: Read** (write still needed for labels/PRs elsewhere) — see [docs/github-app.md](docs/github-app.md)
+- PR URL captured from agent output (best-effort regex on the run log). Without a durable PR link, resume cannot poll.
+
+**Costs:** each resume is a new spawn — usage ledger and budget caps still apply. In-flight runs are not killed when CI fails.
 
 ---
 
