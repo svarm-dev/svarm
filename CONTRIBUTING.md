@@ -34,7 +34,7 @@ mix precommit    # compile, unused deps, format, full test suite
 For larger changes:
 
 ```bash
-mix ci           # compile, format check, test, credo, dialyzer, ex_dna, reach
+mix ci           # compile, format check, test, credo, dialyzer, deps.audit, sobelow, ex_dna, reach
 ```
 
 GitHub Actions runs the same `mix ci` on pushes to `main` and on pull requests.
