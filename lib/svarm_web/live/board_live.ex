@@ -369,7 +369,6 @@ defmodule SvarmWeb.BoardLive do
 
   defp load_board(socket) do
     tasks = Board.list_tasks()
-    socket = put_columns(socket, tasks)
     costs = compute_costs(tasks)
     orchestrator = Board.orchestrator_status()
 
@@ -378,26 +377,20 @@ defmodule SvarmWeb.BoardLive do
     orchestrator = Map.put(orchestrator, :session_cost, session_cost)
 
     socket
-    |> assign(:costs, costs)
+    |> put_columns(tasks, costs)
     |> assign(:orchestrator, orchestrator)
-    |> assign(:workload, Board.counts_by_assignee(tasks))
     |> assign(:running_started, Map.get(orchestrator, :running_started, %{}))
   end
 
+  # One batched usage query for all visible tasks (no per-task N+1).
   defp compute_costs(tasks) do
     tasks
-    |> Enum.map(fn task ->
-      case Usage.task_cost_summary(task.id) do
-        nil -> nil
-        summary -> {task.id, summary}
-      end
-    end)
-    |> Enum.reject(&is_nil/1)
-    |> Map.new()
+    |> Enum.map(& &1.id)
+    |> Usage.task_cost_summaries()
   end
 
-  defp put_columns(socket, tasks) do
-    costs = compute_costs(tasks)
+  defp put_columns(socket, tasks, costs \\ nil) do
+    costs = costs || compute_costs(tasks)
 
     socket
     |> assign(:column_ids, Board.column_ids())

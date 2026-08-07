@@ -5,6 +5,8 @@ defmodule Svarm.Usage.Ledger do
 
   Iron Law #1: LEDGER IS APPEND-ONLY.
   """
+  import Ecto.Query, only: [from: 2]
+
   alias Svarm.Repo
   alias Svarm.Usage.Record
 
@@ -36,9 +38,17 @@ defmodule Svarm.Usage.Ledger do
   Returns all records for a given task, newest first.
   """
   def for_task(task_id) do
-    import Ecto.Query, only: [from: 2]
-
     from(r in Record, where: r.task_id == ^task_id, order_by: [desc: r.recorded_at])
+    |> Repo.all()
+  end
+
+  @doc """
+  Returns all records for the given task ids (any order). Empty input → [].
+  """
+  def for_tasks([]), do: []
+
+  def for_tasks(task_ids) when is_list(task_ids) do
+    from(r in Record, where: r.task_id in ^task_ids)
     |> Repo.all()
   end
 
@@ -47,8 +57,6 @@ defmodule Svarm.Usage.Ledger do
   Rows with nil `inserted_at` (legacy backfill) are excluded.
   """
   def for_utc_day(%Date{} = day) do
-    import Ecto.Query, only: [from: 2]
-
     start_dt = DateTime.new!(day, ~T[00:00:00.000000], "Etc/UTC")
     end_dt = DateTime.add(start_dt, 86_400, :second)
 
@@ -63,8 +71,6 @@ defmodule Svarm.Usage.Ledger do
   Returns aggregate token counts since a given unix timestamp.
   """
   def totals_since(since_unix) when is_integer(since_unix) do
-    import Ecto.Query, only: [from: 2]
-
     from(r in Record,
       where: r.recorded_at >= ^since_unix,
       select: %{
@@ -80,8 +86,6 @@ defmodule Svarm.Usage.Ledger do
   Returns all records since a given monotonic timestamp (ms), newest first.
   """
   def records_since(since_mono) when is_integer(since_mono) do
-    import Ecto.Query, only: [from: 2]
-
     from(r in Record,
       where: r.recorded_at >= ^since_mono,
       order_by: [desc: r.recorded_at]
@@ -93,19 +97,145 @@ defmodule Svarm.Usage.Ledger do
   Returns all records for a given tenant (goal), newest first.
   """
   def for_tenant(tenant) do
-    import Ecto.Query, only: [from: 2]
-
     from(r in Record, where: r.tenant == ^tenant, order_by: [desc: r.recorded_at])
     |> Repo.all()
   end
 
   @doc """
   Returns all usage records (no tenant filter).
+
+  Prefer cost-group aggregates for dashboards/session totals; this is for
+  export and rare full dumps.
   """
   def list_all do
-    import Ecto.Query, only: [from: 2]
-
     from(r in Record, order_by: [desc: r.recorded_at])
     |> Repo.all()
+  end
+
+  @doc """
+  SQL cost groups for the whole ledger (session window).
+
+  One row per `{provider, model_id}`. Does not materialize individual records.
+  """
+  def session_cost_groups do
+    cost_groups_query(Record)
+    |> Repo.all()
+  end
+
+  @doc """
+  SQL cost groups for records with `recorded_at >= since_mono`.
+  """
+  def cost_groups_since(since_mono) when is_integer(since_mono) do
+    from(r in Record, where: r.recorded_at >= ^since_mono)
+    |> cost_groups_query()
+    |> Repo.all()
+  end
+
+  @doc """
+  SQL cost groups for wall-clock UTC calendar day (excludes nil `inserted_at`).
+  """
+  def cost_groups_for_utc_day(%Date{} = day) do
+    start_dt = DateTime.new!(day, ~T[00:00:00.000000], "Etc/UTC")
+    end_dt = DateTime.add(start_dt, 86_400, :second)
+
+    from(r in Record,
+      where: not is_nil(r.inserted_at) and r.inserted_at >= ^start_dt and r.inserted_at < ^end_dt
+    )
+    |> cost_groups_query()
+    |> Repo.all()
+  end
+
+  @doc """
+  SQL cost groups for a set of tasks, grouped by task + provider + model.
+
+  Empty `task_ids` → []. Does not issue a query.
+  """
+  def cost_groups_for_tasks([]), do: []
+
+  def cost_groups_for_tasks(task_ids) when is_list(task_ids) do
+    from(r in Record, where: r.task_id in ^task_ids)
+    |> task_cost_groups_query()
+    |> Repo.all()
+  end
+
+  # --- private: group-by aggregates for cost (provider bill + rate-table tokens) ---
+
+  defp cost_groups_query(queryable) do
+    from(r in queryable,
+      group_by: [r.provider, r.model_id],
+      select: %{
+        provider: r.provider,
+        model_id: r.model_id,
+        billed_usd:
+          sum(
+            fragment(
+              "CASE WHEN ? IS NOT NULL THEN ? ELSE 0.0 END",
+              r.provider_cost_usd,
+              r.provider_cost_usd
+            )
+          ),
+        rate_prompt:
+          sum(
+            fragment(
+              "CASE WHEN ? IS NULL THEN COALESCE(?, 0) ELSE 0 END",
+              r.provider_cost_usd,
+              r.prompt_tokens
+            )
+          ),
+        rate_completion:
+          sum(
+            fragment(
+              "CASE WHEN ? IS NULL THEN COALESCE(?, 0) ELSE 0 END",
+              r.provider_cost_usd,
+              r.completion_tokens
+            )
+          ),
+        prompt_tokens: sum(fragment("COALESCE(?, 0)", r.prompt_tokens)),
+        completion_tokens: sum(fragment("COALESCE(?, 0)", r.completion_tokens)),
+        record_count: count(r.id),
+        unbilled_count:
+          sum(fragment("CASE WHEN ? IS NULL THEN 1 ELSE 0 END", r.provider_cost_usd))
+      }
+    )
+  end
+
+  defp task_cost_groups_query(queryable) do
+    from(r in queryable,
+      group_by: [r.task_id, r.provider, r.model_id],
+      select: %{
+        task_id: r.task_id,
+        provider: r.provider,
+        model_id: r.model_id,
+        billed_usd:
+          sum(
+            fragment(
+              "CASE WHEN ? IS NOT NULL THEN ? ELSE 0.0 END",
+              r.provider_cost_usd,
+              r.provider_cost_usd
+            )
+          ),
+        rate_prompt:
+          sum(
+            fragment(
+              "CASE WHEN ? IS NULL THEN COALESCE(?, 0) ELSE 0 END",
+              r.provider_cost_usd,
+              r.prompt_tokens
+            )
+          ),
+        rate_completion:
+          sum(
+            fragment(
+              "CASE WHEN ? IS NULL THEN COALESCE(?, 0) ELSE 0 END",
+              r.provider_cost_usd,
+              r.completion_tokens
+            )
+          ),
+        prompt_tokens: sum(fragment("COALESCE(?, 0)", r.prompt_tokens)),
+        completion_tokens: sum(fragment("COALESCE(?, 0)", r.completion_tokens)),
+        record_count: count(r.id),
+        unbilled_count:
+          sum(fragment("CASE WHEN ? IS NULL THEN 1 ELSE 0 END", r.provider_cost_usd))
+      }
+    )
   end
 end

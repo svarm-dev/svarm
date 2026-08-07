@@ -21,6 +21,7 @@ defmodule Svarm.Usage do
   defdelegate list_all(), to: Ledger
   defdelegate task_cost(task_id), to: Query
   defdelegate task_cost_summary(task_id), to: Query
+  defdelegate task_cost_summaries(task_ids), to: Query
   defdelegate session_cost_summary(), to: Query
   defdelegate session_totals(), to: Query
   defdelegate cost_usd(provider, model_id, prompt_tokens, completion_tokens), to: Rates
