@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fake pi --mode rpc peer for unit tests (no network).
-# Modes via FAKE_PI_MODE: happy | hang | crash | ui | malformed | protocol
+# Modes via FAKE_PI_MODE: happy | secrets | hang | crash | ui | malformed | protocol
 # Optional FAKE_PI_PIDFILE: write $$ after prompt so tests can assert death.
 set -euo pipefail
 
@@ -42,6 +42,14 @@ case "$mode" in
     printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"hello from fake pi\n"}}'
     printf '%s\n' '{"type":"message_end","message":{"usage":{"input":10,"output":5,"cost":{"total":0.001}}}}'
     printf '%s\n' '{"type":"agent_end","messages":[{}]}'
+    printf '%s\n' '{"type":"agent_settled"}'
+    exit 0
+    ;;
+  secrets)
+    # Emit env dumps / token shapes so workspace run.log redaction is covered.
+    printf '%s\n' '{"type":"response","id":"prompt-1","success":true}'
+    printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"OPENROUTER_API_KEY=sk-or-v1-SECRETVALUEHERE123\nGITHUB_TOKEN=github_pat_11AAAA_SECRET\n"}}'
+    printf '%s\n' '{"type":"message_end","message":{"usage":{"input":1,"output":1}}}'
     printf '%s\n' '{"type":"agent_settled"}'
     exit 0
     ;;

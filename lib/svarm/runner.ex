@@ -76,6 +76,16 @@ defmodule Svarm.Runner do
 
   def with_github_token(env_map, _), do: env_map
 
+  @doc """
+  Write agent output to the workspace `run.log`, redacting secrets first.
+
+  Same scrubbing as PubSub/`RunLog` (`Svarm.Redact.text/1`) so env dumps and
+  token shapes never persist unredacted under the workspace root.
+  """
+  def write_run_log(path, content) when is_binary(path) and is_binary(content) do
+    File.write!(path, Svarm.Redact.text(content))
+  end
+
   defp resolve_env_value("$" <> var), do: System.get_env(var) || ""
   defp resolve_env_value(value), do: to_string(value)
 end
