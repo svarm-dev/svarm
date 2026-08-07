@@ -8,7 +8,11 @@ defmodule SvarmWeb.Plugs.ApprovalsAuth do
   - Otherwise 404 with setup hints (not a silent empty page).
 
   Shared helpers are also used by the board LiveView to gate high-trust
-  mutations (approve / reject / complete_review) when credentials are configured.
+  mutations (approve / reject / complete_review):
+
+  - Credentials configured → requires sticky session proof from Basic Auth.
+  - Credentials **missing** + `dev_routes` → open (local Mix / intentional demo).
+  - Credentials **missing** without `dev_routes` → **fail closed** (production-safe default).
   """
   import Plug.Conn
 
@@ -52,6 +56,16 @@ defmodule SvarmWeb.Plugs.ApprovalsAuth do
     )
   end
 
+  @doc """
+  True when high-trust board mutations may proceed without Basic Auth credentials.
+
+  Local Mix sets `dev_routes: true`. Production/Docker leave it unset/false so
+  missing `APPROVALS_*` fails closed rather than allowing open approve/reject.
+  """
+  def open_board_mutations_without_auth? do
+    Application.get_env(:svarm, :dev_routes, false) == true
+  end
+
   @doc "True when the request carries valid Basic Auth for configured credentials."
   def authorized_header?(conn) do
     with ["Basic " <> encoded] <- get_req_header(conn, "authorization"),
@@ -69,30 +83,44 @@ defmodule SvarmWeb.Plugs.ApprovalsAuth do
   @doc """
   Whether a LiveView may perform high-trust board mutations.
 
-  - Credentials **not** configured → open (dev / firewalled operator model).
   - Credentials configured → requires `session["board_auth_ok"] == true`
     (set by `BoardAuthCapture` when a request had valid Basic Auth; sticky).
+  - Credentials **not** configured + `dev_routes` → open (local/dev).
+  - Credentials **not** configured without `dev_routes` → denied (prod fail-closed).
   """
   def board_mutation_authorized?(session) when is_map(session) do
-    if credentials_configured?() do
-      session["board_auth_ok"] == true
-    else
-      true
+    cond do
+      credentials_configured?() ->
+        session["board_auth_ok"] == true
+
+      open_board_mutations_without_auth?() ->
+        true
+
+      true ->
+        false
     end
   end
 
-  def board_mutation_authorized?(_), do: not credentials_configured?()
+  def board_mutation_authorized?(_) do
+    not credentials_configured?() and open_board_mutations_without_auth?()
+  end
 
   @doc """
   Re-check board mutation policy from LiveView assigns + current config.
 
-  Fail closed if credentials are configured and the mount-time proof is missing.
+  Fail closed when credentials are configured and the mount-time proof is missing,
+  or when credentials are missing outside the local `dev_routes` open model.
   """
   def authorize_board_mutation?(board_auth_ok) when is_boolean(board_auth_ok) do
-    if credentials_configured?() do
-      board_auth_ok
-    else
-      true
+    cond do
+      credentials_configured?() ->
+        board_auth_ok
+
+      open_board_mutations_without_auth?() ->
+        true
+
+      true ->
+        false
     end
   end
 end

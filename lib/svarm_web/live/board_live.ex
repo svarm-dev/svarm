@@ -76,12 +76,7 @@ defmodule SvarmWeb.BoardLive do
   def handle_event("approve_task", %{"id" => id}, socket) do
     case authorize_board_mutation(socket) do
       {:error, :unauthorized} ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           "Authentication required to approve. Sign in via /approvals (same APPROVALS_* credentials), then return to the board."
-         )}
+        {:noreply, put_flash(socket, :error, unauthorized_mutation_flash("approve"))}
 
       :ok ->
         case Approval.approve(id) do
@@ -103,12 +98,7 @@ defmodule SvarmWeb.BoardLive do
   def handle_event("reject_task", %{"id" => id}, socket) do
     case authorize_board_mutation(socket) do
       {:error, :unauthorized} ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           "Authentication required to reject. Sign in via /approvals (same APPROVALS_* credentials), then return to the board."
-         )}
+        {:noreply, put_flash(socket, :error, unauthorized_mutation_flash("reject"))}
 
       :ok ->
         case Approval.reject(id) do
@@ -130,12 +120,7 @@ defmodule SvarmWeb.BoardLive do
   def handle_event("complete_review", %{"id" => id}, socket) do
     case authorize_board_mutation(socket) do
       {:error, :unauthorized} ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           "Authentication required to mark done. Sign in via /approvals (same APPROVALS_* credentials), then return to the board."
-         )}
+        {:noreply, put_flash(socket, :error, unauthorized_mutation_flash("mark done"))}
 
       :ok ->
         case Board.complete_review(id) do
@@ -175,6 +160,14 @@ defmodule SvarmWeb.BoardLive do
       :ok
     else
       {:error, :unauthorized}
+    end
+  end
+
+  defp unauthorized_mutation_flash(action) do
+    if ApprovalsAuth.credentials_configured?() do
+      "Authentication required to #{action}. Sign in via /approvals (same APPROVALS_* credentials), then return to the board."
+    else
+      "Board mutations require APPROVALS_USER and APPROVALS_PASSWORD outside local dev. Configure them, sign in via /approvals, then return to the board."
     end
   end
 
