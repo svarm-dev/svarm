@@ -175,7 +175,7 @@ defmodule Svarm.Runner.PiRPC do
 
         ensure_dead(port)
 
-        File.write!(log_path, log)
+        File.write!(log_path, Svarm.Redact.text(log))
         record_usage(task, agent_config, usage, opts)
 
         finish(task, tracker, tracker_config, session)

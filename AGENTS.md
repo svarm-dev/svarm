@@ -119,7 +119,7 @@ mix svarm.run "build a CLI tool"  # decompose goal → dispatch (needs LLM key)
 | Command | What it checks |
 |---------|---------------|
 | `mix precommit` | compile (--warnings-as-errors), unused deps, format, full test suite |
-| `mix ci` | precommit + credo --strict + dialyzer + ex_dna + reach |
+| `mix ci` | compile, format check, test, credo --strict, dialyzer, `deps.audit` (mix_audit), sobelow --exit, ex_dna, reach |
 
 **Before finishing any change:** run `mix precommit`. Fix all failures. For larger changes, run `mix ci`.
 

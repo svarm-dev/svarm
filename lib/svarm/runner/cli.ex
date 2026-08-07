@@ -87,7 +87,7 @@ defmodule Svarm.Runner.Cli do
           {inspect(e), -1}
       end
 
-    File.write!(log_path, out)
+    File.write!(log_path, Svarm.Redact.text(out))
     Events.broadcast_run_finished(task.id, exit_code)
 
     # Success → review (human PR gate). Agents never mark done/merge.
