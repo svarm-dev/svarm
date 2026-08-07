@@ -399,19 +399,9 @@ defmodule SvarmWeb.BoardLiveTest do
     # "demo" todo into pending_approval (or dispatch a trusted agent), emptying
     # the todo column and resurfacing the empty hint mid-test.
     # Pin max_concurrent to 0 so dispatch/gating is a no-op for this assertion.
-    prev_poll = Application.get_env(:svarm, :orchestrator_poll_interval_ms)
-    prev_max = Application.get_env(:svarm, :orchestrator_max_concurrent)
+    Svarm.Test.OrchestratorEnv.restore_on_exit()
     Application.put_env(:svarm, :orchestrator_poll_interval_ms, 60_000)
     Application.put_env(:svarm, :orchestrator_max_concurrent, 0)
-
-    on_exit(fn ->
-      restore_env(:orchestrator_poll_interval_ms, prev_poll)
-      restore_env(:orchestrator_max_concurrent, prev_max)
-
-      if Process.whereis(Svarm.Orchestrator) do
-        _ = Svarm.Orchestrator.reload_config()
-      end
-    end)
 
     if Process.whereis(Svarm.Orchestrator) do
       assert {:ok, _} = Svarm.Orchestrator.reload_config()
@@ -526,7 +516,4 @@ defmodule SvarmWeb.BoardLiveTest do
 
     assert render(view) =~ "streamed chunk"
   end
-
-  defp restore_env(key, nil), do: Application.delete_env(:svarm, key)
-  defp restore_env(key, val), do: Application.put_env(:svarm, key, val)
 end

@@ -2,17 +2,18 @@ defmodule Svarm.OrchestratorTest do
   use ExUnit.Case, async: false
 
   alias Svarm.{Approval, KanbanBridge, Orchestrator, Workspace}
+  alias Svarm.Test.Wait
+
+  # Sync barrier: GenServer processes mailbox FIFO, so get_state waits until
+  # prior handle_info/handle_cast messages have finished.
+  defp flush_orchestrator do
+    _ = :sys.get_state(Orchestrator)
+    :ok
+  end
 
   # Up to ~3s under CI load (was 1s / 40×25ms — flaked on slow ticks).
   defp wait_until(fun, attempts \\ 120) do
-    Enum.reduce_while(1..attempts, false, fn _, _ ->
-      if fun.() do
-        {:halt, true}
-      else
-        Process.sleep(25)
-        {:cont, false}
-      end
-    end)
+    Wait.until(fun, attempts: attempts)
   end
 
   # ponytail: one runnable check for the non-trivial logic.
@@ -34,7 +35,7 @@ defmodule Svarm.OrchestratorTest do
     test "orchestrator survives concurrent run_exit messages for unknown tasks" do
       send(Orchestrator, {:run_exit, "sva_nonexistent_a", :ok})
       send(Orchestrator, {:run_exit, "sva_nonexistent_b", :ok})
-      Process.sleep(100)
+      flush_orchestrator()
       assert Process.whereis(Orchestrator)
       assert is_map(Orchestrator.status())
     end
@@ -66,7 +67,7 @@ defmodule Svarm.OrchestratorTest do
       end)
 
       send(Orchestrator, {:DOWN, mref, :process, self(), :enoent})
-      Process.sleep(80)
+      flush_orchestrator()
 
       assert Process.whereis(Orchestrator)
       state = :sys.get_state(Orchestrator)
@@ -93,7 +94,7 @@ defmodule Svarm.OrchestratorTest do
 
       try do
         send(Orchestrator, :tick)
-        Process.sleep(80)
+        flush_orchestrator()
         assert Process.whereis(Orchestrator)
         assert is_map(Orchestrator.status())
       after
@@ -329,7 +330,7 @@ defmodule Svarm.OrchestratorTest do
       end)
 
       send(Orchestrator, {:run_exit, task.id, :ok})
-      Process.sleep(50)
+      flush_orchestrator()
 
       status = Orchestrator.status()
       state = :sys.get_state(Orchestrator)
@@ -362,7 +363,7 @@ defmodule Svarm.OrchestratorTest do
       end)
 
       send(Orchestrator, {:run_exit, task.id, :ok})
-      Process.sleep(50)
+      flush_orchestrator()
 
       status = Orchestrator.status()
       # Task is "done" (terminal) → completed, not in retry
@@ -400,13 +401,13 @@ defmodule Svarm.OrchestratorTest do
 
       # Trigger a reconcile cycle
       send(Orchestrator, :tick)
-      Process.sleep(80)
+      flush_orchestrator()
 
       status = Orchestrator.status()
       refute task.id in status.running_ids
 
-      # Worker should have been asked to exit
-      refute Process.alive?(worker)
+      # Worker should have been asked to exit (exit is async; poll briefly)
+      assert wait_until(fn -> not Process.alive?(worker) end)
 
       # The task itself should still be terminal in the tracker
       assert %{status: "done"} = KanbanBridge.get_task(task.id)
@@ -426,7 +427,7 @@ defmodule Svarm.OrchestratorTest do
       KanbanBridge.update_status(task.id, "failed")
 
       send(Orchestrator, :tick)
-      Process.sleep(50)
+      flush_orchestrator()
 
       status = Orchestrator.status()
       # Should no longer be claimed in internal state
@@ -459,7 +460,7 @@ defmodule Svarm.OrchestratorTest do
       end)
 
       send(Orchestrator, {:run_exit, task.id, :ok})
-      Process.sleep(50)
+      flush_orchestrator()
 
       state = :sys.get_state(Orchestrator)
       # last_run_entries should be set after run_exit
@@ -490,7 +491,7 @@ defmodule Svarm.OrchestratorTest do
       end)
 
       send(Orchestrator, {:run_exit, task.id, :ok})
-      Process.sleep(50)
+      flush_orchestrator()
 
       status = Orchestrator.status()
       state = :sys.get_state(Orchestrator)
@@ -554,7 +555,7 @@ defmodule Svarm.OrchestratorTest do
       end)
 
       send(Orchestrator, {:run_exit, task.id, {:error, :agent_exit}})
-      Process.sleep(80)
+      flush_orchestrator()
 
       state = :sys.get_state(Orchestrator)
       # Entry should be stored in last_run_entries
@@ -591,7 +592,7 @@ defmodule Svarm.OrchestratorTest do
       end)
 
       send(Orchestrator, {:run_exit, task.id, {:error, :agent_exit}})
-      Process.sleep(50)
+      flush_orchestrator()
 
       status = Orchestrator.status()
       # With default max_retries=5, should be in retry, not completed
