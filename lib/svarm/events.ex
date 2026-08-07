@@ -64,10 +64,13 @@ defmodule Svarm.Events do
   end
 
   @doc """
-  Persist the run-finished banner once, then broadcast `{:run_finished, task_id, exit_code}`.
+  Persist the run-finished banner once, flush the run log, then broadcast
+  `{:run_finished, task_id, exit_code}`.
   """
   def broadcast_run_finished(task_id, exit_code) when is_integer(exit_code) do
     persist_agent_line(task_id, "\n--- run finished (exit #{exit_code}) ---\n")
+    # Durable store should hold the full transcript once the run ends.
+    Svarm.RunLog.flush(task_id)
     broadcast({:run_finished, task_id, exit_code})
   end
 
