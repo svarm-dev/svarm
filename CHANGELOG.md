@@ -24,6 +24,7 @@ Post-0.1.3: CI failure resume loop, denser board run console, docs/deps polish.
 
 ### Dependencies
 
+- Dev/test security toolchain: `mix_audit` + `sobelow` wired into `mix ci` (`deps.audit`, `sobelow --exit`); `lazy_html` constrained to `~> 0.1.0` ([#82](https://github.com/svarm-dev/svarm/issues/82))
 - `phoenix_live_reload` 1.6.2 → 1.7.0 (dev) ([#39](https://github.com/svarm-dev/svarm/pull/39))
 
 ## [0.1.3] - 2026-08-02

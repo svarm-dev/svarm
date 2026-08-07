@@ -8,9 +8,20 @@ defmodule Svarm.DemoTest do
     Settings.Store.delete("tracker")
     Application.delete_env(:svarm, :approval_overlay)
 
+    # Demo.seed mutates process-global orchestrator knobs (2s poll, max 1).
+    # Capture and restore so later suite modules are not stuck on a fast tick.
+    prev_poll = Application.get_env(:svarm, :orchestrator_poll_interval_ms)
+    prev_max = Application.get_env(:svarm, :orchestrator_max_concurrent)
+
     on_exit(fn ->
       Settings.Store.delete("tracker")
       Application.delete_env(:svarm, :approval_overlay)
+      restore_env(:orchestrator_poll_interval_ms, prev_poll)
+      restore_env(:orchestrator_max_concurrent, prev_max)
+
+      if Process.whereis(Orchestrator) do
+        _ = Orchestrator.reload_config()
+      end
     end)
 
     :ok
