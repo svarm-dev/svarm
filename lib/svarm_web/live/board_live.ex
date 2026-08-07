@@ -2,14 +2,14 @@ defmodule SvarmWeb.BoardLive do
   @moduledoc "Real-time board and agent run log (agent work · human judgment)."
   use SvarmWeb, :live_view
 
-  alias Svarm.{AgentRegistry, AgentRunner, Approval, Board, Events, Usage}
+  alias Svarm.{AgentRegistry, Approval, Board, Events, Usage}
   alias SvarmWeb.Plugs.ApprovalsAuth
 
   @max_log_lines 400
 
   @impl true
   def mount(_params, session, socket) do
-    agents = AgentRunner.load_agents()
+    agents = Board.list_agents()
     board_auth_ok = ApprovalsAuth.board_mutation_authorized?(session)
 
     socket =
