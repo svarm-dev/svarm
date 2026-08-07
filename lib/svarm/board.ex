@@ -60,6 +60,19 @@ defmodule Svarm.Board do
   end
 
   @doc """
+  Agent configs for board UI (agents.toml + Settings overrides).
+
+  LiveViews load agents through this read facade — not `AgentRunner` directly.
+  Returns a map of agent name => config, or `%{}` if load fails.
+  """
+  def list_agents do
+    case Svarm.AgentRunner.load_agents() do
+      agents when is_map(agents) -> agents
+      _ -> %{}
+    end
+  end
+
+  @doc """
   Snapshot of this install for homepage and first-run checklist.
 
   Returns a plain map: tracker, workflow path, agents, tasks, approvals.
@@ -68,7 +81,7 @@ defmodule Svarm.Board do
     workflow = Workflow.Store.get()
     cfg = if workflow, do: WorkflowConfig.from(workflow), else: %{}
     tracker = Settings.Resolve.tracker_overlay(cfg[:tracker_config] || %{})
-    agents = safe_agents()
+    agents = list_agents()
     tasks = safe_list_tasks()
     approval = approval_mode(workflow)
     setup = Settings.status()
@@ -106,13 +119,6 @@ defmodule Svarm.Board do
       %{username: u, password: p} when is_binary(u) and u != "" and is_binary(p) and p != "",
       Application.get_env(:svarm, :approvals_auth)
     ) or Application.get_env(:svarm, :dev_routes, false)
-  end
-
-  defp safe_agents do
-    case Svarm.AgentRunner.load_agents() do
-      agents when is_map(agents) -> agents
-      _ -> %{}
-    end
   end
 
   defp safe_list_tasks do

@@ -1,0 +1,20 @@
+# Baseline for `mix sobelow` / `mix ci`. Non-zero exit on findings not listed here.
+#
+# Ignores (project design / self-host posture — not silent security debt of the
+# wrong sort):
+# - Config.HTTPS — TLS terminates at reverse proxy (see config/prod.exs)
+# - Config.CSP — no app CSP yet; track separately if tightening browser headers
+# - Traversal.FileModule — intentional local FS for workspace / keys / agents.toml
+# - CI.System — intentional process kill tree in Runner.Cli / Runner.PiRPC
+[
+  verbose: false,
+  private: true,
+  skip: false,
+  router: "",
+  exit: "low",
+  format: "txt",
+  out: "",
+  threshold: "low",
+  ignore: ["Config.HTTPS", "Config.CSP", "Traversal.FileModule", "CI.System"],
+  ignore_files: []
+]
