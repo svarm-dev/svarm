@@ -395,11 +395,36 @@ defmodule SvarmWeb.BoardLiveTest do
   end
 
   test "empty columns show contextual hints instead of dash", %{conn: conn} do
+    # Avoid race with the shared Orchestrator: a poll can move an untrusted
+    # "demo" todo into pending_approval (or dispatch a trusted agent), emptying
+    # the todo column and resurfacing the empty hint mid-test.
+    # Pin max_concurrent to 0 so dispatch/gating is a no-op for this assertion.
+    prev_poll = Application.get_env(:svarm, :orchestrator_poll_interval_ms)
+    prev_max = Application.get_env(:svarm, :orchestrator_max_concurrent)
+    Application.put_env(:svarm, :orchestrator_poll_interval_ms, 60_000)
+    Application.put_env(:svarm, :orchestrator_max_concurrent, 0)
+
+    on_exit(fn ->
+      restore_env(:orchestrator_poll_interval_ms, prev_poll)
+      restore_env(:orchestrator_max_concurrent, prev_max)
+
+      if Process.whereis(Svarm.Orchestrator) do
+        _ = Svarm.Orchestrator.reload_config()
+      end
+    end)
+
+    if Process.whereis(Svarm.Orchestrator) do
+      assert {:ok, _} = Svarm.Orchestrator.reload_config()
+    end
+
     KanbanBridge.delete_all_tasks()
-    KanbanBridge.create_task(%{title: "Fill todo", status: "todo", assignee: "demo"})
+    # Trusted assignee: even if a leftover tick fires before pin applies, the
+    # approval gate will not rehome this card out of todo.
+    KanbanBridge.create_task(%{title: "Fill todo", status: "todo", assignee: "default"})
 
     {:ok, _view, html} = live(conn, ~p"/board")
 
+    assert html =~ "Fill todo"
     assert html =~ "Nothing running"
     assert html =~ "No completed tasks"
     assert html =~ "No failures"
@@ -501,4 +526,7 @@ defmodule SvarmWeb.BoardLiveTest do
 
     assert render(view) =~ "streamed chunk"
   end
+
+  defp restore_env(key, nil), do: Application.delete_env(:svarm, key)
+  defp restore_env(key, val), do: Application.put_env(:svarm, key, val)
 end
