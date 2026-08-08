@@ -6,6 +6,11 @@ import Config
 # The watchers configuration can be used to run external
 # watchers to your application. For example, we can use it
 # to bundle .js and .css sources.
+# Shared with Endpoint and Settings.Crypto (domain crypto must not import web modules).
+secret_key_base = "cEwceFsYByFtV0dTKbIRjLtnhKbWVMZuTO9RwobEYdSjUlOUQkXBSgwMLxweervY"
+
+config :svarm, :secret_key_base, secret_key_base
+
 config :svarm, SvarmWeb.Endpoint,
   # Binding to loopback ipv4 address prevents access from other machines.
   # Change to `ip: {0, 0, 0, 0}` to allow access from other machines.
@@ -13,7 +18,7 @@ config :svarm, SvarmWeb.Endpoint,
   check_origin: false,
   code_reloader: true,
   debug_errors: true,
-  secret_key_base: "cEwceFsYByFtV0dTKbIRjLtnhKbWVMZuTO9RwobEYdSjUlOUQkXBSgwMLxweervY",
+  secret_key_base: secret_key_base,
   watchers: [
     esbuild: {Esbuild, :install_and_run, [:svarm, ~w(--sourcemap=inline --watch)]},
     tailwind: {Tailwind, :install_and_run, [:svarm, ~w(--watch)]}
