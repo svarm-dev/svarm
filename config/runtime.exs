@@ -81,23 +81,67 @@ if config_env() == :prod do
 
   host = System.get_env("PHX_HOST") || "example.com"
 
+  # LiveView/WebSocket origin checks — never leave production open.
+  # Default: PHX_HOST only. Optional PHX_CHECK_ORIGIN is a comma-separated
+  # allow-list of hosts or full origins (//host, https://host:port, wildcards).
+  check_origin =
+    case System.get_env("PHX_CHECK_ORIGIN") do
+      nil ->
+        ["//#{host}"]
+
+      raw ->
+        origins =
+          raw
+          |> String.split(",", trim: true)
+          |> Enum.reject(&(&1 == ""))
+          |> Enum.map(fn origin ->
+            if String.starts_with?(origin, ["//", "http://", "https://"]) do
+              origin
+            else
+              "//#{origin}"
+            end
+          end)
+
+        case origins do
+          [] -> ["//#{host}"]
+          list -> list
+        end
+    end
+
+  # Session Secure flag: default on for HTTPS / reverse-proxy TLS termination.
+  # Local Docker over plain HTTP must set PHX_SECURE_COOKIES=false (compose does).
+  # false / 0 / no / off → insecure cookies for HTTP-only local use only.
+  session_secure? =
+    System.get_env("PHX_SECURE_COOKIES", "true") not in ~w(0 false FALSE no NO off OFF)
+
   config :svarm, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
+  config :svarm, :session_secure, session_secure?
 
   # App-level key for Settings.Crypto (same secret as Endpoint; avoids domain→web coupling).
   config :svarm, :secret_key_base, secret_key_base
 
   config :svarm, SvarmWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
-    check_origin: false,
+    check_origin: check_origin,
     http: [
       ip: {0, 0, 0, 0, 0, 0, 0, 0}
     ],
     secret_key_base: secret_key_base
 
-  # ## SSL Support
+  # ## Reverse proxy / TLS
   #
-  # To get SSL working, you will need to add the `https` key
-  # to your endpoint configuration:
+  # Production is expected behind HTTPS (TLS at the reverse proxy is fine).
+  # Set PHX_HOST to the public hostname browsers use. Session cookies use
+  # Secure by default so they are not sent over cleartext HTTP.
+  #
+  # Raw HTTP on a public port is unsupported. For loopback Docker demos only,
+  # compose sets PHX_SECURE_COOKIES=false so LiveView sessions work on
+  # http://localhost — do not use that on a shared/public host.
+  #
+  # App-level force_ssl may stay proxy-owned (see config/prod.exs). If the
+  # proxy terminates TLS, forward Host and X-Forwarded-Proto.
+  #
+  # Optional app-managed HTTPS (no proxy):
   #
   #     config :svarm, SvarmWeb.Endpoint,
   #       https: [
@@ -107,22 +151,4 @@ if config_env() == :prod do
   #         keyfile: System.get_env("SOME_APP_SSL_KEY_PATH"),
   #         certfile: System.get_env("SOME_APP_SSL_CERT_PATH")
   #       ]
-  #
-  # The `cipher_suite` is set to `:strong` to support only the
-  # latest and more secure SSL ciphers. This means old browsers
-  # and clients may not be supported. You can set it to
-  # `:compatible` for wider support.
-  #
-  # `:keyfile` and `:certfile` expect an absolute path to the key
-  # and cert in disk or a relative path inside priv, for example
-  # "priv/ssl/server.key". For all supported SSL configuration
-  # options, see https://plug.hexdocs.pm/Plug.SSL.html#configure/1
-  #
-  # We also recommend setting `force_ssl` in your config/prod.exs,
-  # ensuring no data is ever sent via http, always redirecting to https:
-  #
-  #     config :svarm, SvarmWeb.Endpoint,
-  #       force_ssl: [hsts: true]
-  #
-  # Check `Plug.SSL` for all available options in `force_ssl`.
 end

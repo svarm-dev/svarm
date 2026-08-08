@@ -142,6 +142,7 @@ Svärm tracks GitHub work with **labels**. Your eligibility label (e.g. `ai-task
 | CI resume | Optional: re-dispatch when a managed PR’s Checks fail (see below). **Off by default.** |
 | Smoke-only off | Never leave `approval.mode: off` on a shared repo; do not leave `SVARM_DEMO_ROUTES` / `SVARM_SEED_DEMO` on production |
 | Base URL | Point `SVARM_BASE_URL` at the deployed host |
+| HTTPS + host | Terminate TLS at a reverse proxy; set `PHX_HOST` to the public hostname (origin checks). Leave `PHX_SECURE_COOKIES` at default `true` behind HTTPS — see [SECURITY.md](SECURITY.md) |
 
 ### CI resume (optional)
 

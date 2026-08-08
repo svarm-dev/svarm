@@ -4,6 +4,8 @@ defmodule SvarmWeb.Endpoint do
   # The session will be stored in the cookie and signed,
   # this means its contents can be read but not tampered with.
   # Set :encryption_salt if you would also like to encrypt it.
+  # `:secure` is applied at runtime via `session_options/0` so prod HTTPS
+  # can set Secure cookies while local Mix / plain-HTTP Docker stay usable.
   @session_options [
     store: :cookie,
     key: "_svarm_key",
@@ -12,8 +14,8 @@ defmodule SvarmWeb.Endpoint do
   ]
 
   socket "/live", Phoenix.LiveView.Socket,
-    websocket: [connect_info: [session: @session_options]],
-    longpoll: [connect_info: [session: @session_options]]
+    websocket: [connect_info: [session: {__MODULE__, :session_options, []}]],
+    longpoll: [connect_info: [session: {__MODULE__, :session_options, []}]]
 
   # Serve at "/" the static files from "priv/static" directory.
   #
@@ -49,6 +51,21 @@ defmodule SvarmWeb.Endpoint do
 
   plug Plug.MethodOverride
   plug Plug.Head
-  plug Plug.Session, @session_options
+  plug :session
   plug SvarmWeb.Router
+
+  @doc """
+  Session cookie options for Plug.Session and LiveView socket connect_info.
+
+  Production (`config/runtime.exs`) sets `:session_secure` so cookies use the
+  Secure flag when the deployment is expected behind HTTPS. Dev/test leave
+  that unset (false) so local HTTP works.
+  """
+  def session_options do
+    Keyword.put(@session_options, :secure, Application.get_env(:svarm, :session_secure, false))
+  end
+
+  defp session(conn, _opts) do
+    Plug.Session.call(conn, Plug.Session.init(session_options()))
+  end
 end

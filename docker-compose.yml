@@ -30,6 +30,8 @@ services:
       - SVARM_WORKFLOW_PATH=/app/config/WORKFLOW.md
       - SVARM_AGENTS_PATH=/app/config/agents.toml
       - PHX_HOST=${PHX_HOST:-localhost}
+      # Plain HTTP on localhost: allow non-Secure session cookies (prod defaults Secure).
+      - PHX_SECURE_COOKIES=${PHX_SECURE_COOKIES:-false}
       - SVARM_BASE_URL=${SVARM_BASE_URL:-http://localhost:${SVARM_PORT:-4000}}
     volumes:
       - ./data:/app/data
@@ -51,11 +53,12 @@ services:
       - SVARM_WORKFLOW_PATH=/app/config/WORKFLOW.md
       - SVARM_AGENTS_PATH=/app/config/agents.toml
       - PHX_HOST=${PHX_HOST:-localhost}
+      # Plain HTTP on localhost: allow non-Secure session cookies (prod defaults Secure).
+      - PHX_SECURE_COOKIES=${PHX_SECURE_COOKIES:-false}
       - SVARM_BASE_URL=${SVARM_BASE_URL:-http://localhost:${SVARM_PORT:-4000}}
       - SVARM_SEED_DEMO=1
       # Re-seed button + /dev/demo/seed (explicit; not implied by SEED alone).
       - SVARM_DEMO_ROUTES=1
-      - FORCE_SSL=${FORCE_SSL:-true}
       # Demo: research/docs trusted, demo_code gated (runtime overlay). Basic Auth for /approvals.
       - APPROVALS_USER=${APPROVALS_USER:-svarm}
       - APPROVALS_PASSWORD=${APPROVALS_PASSWORD:-svarm}
