@@ -2,6 +2,7 @@ defmodule Svarm.DemoTest do
   use ExUnit.Case, async: false
 
   alias Svarm.{Demo, KanbanBridge, Orchestrator, Settings}
+  alias Svarm.Test.OrchestratorEnv
 
   setup do
     KanbanBridge.delete_all_tasks()
@@ -10,18 +11,10 @@ defmodule Svarm.DemoTest do
 
     # Demo.seed mutates process-global orchestrator knobs (2s poll, max 1).
     # Capture and restore so later suite modules are not stuck on a fast tick.
-    prev_poll = Application.get_env(:svarm, :orchestrator_poll_interval_ms)
-    prev_max = Application.get_env(:svarm, :orchestrator_max_concurrent)
+    OrchestratorEnv.restore_on_exit()
 
     on_exit(fn ->
       Settings.Store.delete("tracker")
-      Application.delete_env(:svarm, :approval_overlay)
-      restore_env(:orchestrator_poll_interval_ms, prev_poll)
-      restore_env(:orchestrator_max_concurrent, prev_max)
-
-      if Process.whereis(Orchestrator) do
-        _ = Orchestrator.reload_config()
-      end
     end)
 
     :ok
@@ -100,9 +93,9 @@ defmodule Svarm.DemoTest do
       assert status.approval.mode == :untrusted
       refute MapSet.member?(status.approval.trusted_assignees, "only_from_overlay")
     after
-      restore_env(:seed_demo_on_boot, prev_seed)
-      restore_env(:demo_routes, prev_demo)
-      restore_env(:dev_routes, prev_dev)
+      restore_app_env(:seed_demo_on_boot, prev_seed)
+      restore_app_env(:demo_routes, prev_demo)
+      restore_app_env(:dev_routes, prev_dev)
       # Restore test default so later tests see demo_profile_active?
       Application.put_env(:svarm, :dev_routes, true)
     end
@@ -220,7 +213,7 @@ defmodule Svarm.DemoTest do
       Application.put_env(:svarm, :demo_routes, true)
       assert Demo.routes_enabled?()
     after
-      restore_env(:demo_routes, prev_demo)
+      restore_app_env(:demo_routes, prev_demo)
       Application.put_env(:svarm, :dev_routes, prev_dev || true)
     end
   end
@@ -231,6 +224,6 @@ defmodule Svarm.DemoTest do
     assert Demo.flash_error(:other) =~ "other"
   end
 
-  defp restore_env(key, nil), do: Application.delete_env(:svarm, key)
-  defp restore_env(key, val), do: Application.put_env(:svarm, key, val)
+  defp restore_app_env(key, nil), do: Application.delete_env(:svarm, key)
+  defp restore_app_env(key, val), do: Application.put_env(:svarm, key, val)
 end

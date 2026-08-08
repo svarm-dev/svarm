@@ -168,4 +168,131 @@ defmodule Svarm.UsageTest do
       assert %DateTime{} = record.inserted_at
     end
   end
+
+  describe "task_cost_summaries/1" do
+    test "batches multiple tasks in one map" do
+      Usage.append(%{
+        run_id: "r_batch_a",
+        task_id: "task_a",
+        source: "worker",
+        provider: "openrouter",
+        model_id: "gpt-5.1",
+        prompt_tokens: 1_000_000,
+        completion_tokens: 0,
+        estimated: false
+      })
+
+      Usage.append(%{
+        run_id: "r_batch_b",
+        task_id: "task_b",
+        source: "worker",
+        provider: "openrouter",
+        model_id: "claude-sonnet-4-20250514",
+        prompt_tokens: 0,
+        completion_tokens: 1_000_000,
+        estimated: false
+      })
+
+      summaries = Usage.task_cost_summaries(["task_a", "task_b", "task_missing"])
+
+      assert map_size(summaries) == 2
+      assert summaries["task_a"].total_cost_usd == 1.75
+      assert summaries["task_a"].estimated == true
+      assert summaries["task_b"].total_cost_usd == 15.0
+      assert summaries["task_b"].estimated == true
+      refute Map.has_key?(summaries, "task_missing")
+    end
+
+    test "empty task list returns empty map without error" do
+      assert Usage.task_cost_summaries([]) == %{}
+    end
+
+    test "provider_cost_usd remains exact in batch summaries" do
+      Usage.append(%{
+        run_id: "r_batch_pc",
+        task_id: "task_pc_batch",
+        source: "worker",
+        provider: "openrouter",
+        model_id: "deepseek/deepseek-v4-flash",
+        prompt_tokens: 90_000,
+        completion_tokens: 6_200,
+        provider_cost_usd: 0.0148,
+        estimated: false
+      })
+
+      summary = Usage.task_cost_summary("task_pc_batch")
+      assert summary.total_cost_usd == 0.0148
+      assert summary.estimated == false
+    end
+  end
+
+  describe "session_cost_summary/0" do
+    test "aggregates cost and tokens without requiring list_all" do
+      Usage.append(%{
+        run_id: "r_sess_1",
+        task_id: "task_sess_1",
+        source: "worker",
+        provider: "openrouter",
+        model_id: "gpt-5.1",
+        prompt_tokens: 1_000_000,
+        completion_tokens: 0,
+        estimated: false
+      })
+
+      Usage.append(%{
+        run_id: "r_sess_2",
+        task_id: "task_sess_2",
+        source: "worker",
+        provider: "openrouter",
+        model_id: "claude-sonnet-4-20250514",
+        prompt_tokens: 0,
+        completion_tokens: 1_000_000,
+        provider_cost_usd: 0.5,
+        estimated: false
+      })
+
+      summary = Usage.session_cost_summary()
+
+      # gpt-5.1 rate: 1.75 + provider bill 0.5
+      assert summary.total_cost_usd == 2.25
+      assert summary.prompt_tokens == 1_000_000
+      assert summary.completion_tokens == 1_000_000
+      assert summary.record_count == 2
+      # rate-table row makes the session estimated
+      assert summary.estimated == true
+
+      totals = Usage.session_totals()
+      assert totals.prompt_tokens == summary.prompt_tokens
+      assert totals.completion_tokens == summary.completion_tokens
+      assert totals.record_count == summary.record_count
+    end
+
+    test "empty ledger returns zeroed summary" do
+      summary = Usage.session_cost_summary()
+
+      assert summary.total_cost_usd == 0.0
+      assert summary.record_count == 0
+      assert summary.prompt_tokens == 0
+      assert summary.completion_tokens == 0
+      assert summary.estimated == false
+    end
+
+    test "all provider-billed rows are not estimated" do
+      Usage.append(%{
+        run_id: "r_exact",
+        task_id: "task_exact",
+        source: "worker",
+        provider: "openrouter",
+        model_id: "unknown-model",
+        prompt_tokens: 100,
+        completion_tokens: 50,
+        provider_cost_usd: 1.23,
+        estimated: false
+      })
+
+      summary = Usage.session_cost_summary()
+      assert summary.total_cost_usd == 1.23
+      assert summary.estimated == false
+    end
+  end
 end

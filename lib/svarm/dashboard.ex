@@ -15,7 +15,8 @@ defmodule Svarm.Dashboard do
     tasks = Board.list_tasks()
     agents = AgentRunner.load_agents()
     orchestrator = Orchestrator.status()
-    totals = Usage.Query.session_totals()
+    # Single session aggregate — derive token totals from the same summary.
+    session_cost = Usage.session_cost_summary()
 
     %{
       tasks: tasks,
@@ -24,8 +25,8 @@ defmodule Svarm.Dashboard do
       agent_roster: agent_roster(tasks, agents, orchestrator),
       task_distribution: Board.counts_by_status(tasks),
       human_wait: Board.human_wait_summary(tasks),
-      session_cost: Usage.session_cost_summary(),
-      session_totals: totals,
+      session_cost: session_cost,
+      session_totals: Usage.Query.totals_from_summary(session_cost),
       recent_runs: recent_runs(tasks, agents)
     }
   end
@@ -124,12 +125,16 @@ defmodule Svarm.Dashboard do
   Last N completed or failed tasks with cost, newest first.
   """
   def recent_runs(tasks, agents, limit \\ 10) do
-    tasks
-    |> Enum.filter(&(&1.status in ["done", "review", "failed"]))
-    |> Enum.sort_by(& &1.created_at, :desc)
-    |> Enum.take(limit)
-    |> Enum.map(fn task ->
-      cost = Usage.task_cost_summary(task.id)
+    recent =
+      tasks
+      |> Enum.filter(&(&1.status in ["done", "review", "failed"]))
+      |> Enum.sort_by(& &1.created_at, :desc)
+      |> Enum.take(limit)
+
+    costs = Usage.task_cost_summaries(Enum.map(recent, & &1.id))
+
+    Enum.map(recent, fn task ->
+      cost = Map.get(costs, task.id)
       identity = AgentRegistry.identity(task.assignee, agents)
 
       %{

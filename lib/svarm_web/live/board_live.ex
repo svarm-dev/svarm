@@ -76,12 +76,7 @@ defmodule SvarmWeb.BoardLive do
   def handle_event("approve_task", %{"id" => id}, socket) do
     case authorize_board_mutation(socket) do
       {:error, :unauthorized} ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           "Authentication required to approve. Sign in via /approvals (same APPROVALS_* credentials), then return to the board."
-         )}
+        {:noreply, put_flash(socket, :error, unauthorized_mutation_flash("approve"))}
 
       :ok ->
         case Approval.approve(id) do
@@ -103,12 +98,7 @@ defmodule SvarmWeb.BoardLive do
   def handle_event("reject_task", %{"id" => id}, socket) do
     case authorize_board_mutation(socket) do
       {:error, :unauthorized} ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           "Authentication required to reject. Sign in via /approvals (same APPROVALS_* credentials), then return to the board."
-         )}
+        {:noreply, put_flash(socket, :error, unauthorized_mutation_flash("reject"))}
 
       :ok ->
         case Approval.reject(id) do
@@ -130,12 +120,7 @@ defmodule SvarmWeb.BoardLive do
   def handle_event("complete_review", %{"id" => id}, socket) do
     case authorize_board_mutation(socket) do
       {:error, :unauthorized} ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           "Authentication required to mark done. Sign in via /approvals (same APPROVALS_* credentials), then return to the board."
-         )}
+        {:noreply, put_flash(socket, :error, unauthorized_mutation_flash("mark done"))}
 
       :ok ->
         case Board.complete_review(id) do
@@ -175,6 +160,14 @@ defmodule SvarmWeb.BoardLive do
       :ok
     else
       {:error, :unauthorized}
+    end
+  end
+
+  defp unauthorized_mutation_flash(action) do
+    if ApprovalsAuth.credentials_configured?() do
+      "Authentication required to #{action}. Sign in via /approvals (same APPROVALS_* credentials), then return to the board."
+    else
+      "Board mutations require APPROVALS_USER and APPROVALS_PASSWORD outside local dev. Configure them, sign in via /approvals, then return to the board."
     end
   end
 
@@ -369,7 +362,6 @@ defmodule SvarmWeb.BoardLive do
 
   defp load_board(socket) do
     tasks = Board.list_tasks()
-    socket = put_columns(socket, tasks)
     costs = compute_costs(tasks)
     orchestrator = Board.orchestrator_status()
 
@@ -378,26 +370,20 @@ defmodule SvarmWeb.BoardLive do
     orchestrator = Map.put(orchestrator, :session_cost, session_cost)
 
     socket
-    |> assign(:costs, costs)
+    |> put_columns(tasks, costs)
     |> assign(:orchestrator, orchestrator)
-    |> assign(:workload, Board.counts_by_assignee(tasks))
     |> assign(:running_started, Map.get(orchestrator, :running_started, %{}))
   end
 
+  # One batched usage query for all visible tasks (no per-task N+1).
   defp compute_costs(tasks) do
     tasks
-    |> Enum.map(fn task ->
-      case Usage.task_cost_summary(task.id) do
-        nil -> nil
-        summary -> {task.id, summary}
-      end
-    end)
-    |> Enum.reject(&is_nil/1)
-    |> Map.new()
+    |> Enum.map(& &1.id)
+    |> Usage.task_cost_summaries()
   end
 
-  defp put_columns(socket, tasks) do
-    costs = compute_costs(tasks)
+  defp put_columns(socket, tasks, costs \\ nil) do
+    costs = costs || compute_costs(tasks)
 
     socket
     |> assign(:column_ids, Board.column_ids())

@@ -2,17 +2,18 @@ defmodule Svarm.OrchestratorTest do
   use ExUnit.Case, async: false
 
   alias Svarm.{Approval, KanbanBridge, Orchestrator, Workspace}
+  alias Svarm.Test.Wait
+
+  # Sync barrier: GenServer processes mailbox FIFO, so get_state waits until
+  # prior handle_info/handle_cast messages have finished.
+  defp flush_orchestrator do
+    _ = :sys.get_state(Orchestrator)
+    :ok
+  end
 
   # Up to ~3s under CI load (was 1s / 40×25ms — flaked on slow ticks).
   defp wait_until(fun, attempts \\ 120) do
-    Enum.reduce_while(1..attempts, false, fn _, _ ->
-      if fun.() do
-        {:halt, true}
-      else
-        Process.sleep(25)
-        {:cont, false}
-      end
-    end)
+    Wait.until(fun, attempts: attempts)
   end
 
   # ponytail: one runnable check for the non-trivial logic.
@@ -34,7 +35,7 @@ defmodule Svarm.OrchestratorTest do
     test "orchestrator survives concurrent run_exit messages for unknown tasks" do
       send(Orchestrator, {:run_exit, "sva_nonexistent_a", :ok})
       send(Orchestrator, {:run_exit, "sva_nonexistent_b", :ok})
-      Process.sleep(100)
+      flush_orchestrator()
       assert Process.whereis(Orchestrator)
       assert is_map(Orchestrator.status())
     end
@@ -66,7 +67,7 @@ defmodule Svarm.OrchestratorTest do
       end)
 
       send(Orchestrator, {:DOWN, mref, :process, self(), :enoent})
-      Process.sleep(80)
+      flush_orchestrator()
 
       assert Process.whereis(Orchestrator)
       state = :sys.get_state(Orchestrator)
@@ -93,7 +94,7 @@ defmodule Svarm.OrchestratorTest do
 
       try do
         send(Orchestrator, :tick)
-        Process.sleep(80)
+        flush_orchestrator()
         assert Process.whereis(Orchestrator)
         assert is_map(Orchestrator.status())
       after
@@ -329,7 +330,7 @@ defmodule Svarm.OrchestratorTest do
       end)
 
       send(Orchestrator, {:run_exit, task.id, :ok})
-      Process.sleep(50)
+      flush_orchestrator()
 
       status = Orchestrator.status()
       state = :sys.get_state(Orchestrator)
@@ -362,11 +363,165 @@ defmodule Svarm.OrchestratorTest do
       end)
 
       send(Orchestrator, {:run_exit, task.id, :ok})
-      Process.sleep(50)
+      flush_orchestrator()
 
       status = Orchestrator.status()
       # Task is "done" (terminal) → completed, not in retry
       refute task.id in status.retry_ids
+    end
+
+    # Tracker that ignores the first N-1 update_status calls so force-terminal
+    # must schedule send_after retries (never Process.sleep on the GenServer).
+    defmodule StickyActiveTracker do
+      @table :svarm_sticky_active_tracker
+
+      def ensure_table! do
+        case :ets.whereis(@table) do
+          :undefined ->
+            :ets.new(@table, [:named_table, :public, :set])
+
+          _ ->
+            :ok
+        end
+      end
+
+      def set_succeed_on_attempt(n) when is_integer(n) and n >= 1 do
+        ensure_table!()
+        :ets.delete_all_objects(@table)
+        :ets.insert(@table, {:succeed_on, n})
+      end
+
+      def update_status(config, id, status) do
+        ensure_table!()
+        n = :ets.update_counter(@table, {:count, id}, {2, 1}, {{:count, id}, 0})
+        succeed_on = succeed_on_attempt()
+
+        if n >= succeed_on do
+          Svarm.Tracker.Local.update_status(config, id, status)
+        else
+          :ok
+        end
+      end
+
+      def get_issue(config, id), do: Svarm.Tracker.Local.get_issue(config, id)
+      def list_eligible(config), do: Svarm.Tracker.Local.list_eligible(config)
+      def list_issues(config, filters \\ []), do: Svarm.Tracker.Local.list_issues(config, filters)
+      def create_issue(config, attrs), do: Svarm.Tracker.Local.create_issue(config, attrs)
+      def update_attempts(config, id, n), do: Svarm.Tracker.Local.update_attempts(config, id, n)
+      def claim(config, id), do: Svarm.Tracker.Local.claim(config, id)
+      def delete_all(config), do: Svarm.Tracker.Local.delete_all(config)
+      def post_run_summary(config, id, s), do: Svarm.Tracker.Local.post_run_summary(config, id, s)
+
+      defp succeed_on_attempt do
+        case :ets.lookup(@table, :succeed_on) do
+          [{:succeed_on, n}] -> n
+          _ -> 1
+        end
+      end
+    end
+
+    test "force-terminal retries via send_after without blocking GenServer" do
+      StickyActiveTracker.set_succeed_on_attempt(3)
+
+      task =
+        KanbanBridge.create_task(%{
+          title: "sticky force terminal",
+          status: "todo",
+          assignee: "cody"
+        })
+
+      original = :sys.get_state(Orchestrator)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        running =
+          Map.put(state.running, task.id, %{
+            task: task,
+            pid: self(),
+            mref: make_ref(),
+            started_mono_ms: System.monotonic_time(:millisecond),
+            started_at: System.system_time(:second)
+          })
+
+        %{
+          state
+          | tracker: StickyActiveTracker,
+            tracker_config: state.tracker_config || %{},
+            running: running,
+            claimed: MapSet.put(state.claimed, task.id)
+        }
+      end)
+
+      try do
+        send(Orchestrator, {:run_exit, task.id, :ok})
+
+        # GenServer must answer immediately (proves no Process.sleep in the handler).
+        assert is_map(Orchestrator.status())
+        state = :sys.get_state(Orchestrator)
+        assert MapSet.member?(state.completed, task.id)
+        # First two update_status calls are no-ops — still active until attempt 3.
+        assert KanbanBridge.get_task(task.id).status == "todo"
+
+        assert wait_until(fn -> KanbanBridge.get_task(task.id).status == "review" end)
+
+        assert KanbanBridge.get_task(task.id).status == "review"
+        refute task.id in Orchestrator.status().retry_ids
+      after
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "force-terminal gives up after retry budget without re-dispatch" do
+      # Never apply the status patch — exhaust 3 attempts then give up.
+      StickyActiveTracker.set_succeed_on_attempt(99)
+
+      task =
+        KanbanBridge.create_task(%{
+          title: "force terminal give up",
+          status: "todo",
+          assignee: "cody"
+        })
+
+      original = :sys.get_state(Orchestrator)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        running =
+          Map.put(state.running, task.id, %{
+            task: task,
+            pid: self(),
+            mref: make_ref(),
+            started_mono_ms: System.monotonic_time(:millisecond),
+            started_at: System.system_time(:second)
+          })
+
+        %{
+          state
+          | tracker: StickyActiveTracker,
+            tracker_config: state.tracker_config || %{},
+            running: running,
+            claimed: MapSet.put(state.claimed, task.id)
+        }
+      end)
+
+      try do
+        send(Orchestrator, {:run_exit, task.id, :ok})
+
+        # Completes immediately (session skip); status patch may never stick.
+        assert wait_until(fn ->
+                 MapSet.member?(:sys.get_state(Orchestrator).completed, task.id)
+               end)
+
+        # Wait past full retry budget (400ms + 800ms) so give-up runs.
+        Process.sleep(1500)
+
+        assert is_map(Orchestrator.status())
+        assert MapSet.member?(:sys.get_state(Orchestrator).completed, task.id)
+        refute task.id in Orchestrator.status().retry_ids
+        refute task.id in Orchestrator.status().running_ids
+        # Tracker never accepted the patch — still active, but not re-dispatched.
+        assert KanbanBridge.get_task(task.id).status == "todo"
+      after
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
     end
   end
 
@@ -400,13 +555,13 @@ defmodule Svarm.OrchestratorTest do
 
       # Trigger a reconcile cycle
       send(Orchestrator, :tick)
-      Process.sleep(80)
+      flush_orchestrator()
 
       status = Orchestrator.status()
       refute task.id in status.running_ids
 
-      # Worker should have been asked to exit
-      refute Process.alive?(worker)
+      # Worker should have been asked to exit (exit is async; poll briefly)
+      assert wait_until(fn -> not Process.alive?(worker) end)
 
       # The task itself should still be terminal in the tracker
       assert %{status: "done"} = KanbanBridge.get_task(task.id)
@@ -426,7 +581,7 @@ defmodule Svarm.OrchestratorTest do
       KanbanBridge.update_status(task.id, "failed")
 
       send(Orchestrator, :tick)
-      Process.sleep(50)
+      flush_orchestrator()
 
       status = Orchestrator.status()
       # Should no longer be claimed in internal state
@@ -459,7 +614,7 @@ defmodule Svarm.OrchestratorTest do
       end)
 
       send(Orchestrator, {:run_exit, task.id, :ok})
-      Process.sleep(50)
+      flush_orchestrator()
 
       state = :sys.get_state(Orchestrator)
       # last_run_entries should be set after run_exit
@@ -490,7 +645,7 @@ defmodule Svarm.OrchestratorTest do
       end)
 
       send(Orchestrator, {:run_exit, task.id, :ok})
-      Process.sleep(50)
+      flush_orchestrator()
 
       status = Orchestrator.status()
       state = :sys.get_state(Orchestrator)
@@ -554,7 +709,7 @@ defmodule Svarm.OrchestratorTest do
       end)
 
       send(Orchestrator, {:run_exit, task.id, {:error, :agent_exit}})
-      Process.sleep(80)
+      flush_orchestrator()
 
       state = :sys.get_state(Orchestrator)
       # Entry should be stored in last_run_entries
@@ -591,7 +746,7 @@ defmodule Svarm.OrchestratorTest do
       end)
 
       send(Orchestrator, {:run_exit, task.id, {:error, :agent_exit}})
-      Process.sleep(50)
+      flush_orchestrator()
 
       status = Orchestrator.status()
       # With default max_retries=5, should be in retry, not completed
