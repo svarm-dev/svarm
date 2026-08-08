@@ -7,12 +7,12 @@ defmodule SvarmWeb.ConnCase do
   import other functionality to make it easier
   to build common data structures and query the data layer.
 
-  Finally, if the test case interacts with the database,
-  we enable the SQL sandbox, so changes done to the database
-  are reverted at the end of every test. If you are using
-  PostgreSQL, you can even run database tests asynchronously
-  by setting `use SvarmWeb.ConnCase, async: true`, although
-  this option is not recommended for other databases.
+  Database-backed tests share a per-run SQLite file under the system
+  temp directory (see `config/test.exs`). There is no Ecto SQL sandbox
+  and no per-test transaction rollback. Prefer `async: false` whenever
+  a test touches Repo, KanbanBridge, or the shared Orchestrator GenServer;
+  `async: true` is only safe for pure connection tests that never share
+  that state.
   """
 
   use ExUnit.CaseTemplate
