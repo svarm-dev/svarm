@@ -52,6 +52,9 @@ defmodule Svarm.Orchestrator do
   @default_terminal_states ["done", "failed", "review"]
   @base_backoff_ms 10_000
   @continuation_retry_ms 1_000
+  # Force-terminal status patch after ok exit: retry without blocking the GenServer.
+  @force_terminal_max_attempts 3
+  @force_terminal_backoff_ms 400
   # Bound Checks polls per tick so the GenServer mailbox stays responsive.
   @ci_resume_max_per_tick 3
 
@@ -208,6 +211,13 @@ defmodule Svarm.Orchestrator do
     {entry, retry_map} = Map.pop(state.retry_attempts, task_id)
     state = %{state | retry_attempts: retry_map}
     {:noreply, do_retry(state, entry, task_id)}
+  end
+
+  ## force-terminal status patch (non-blocking retries)
+
+  def handle_info({:force_terminal_retry, task_id, status, attempt}, state) do
+    force_terminal_status(state, task_id, status, attempt)
+    {:noreply, state}
   end
 
   def handle_info({:workflow_reloaded, wf}, state) do
@@ -872,9 +882,10 @@ defmodule Svarm.Orchestrator do
           # Runner reported success (exit 0). Do not re-spawn (burns tokens /
           # rate-limits). Force terminal review; retry status patch so GitHub
           # label sticks across process restarts when possible.
+          # Retries use send_after — never Process.sleep on this GenServer.
           Logger.warning("task #{task_id} exited ok but status=#{task.status}; forcing review")
 
-          force_terminal_status(state, task_id, "review")
+          force_terminal_status(state, task_id, "review", 1)
           post_run_summary(state, task_id, :ok)
           %{state | completed: MapSet.put(state.completed, task_id)}
         end
@@ -897,40 +908,43 @@ defmodule Svarm.Orchestrator do
   end
 
   # Best-effort: move tracker to a terminal status after a successful run.
+  # Retries via `Process.send_after` so poll ticks / status calls stay responsive.
   # `completed` still skips re-dispatch this boot if the patch never sticks.
-  defp force_terminal_status(state, task_id, status) do
-    Enum.reduce_while(1..3, :error, fn attempt, _acc ->
-      state.tracker.update_status(state.tracker_config, task_id, status)
-      force_terminal_step(state, task_id, attempt)
-    end)
+  defp force_terminal_status(state, task_id, status, attempt) do
+    state.tracker.update_status(state.tracker_config, task_id, status)
+
+    case force_terminal_check(state, task_id) do
+      :ok ->
+        :ok
+
+      :retry ->
+        schedule_force_terminal_retry(task_id, status, attempt)
+    end
   end
 
-  defp force_terminal_step(state, task_id, attempt) do
+  defp force_terminal_check(state, task_id) do
     case state.tracker.get_issue(state.tracker_config, task_id) do
-      {:ok, t} -> force_terminal_after_fetch(t, state.terminal_states, task_id, attempt)
-      _ -> retry_or_give_up(task_id, attempt)
+      {:ok, t} ->
+        if t.status in state.terminal_states, do: :ok, else: :retry
+
+      _ ->
+        :retry
     end
   end
 
-  defp force_terminal_after_fetch(task, terminal_states, task_id, attempt) do
-    if task.status in terminal_states do
-      {:halt, :ok}
-    else
-      retry_or_give_up(task_id, attempt)
-    end
+  defp schedule_force_terminal_retry(task_id, status, attempt)
+       when attempt < @force_terminal_max_attempts do
+    delay = @force_terminal_backoff_ms * attempt
+    Process.send_after(self(), {:force_terminal_retry, task_id, status, attempt + 1}, delay)
+    :ok
   end
 
-  defp retry_or_give_up(_task_id, attempt) when attempt < 3 do
-    Process.sleep(400 * attempt)
-    {:cont, :error}
-  end
-
-  defp retry_or_give_up(task_id, attempt) do
+  defp schedule_force_terminal_retry(task_id, _status, attempt) do
     Logger.warning(
       "task #{task_id}: status still non-terminal after #{attempt} tries (session skip via completed)"
     )
 
-    {:halt, :error}
+    :ok
   end
 
   defp post_run_summary(state, task_id, result) do

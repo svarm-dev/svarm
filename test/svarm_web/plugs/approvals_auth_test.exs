@@ -64,7 +64,9 @@ defmodule SvarmWeb.Plugs.ApprovalsAuthTest do
 
   test "credentials_configured? and board_mutation_authorized?" do
     Application.delete_env(:svarm, :approvals_auth)
+    Application.put_env(:svarm, :dev_routes, true)
     refute SvarmWeb.Plugs.ApprovalsAuth.credentials_configured?()
+    assert SvarmWeb.Plugs.ApprovalsAuth.open_board_mutations_without_auth?()
     assert SvarmWeb.Plugs.ApprovalsAuth.board_mutation_authorized?(%{})
     assert SvarmWeb.Plugs.ApprovalsAuth.authorize_board_mutation?(false)
 
@@ -74,5 +76,26 @@ defmodule SvarmWeb.Plugs.ApprovalsAuthTest do
     assert SvarmWeb.Plugs.ApprovalsAuth.board_mutation_authorized?(%{"board_auth_ok" => true})
     refute SvarmWeb.Plugs.ApprovalsAuth.authorize_board_mutation?(false)
     assert SvarmWeb.Plugs.ApprovalsAuth.authorize_board_mutation?(true)
+  end
+
+  test "prod-like: missing credentials fail closed for board mutations" do
+    Application.put_env(:svarm, :dev_routes, false)
+    Application.delete_env(:svarm, :approvals_auth)
+
+    refute SvarmWeb.Plugs.ApprovalsAuth.credentials_configured?()
+    refute SvarmWeb.Plugs.ApprovalsAuth.open_board_mutations_without_auth?()
+    refute SvarmWeb.Plugs.ApprovalsAuth.board_mutation_authorized?(%{})
+    refute SvarmWeb.Plugs.ApprovalsAuth.board_mutation_authorized?(%{"board_auth_ok" => true})
+    refute SvarmWeb.Plugs.ApprovalsAuth.authorize_board_mutation?(true)
+    refute SvarmWeb.Plugs.ApprovalsAuth.authorize_board_mutation?(false)
+  end
+
+  test "dev_routes keeps board mutations open without credentials" do
+    Application.put_env(:svarm, :dev_routes, true)
+    Application.delete_env(:svarm, :approvals_auth)
+
+    assert SvarmWeb.Plugs.ApprovalsAuth.open_board_mutations_without_auth?()
+    assert SvarmWeb.Plugs.ApprovalsAuth.board_mutation_authorized?(%{})
+    assert SvarmWeb.Plugs.ApprovalsAuth.authorize_board_mutation?(false)
   end
 end

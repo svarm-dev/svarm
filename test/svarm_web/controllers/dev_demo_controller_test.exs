@@ -1,7 +1,8 @@
 defmodule SvarmWeb.DevDemoControllerTest do
   use SvarmWeb.ConnCase, async: false
 
-  alias Svarm.{KanbanBridge, Orchestrator, Settings}
+  alias Svarm.{KanbanBridge, Settings}
+  alias Svarm.Test.OrchestratorEnv
 
   setup do
     KanbanBridge.delete_all_tasks()
@@ -10,18 +11,10 @@ defmodule SvarmWeb.DevDemoControllerTest do
 
     # Demo.seed leaves :orchestrator_poll_interval_ms / :max_concurrent set;
     # restore so later tests do not inherit a 2s poll.
-    prev_poll = Application.get_env(:svarm, :orchestrator_poll_interval_ms)
-    prev_max = Application.get_env(:svarm, :orchestrator_max_concurrent)
+    OrchestratorEnv.restore_on_exit()
 
     on_exit(fn ->
       Settings.Store.delete("tracker")
-      Application.delete_env(:svarm, :approval_overlay)
-      restore_env(:orchestrator_poll_interval_ms, prev_poll)
-      restore_env(:orchestrator_max_concurrent, prev_max)
-
-      if Process.whereis(Orchestrator) do
-        _ = Orchestrator.reload_config()
-      end
     end)
 
     :ok
@@ -71,7 +64,4 @@ defmodule SvarmWeb.DevDemoControllerTest do
     assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "non-demo"
     assert [%{title: "real work"}] = KanbanBridge.list_tasks([])
   end
-
-  defp restore_env(key, nil), do: Application.delete_env(:svarm, key)
-  defp restore_env(key, val), do: Application.put_env(:svarm, key, val)
 end

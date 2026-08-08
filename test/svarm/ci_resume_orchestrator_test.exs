@@ -2,6 +2,17 @@ defmodule Svarm.CiResumeOrchestratorTest do
   use ExUnit.Case, async: false
 
   alias Svarm.{Coordination, KanbanBridge, Orchestrator, Repo}
+  alias Svarm.Test.Wait
+
+  # Barrier: wait until prior orchestrator mailbox messages finish.
+  defp flush_orchestrator do
+    _ = :sys.get_state(Orchestrator)
+    :ok
+  end
+
+  defp wait_until(fun, opts \\ []) do
+    Wait.until(fun, opts)
+  end
 
   defmodule StubChecks do
     def summarize_pr_checks(_o, _r, _n, _config, _opts \\ []) do
@@ -174,7 +185,10 @@ defmodule Svarm.CiResumeOrchestratorTest do
     end)
 
     send(Orchestrator, :tick)
-    Process.sleep(200)
+
+    assert wait_until(fn ->
+             match?(%{ci_resume_count: 1}, Coordination.get(task_id))
+           end)
 
     coord = Coordination.get(task_id)
     assert coord.ci_resume_count == 1
@@ -191,7 +205,7 @@ defmodule Svarm.CiResumeOrchestratorTest do
 
     # Same sha on next tick: no second resume
     send(Orchestrator, :tick)
-    Process.sleep(150)
+    flush_orchestrator()
     assert Coordination.get(task_id).ci_resume_count == 1
   end
 
@@ -224,7 +238,10 @@ defmodule Svarm.CiResumeOrchestratorTest do
     )
 
     send(Orchestrator, :tick)
-    Process.sleep(200)
+
+    assert wait_until(fn ->
+             match?(%{ci_circuit_open: true}, Coordination.get(task_id))
+           end)
 
     coord = Coordination.get(task_id)
     assert coord.ci_circuit_open == true
@@ -264,7 +281,7 @@ defmodule Svarm.CiResumeOrchestratorTest do
     end)
 
     send(Orchestrator, :tick)
-    Process.sleep(200)
+    flush_orchestrator()
 
     coord = Coordination.get(task_id)
     assert coord.ci_resume_count == 0
@@ -303,7 +320,7 @@ defmodule Svarm.CiResumeOrchestratorTest do
     end)
 
     send(Orchestrator, :tick)
-    Process.sleep(150)
+    flush_orchestrator()
 
     assert Coordination.get(task_id).ci_resume_count == 0
     assert get_issue(task_id).status == "review"
