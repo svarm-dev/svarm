@@ -117,6 +117,9 @@ if config_env() == :prod do
   config :svarm, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
   config :svarm, :session_secure, session_secure?
 
+  # App-level key for Settings.Crypto (same secret as Endpoint; avoids domain→web coupling).
+  config :svarm, :secret_key_base, secret_key_base
+
   config :svarm, SvarmWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
     check_origin: check_origin,
