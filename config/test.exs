@@ -1,10 +1,15 @@
 import Config
 
+# Shared with Endpoint and Settings.Crypto (domain crypto must not import web modules).
+secret_key_base = "Wtkvnaeylhe2WRjcDOQi1CWXVrpKZ09CnZO9YnfaNna5H+0rE6vVfx5bxUMFzqdZ"
+
+config :svarm, :secret_key_base, secret_key_base
+
 # We don't run a server during test. If one is required,
 # you can enable the server option below.
 config :svarm, SvarmWeb.Endpoint,
   http: [ip: {127, 0, 0, 1}, port: 4002],
-  secret_key_base: "Wtkvnaeylhe2WRjcDOQi1CWXVrpKZ09CnZO9YnfaNna5H+0rE6vVfx5bxUMFzqdZ",
+  secret_key_base: secret_key_base,
   server: false
 
 # Print only warnings and errors during test

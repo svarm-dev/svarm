@@ -8,7 +8,9 @@ defmodule SvarmWeb.Plugs.BoardAuthCapture do
 
   When credentials are configured: valid Authorization **promotes** the session
   flag to true and is never cleared by a later request without a header (sticky
-  until the session ends). When credentials are not configured: always open.
+  until the session ends). When credentials are not configured: this plug is a
+  no-op; mutation policy is decided by `ApprovalsAuth` (`dev_routes` open vs
+  production fail-closed).
   """
   import Plug.Conn
 
@@ -19,7 +21,7 @@ defmodule SvarmWeb.Plugs.BoardAuthCapture do
   def call(conn, _opts) do
     cond do
       not ApprovalsAuth.credentials_configured?() ->
-        # Open model: mutations authorized without session proof (see board_mutation_authorized?)
+        # Policy lives in ApprovalsAuth (dev open / prod fail-closed)
         conn
 
       ApprovalsAuth.authorized_header?(conn) ->
