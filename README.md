@@ -124,6 +124,9 @@ Docker mounts `./svarm-config/` as a directory. On first boot, missing files are
 | `OPENROUTER_API_KEY` | LLM access for agents — must also be listed in the agent `env` block in `agents.toml` |
 | `SVARM_BUDGET_MAX_USD_PER_TICKET` / `SVARM_BUDGET_MAX_USD_PER_DAY` | Optional hard USD caps (or WORKFLOW `budget.*`); hard-stop **new** spawns only |
 | `SVARM_BASE_URL` | Links in issue comments (e.g. `http://localhost:4000`) |
+| `PHX_HOST` | Public hostname for URLs + LiveView origin checks (prod) |
+| `PHX_CHECK_ORIGIN` | Optional comma-separated origin allow-list (default: `//PHX_HOST`) |
+| `PHX_SECURE_COOKIES` | Session Secure flag (prod default `true`; local compose sets `false` for HTTP) |
 | `SVARM_SEED_DEMO=1` | Boot-seed mock tasks when board is empty (no UI button) |
 | `SVARM_DEMO_ROUTES=1` | Seed demo button + `/dev/demo/seed` (Docker demo sets this) |
 

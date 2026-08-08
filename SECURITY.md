@@ -81,3 +81,16 @@ For team/production deployments:
 - Optionally set hard budget caps for design-partner / Show HN deploys
 - Do **not** expose the demo profile on shared hosts (`SVARM_DEMO_ROUTES` / `SVARM_SEED_DEMO`)
 - Rotate API keys if a team member with access leaves
+- Put the UI behind **HTTPS** (TLS at a reverse proxy is fine). Raw HTTP on a public port is unsupported.
+
+### Reverse proxy, host, and cookies
+
+Production runtime enables LiveView/WebSocket **origin checks** from `PHX_HOST` (not open). Session cookies default to **`Secure`** so browsers only send them over HTTPS.
+
+| Variable | Role |
+|----------|------|
+| `PHX_HOST` | Public hostname used for URL generation and default origin allow-list (`//PHX_HOST`) |
+| `PHX_CHECK_ORIGIN` | Optional comma-separated allow-list when you need extra hosts/origins |
+| `PHX_SECURE_COOKIES` | Session `Secure` flag (prod default `true`). Compose sets `false` only for plain-HTTP localhost demos |
+
+**Proxy assumptions:** terminate TLS at Caddy/nginx/NPM/etc., forward to the container on port 4000, and pass `Host` (and `X-Forwarded-Proto` if you later enable app-level `force_ssl`). Set `PHX_HOST` / `SVARM_BASE_URL` to the public name operators open in the browser. App-level `force_ssl` may remain proxy-owned — see `config/prod.exs`.
