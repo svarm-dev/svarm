@@ -249,6 +249,51 @@ defmodule SvarmWeb.BoardLiveTest do
     assert KanbanBridge.get_task(review.id).status == "done"
   end
 
+  test "prod-like without APPROVALS_* blocks approve reject and complete_review", %{conn: conn} do
+    prev_auth = Application.get_env(:svarm, :approvals_auth)
+    prev_dev = Application.get_env(:svarm, :dev_routes)
+    Application.delete_env(:svarm, :approvals_auth)
+    Application.put_env(:svarm, :dev_routes, false)
+
+    on_exit(fn ->
+      if prev_auth == nil,
+        do: Application.delete_env(:svarm, :approvals_auth),
+        else: Application.put_env(:svarm, :approvals_auth, prev_auth)
+
+      Application.put_env(:svarm, :dev_routes, prev_dev)
+    end)
+
+    KanbanBridge.delete_all_tasks()
+
+    pending =
+      KanbanBridge.create_task(%{
+        title: "Prod fail-closed approve",
+        status: Approval.pending_status(),
+        assignee: "demo"
+      })
+
+    review =
+      KanbanBridge.create_task(%{
+        title: "Prod fail-closed done",
+        status: "review",
+        assignee: "demo"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/board")
+
+    view |> element("button", "Approve") |> render_click()
+    assert render(view) =~ "APPROVALS_USER"
+    assert KanbanBridge.get_task(pending.id).status == Approval.pending_status()
+
+    render_click(view, "reject_task", %{"id" => pending.id})
+    assert render(view) =~ "APPROVALS_USER"
+    assert KanbanBridge.get_task(pending.id).status == Approval.pending_status()
+
+    render_click(view, "complete_review", %{"id" => review.id})
+    assert render(view) =~ "APPROVALS_USER"
+    assert KanbanBridge.get_task(review.id).status == "review"
+  end
+
   test "pending approval and review cards show wait chips", %{conn: conn} do
     KanbanBridge.delete_all_tasks()
 

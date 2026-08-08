@@ -20,6 +20,7 @@ Post-0.1.3: CI failure resume loop, denser board run console, docs/deps polish.
 
 ### Fixed
 
+- **Prod fail-closed board mutations** ([#64](https://github.com/svarm-dev/svarm/issues/64)): approve/reject/mark-done deny when `APPROVALS_*` is unset outside local Mix `dev_routes` (misconfigured production can no longer open-mutate)
 - Orchestrator test isolation and pre-existing `mix ci` reach smells (frequencies, budget float coercion, flaky dispatch ticks) as part of [#47](https://github.com/svarm-dev/svarm/pull/47)
 
 ### Dependencies

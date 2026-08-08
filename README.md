@@ -119,7 +119,7 @@ Docker mounts `./svarm-config/` as a directory. On first boot, missing files are
 | Variable | Purpose |
 |----------|---------|
 | `SECRET_KEY_BASE` | Cookie signing, required for Docker/prod (`openssl rand -base64 48`) |
-| `APPROVALS_USER` / `APPROVALS_PASSWORD` | Basic Auth for `/approvals` and `/setup`; also gates board approve/reject/mark-done when set (see [SECURITY.md](SECURITY.md)) |
+| `APPROVALS_USER` / `APPROVALS_PASSWORD` | Basic Auth for `/approvals` and `/setup`; gates board approve/reject/mark-done. **Required in production** (fail closed when unset); local Mix may stay open via `dev_routes` (see [SECURITY.md](SECURITY.md)) |
 | `GITHUB_TOKEN` | PAT for GitHub Issues (`repo` scope) |
 | `OPENROUTER_API_KEY` | LLM access for agents — must also be listed in the agent `env` block in `agents.toml` |
 | `SVARM_BUDGET_MAX_USD_PER_TICKET` / `SVARM_BUDGET_MAX_USD_PER_DAY` | Optional hard USD caps (or WORKFLOW `budget.*`); hard-stop **new** spawns only |
