@@ -53,7 +53,7 @@ cp .env.example .env
 | Variable | Required | Notes |
 |----------|----------|--------|
 | `SECRET_KEY_BASE` | **Yes** | `openssl rand -base64 48` |
-| `APPROVALS_USER` / `APPROVALS_PASSWORD` | **Yes** for Docker/prod (UI + board mutations) | Any non-empty pair; demo profile defaults to `svarm`/`svarm`. Without them, production board approve/reject/mark-done fail closed |
+| `APPROVALS_USER` / `APPROVALS_PASSWORD` | **Yes** for Docker/prod (UI + board mutations) | Strong unique pair in `.env` (`.env.example` leaves them empty). **Demo** compose profile still defaults to `svarm`/`svarm` for Path A only. Without credentials, production board approve/reject/mark-done fail closed |
 | `GITHUB_TOKEN` | For GitHub tracker | Classic PAT with `repo` scope |
 | `OPENROUTER_API_KEY` | For real agents | From [openrouter.ai/keys](https://openrouter.ai/keys) |
 | `SVARM_BASE_URL` | Recommended | `http://localhost:4000` so cost receipts link to the board |
@@ -142,7 +142,7 @@ Svärm tracks GitHub work with **labels**. Your eligibility label (e.g. `ai-task
 | CI resume | Optional: re-dispatch when a managed PR’s Checks fail (see below). **Off by default.** |
 | Smoke-only off | Never leave `approval.mode: off` on a shared repo; do not leave `SVARM_DEMO_ROUTES` / `SVARM_SEED_DEMO` on production |
 | Base URL | Point `SVARM_BASE_URL` at the deployed host |
-| HTTPS + host | Terminate TLS at a reverse proxy; set `PHX_HOST` to the public hostname (origin checks). Leave `PHX_SECURE_COOKIES` at default `true` behind HTTPS — see [SECURITY.md](SECURITY.md) |
+| HTTPS + host | Terminate TLS at a reverse proxy; set `PHX_HOST` to the public hostname (origin checks). For HTTPS deploys with compose, set `PHX_SECURE_COOKIES=true` (compose currently defaults false on app too — [#97](https://github.com/svarm-dev/svarm/issues/97)). See [SECURITY.md](SECURITY.md) |
 
 ### CI resume (optional)
 

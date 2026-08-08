@@ -7,25 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Post-0.1.3: CI failure resume loop, denser board run console, docs/deps polish.
+Post-0.1.3 on `main` (not yet tagged): run console, optional CI resume, trust/perf hardening. Tagged release remains **v0.1.3**.
 
 ### Added
 
 - **CI resume + circuit breaker** ([#44](https://github.com/svarm-dev/svarm/issues/44), [#60](https://github.com/svarm-dev/svarm/pull/60)): when enabled, poll GitHub Checks for managed PRs in **review** and re-dispatch a **fresh** agent run with failure context until **N** attempts open a durable circuit; board chip **“CI retries exhausted”**; default **off** (`ci_resume` in WORKFLOW / `SVARM_CI_RESUME_*`); durable `task_coordination` (PR link, counts); GitHub `todo` strips status labels; PR owner/repo bound to tracker; resume skips re-approval after first human gate; Checks HTTP timeouts + max polls/tick
-- **Run console** on the board ([#43](https://github.com/svarm-dev/svarm/issues/43), [#47](https://github.com/svarm-dev/svarm/pull/47)): dense mono console with agent/model/status/cost chrome, late-join hydrate from `RunLog`, attach deep links; agent lines and run markers persist once in `Events` (zero open boards still record; multiple LiveViews never double-write)
+- **Run console** on the board ([#43](https://github.com/svarm-dev/svarm/issues/43), [#47](https://github.com/svarm-dev/svarm/pull/47)): dense mono console with agent/model/status/cost chrome, late-join hydrate from `RunLog`, attach deep links (`/board?task=…&attach=1`); agent lines and run markers persist once in `Events` (zero open boards still record; multiple LiveViews never double-write)
+- DB indexes for usage window queries and task eligibility sort ([#70](https://github.com/svarm-dev/svarm/issues/70), [#88](https://github.com/svarm-dev/svarm/pull/88))
 
 ### Changed
 
+- README Status lists post-0.1.3 capabilities on `main` (run console, optional CI resume) while **Current release** stays v0.1.3 until the next tag
 - README aligned with v0.1.3 governance floor: `/setup`, `APPROVALS_*` / budget env, agent env allowlist, estimated cost label, docs links ([#42](https://github.com/svarm-dev/svarm/pull/42))
+- Board card costs use SQL aggregates instead of per-card N+1 loads ([#66](https://github.com/svarm-dev/svarm/issues/66), [#93](https://github.com/svarm-dev/svarm/pull/93))
+- RunLog stream chunks coalesce in a buffer and append with SQL `content || ?` instead of full-row rewrite per delta ([#67](https://github.com/svarm-dev/svarm/issues/67), [#95](https://github.com/svarm-dev/svarm/pull/95))
+- Settings crypto reads `secret_key_base` from app config, not `Endpoint` ([#74](https://github.com/svarm-dev/svarm/issues/74), [#90](https://github.com/svarm-dev/svarm/pull/90))
+- Board loads agents via the Board read API, not `AgentRunner` directly ([#73](https://github.com/svarm-dev/svarm/issues/73), [#84](https://github.com/svarm-dev/svarm/pull/84))
+- `.env.example` no longer ships shared `svarm`/`svarm` approval defaults (demo compose still may)
 
 ### Fixed
 
-- **Prod fail-closed board mutations** ([#64](https://github.com/svarm-dev/svarm/issues/64)): approve/reject/mark-done deny when `APPROVALS_*` is unset outside local Mix `dev_routes` (misconfigured production can no longer open-mutate)
+- **Prod fail-closed board mutations** ([#64](https://github.com/svarm-dev/svarm/issues/64), [#91](https://github.com/svarm-dev/svarm/pull/91)): approve/reject/mark-done deny when `APPROVALS_*` is unset outside local Mix `dev_routes`
+- Production LiveView **origin checks** stay on (allow-list from `PHX_HOST` / `PHX_CHECK_ORIGIN`); session cookies default to **Secure** for HTTPS deploys ([#65](https://github.com/svarm-dev/svarm/issues/65), [#92](https://github.com/svarm-dev/svarm/pull/92))
+- Secrets redacted in on-disk workspace `run.log` ([#63](https://github.com/svarm-dev/svarm/issues/63), [#87](https://github.com/svarm-dev/svarm/pull/87)); broader Redact patterns for common secret shapes ([#78](https://github.com/svarm-dev/svarm/issues/78), [#86](https://github.com/svarm-dev/svarm/pull/86))
+- Orchestrator force-terminal status retries are non-blocking (`send_after`, no GenServer `Process.sleep`) ([#68](https://github.com/svarm-dev/svarm/issues/68), [#94](https://github.com/svarm-dev/svarm/pull/94))
+- Test suite isolation: reset orchestrator env and cut fixed `Process.sleep` ([#80](https://github.com/svarm-dev/svarm/issues/80), [#96](https://github.com/svarm-dev/svarm/pull/96)); BoardLive empty-column race / Demo.seed poll leak ([#62](https://github.com/svarm-dev/svarm/issues/62), [#85](https://github.com/svarm-dev/svarm/pull/85))
 - Orchestrator test isolation and pre-existing `mix ci` reach smells (frequencies, budget float coercion, flaky dispatch ticks) as part of [#47](https://github.com/svarm-dev/svarm/pull/47)
+
+### Security
+
+- Fail-closed board mutations without `APPROVALS_*` in production ([#64](https://github.com/svarm-dev/svarm/issues/64) / [#91](https://github.com/svarm-dev/svarm/pull/91))
+- Origin allow-list + Secure session cookies in prod ([#65](https://github.com/svarm-dev/svarm/issues/65) / [#92](https://github.com/svarm-dev/svarm/pull/92))
+- Redact expansions + on-disk run.log scrub ([#78](https://github.com/svarm-dev/svarm/issues/78), [#63](https://github.com/svarm-dev/svarm/issues/63))
 
 ### Dependencies
 
-- Dev/test security toolchain: `mix_audit` + `sobelow` wired into `mix ci` (`deps.audit`, `sobelow --exit`); `lazy_html` constrained to `~> 0.1.0` ([#82](https://github.com/svarm-dev/svarm/issues/82))
+- Dev/test security toolchain: `mix_audit` + `sobelow` wired into `mix ci` (`deps.audit`, `sobelow --exit`); `lazy_html` constrained to `~> 0.1.0` ([#82](https://github.com/svarm-dev/svarm/issues/82), [#89](https://github.com/svarm-dev/svarm/pull/89))
+- `mint` 1.9.1 → 1.9.3 (HTTP client advisories) ([#61](https://github.com/svarm-dev/svarm/issues/61), [#83](https://github.com/svarm-dev/svarm/pull/83))
 - `phoenix_live_reload` 1.6.2 → 1.7.0 (dev) ([#39](https://github.com/svarm-dev/svarm/pull/39))
 
 ## [0.1.3] - 2026-08-02
