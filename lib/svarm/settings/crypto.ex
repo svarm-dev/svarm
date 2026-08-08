@@ -2,8 +2,9 @@ defmodule Svarm.Settings.Crypto do
   @moduledoc """
   Encrypts settings secrets with `Plug.Crypto.MessageEncryptor`.
 
-  Keys are derived from the endpoint `secret_key_base`. Rotating
-  `SECRET_KEY_BASE` invalidates stored secrets — re-enter them in `/setup`.
+  Keys are derived from the app-level `:secret_key_base` (same value wired
+  to the Endpoint). Rotating `SECRET_KEY_BASE` invalidates stored secrets —
+  re-enter them in `/setup`.
   """
 
   @aad "svarm.settings.v1"
@@ -30,7 +31,6 @@ defmodule Svarm.Settings.Crypto do
   end
 
   defp secret_key_base do
-    Application.fetch_env!(:svarm, SvarmWeb.Endpoint)
-    |> Keyword.fetch!(:secret_key_base)
+    Application.fetch_env!(:svarm, :secret_key_base)
   end
 end

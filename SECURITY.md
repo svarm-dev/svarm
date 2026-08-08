@@ -55,9 +55,11 @@ While any of `seed_demo_on_boot`, `demo_routes`, or `dev_routes` is active, a pr
 | `/approvals` | Basic Auth when `APPROVALS_USER` / `APPROVALS_PASSWORD` are set |
 | `/setup` | Same Basic Auth (or `dev_routes` in local Mix) |
 | `/board` LiveView **reads** | Open when the process is reachable (still firewall for real repos) |
-| `/board` approve / reject / mark done | Same `APPROVALS_*` credentials when configured; mutations fail closed without proof. When credentials are **unset**, open local/dev behaviour (firewall the UI) |
+| `/board` approve / reject / mark done | Same `APPROVALS_*` credentials when configured; mutations fail closed without proof. When credentials are **unset**: open only with local Mix `dev_routes`; **production / Docker fail closed** (no approve/reject/mark-done until credentials are set) |
 
-A successful Basic Auth request (e.g. `/approvals`) sets a sticky session flag for board mutations; follow-up requests without the Authorization header keep mutation rights until the session ends. Browsers that re-send Basic Auth after a challenge also work. Without credentials configured, board mutations stay open for the firewalled-operator model.
+A successful Basic Auth request (e.g. `/approvals`) sets a sticky session flag for board mutations; follow-up requests without the Authorization header keep mutation rights until the session ends. Browsers that re-send Basic Auth after a challenge also work.
+
+Local Mix (`dev_routes: true`) keeps board mutations open without Basic Auth so day-to-day development stays usable. **Production and Docker do not set `dev_routes`:** forgetting `APPROVALS_USER` / `APPROVALS_PASSWORD` must not leave approve/reject/mark-done open on an exposed port. Prefer app-level `APPROVALS_*`; a reverse proxy that authenticates all traffic is an additional layer, not a substitute for configuring credentials when you want the built-in gates.
 
 ### Agent child environment
 
@@ -71,11 +73,24 @@ Optional hard caps at preflight: `SVARM_BUDGET_MAX_USD_PER_TICKET` / `SVARM_BUDG
 
 For team/production deployments:
 
-- Set strong `APPROVALS_USER` and `APPROVALS_PASSWORD` in `.env` (gates `/approvals`, `/setup`, and board approve/reject/mark-done)
-- Bind or firewall the UI so only trusted operators reach the process (board **reads** are not Basic-Auth gated)
+- **Required before exposing the port:** set strong `APPROVALS_USER` and `APPROVALS_PASSWORD` in `.env`. Without them, production **fails closed** on board approve/reject/mark-done (and `/approvals` / `/setup` stay disabled). Set credentials before you open the UI to a network.
+- Bind or firewall the UI so only trusted operators reach the process (board **reads** are not Basic-Auth gated even when credentials are set)
 - Use a real `SECRET_KEY_BASE` (not the auto-generated one)
 - Keep `approval.mode: untrusted` (the default)
 - Review agent commands and `env` keys in `agents.toml` before enabling (no silent full-env inheritance)
 - Optionally set hard budget caps for design-partner / Show HN deploys
 - Do **not** expose the demo profile on shared hosts (`SVARM_DEMO_ROUTES` / `SVARM_SEED_DEMO`)
 - Rotate API keys if a team member with access leaves
+- Put the UI behind **HTTPS** (TLS at a reverse proxy is fine). Raw HTTP on a public port is unsupported.
+
+### Reverse proxy, host, and cookies
+
+Production runtime enables LiveView/WebSocket **origin checks** from `PHX_HOST` (not open). Session cookies default to **`Secure`** so browsers only send them over HTTPS.
+
+| Variable | Role |
+|----------|------|
+| `PHX_HOST` | Public hostname used for URL generation and default origin allow-list (`//PHX_HOST`) |
+| `PHX_CHECK_ORIGIN` | Optional comma-separated allow-list when you need extra hosts/origins |
+| `PHX_SECURE_COOKIES` | Session `Secure` flag (prod default `true`). Compose sets `false` only for plain-HTTP localhost demos |
+
+**Proxy assumptions:** terminate TLS at Caddy/nginx/NPM/etc., forward to the container on port 4000, and pass `Host` (and `X-Forwarded-Proto` if you later enable app-level `force_ssl`). Set `PHX_HOST` / `SVARM_BASE_URL` to the public name operators open in the browser. App-level `force_ssl` may remain proxy-owned — see `config/prod.exs`.

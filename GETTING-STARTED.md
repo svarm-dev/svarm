@@ -53,7 +53,7 @@ cp .env.example .env
 | Variable | Required | Notes |
 |----------|----------|--------|
 | `SECRET_KEY_BASE` | **Yes** | `openssl rand -base64 48` |
-| `APPROVALS_USER` / `APPROVALS_PASSWORD` | **Yes** for Docker `/approvals` | Any non-empty pair; demo profile defaults to `svarm`/`svarm` |
+| `APPROVALS_USER` / `APPROVALS_PASSWORD` | **Yes** for Docker/prod (UI + board mutations) | Any non-empty pair; demo profile defaults to `svarm`/`svarm`. Without them, production board approve/reject/mark-done fail closed |
 | `GITHUB_TOKEN` | For GitHub tracker | Classic PAT with `repo` scope |
 | `OPENROUTER_API_KEY` | For real agents | From [openrouter.ai/keys](https://openrouter.ai/keys) |
 | `SVARM_BASE_URL` | Recommended | `http://localhost:4000` so cost receipts link to the board |
@@ -136,12 +136,13 @@ Svärm tracks GitHub work with **labels**. Your eligibility label (e.g. `ai-task
 | Step | Do this |
 |------|---------|
 | Bot identity | [docs/github-app.md](docs/github-app.md); comments as `svarm[bot]` |
-| Approvals | Strong `APPROVALS_USER` / `APPROVALS_PASSWORD` for `/approvals`, `/setup`, and board approve/reject/mark-done. Keep `approval.mode: untrusted`. Board **reads** stay open — still firewall the UI (see [SECURITY.md](SECURITY.md)) |
+| Approvals | **Required in production/Docker:** strong `APPROVALS_USER` / `APPROVALS_PASSWORD` before exposing the port. Gates `/approvals`, `/setup`, and board approve/reject/mark-done. Missing credentials → board mutations fail closed (local Mix `dev_routes` may stay open). Keep `approval.mode: untrusted`. Board **reads** stay open — still firewall the UI (see [SECURITY.md](SECURITY.md)) |
 | Agents | Edit `svarm-config/agents.toml` models; list required API keys in each agent’s `env` (no full host inheritance) |
 | Budgets | Optional: `SVARM_BUDGET_MAX_USD_PER_TICKET` / `SVARM_BUDGET_MAX_USD_PER_DAY` or WORKFLOW `budget.*` — hard-stop **new** spawns when spent ≥ cap |
 | CI resume | Optional: re-dispatch when a managed PR’s Checks fail (see below). **Off by default.** |
 | Smoke-only off | Never leave `approval.mode: off` on a shared repo; do not leave `SVARM_DEMO_ROUTES` / `SVARM_SEED_DEMO` on production |
 | Base URL | Point `SVARM_BASE_URL` at the deployed host |
+| HTTPS + host | Terminate TLS at a reverse proxy; set `PHX_HOST` to the public hostname (origin checks). Leave `PHX_SECURE_COOKIES` at default `true` behind HTTPS — see [SECURITY.md](SECURITY.md) |
 
 ### CI resume (optional)
 
@@ -181,6 +182,7 @@ Env overrides:
 | Container exits immediately | Check `docker compose logs`. `SECRET_KEY_BASE` is generated if unset; set it in `.env` only for stable sessions |
 | Config is a directory named `WORKFLOW.md` | Old file mounts. Use directory mount `./svarm-config:/app/config` (current compose) and delete the bogus dirs |
 | `/approvals` 404 text about APPROVALS_* | Set `APPROVALS_USER` and `APPROVALS_PASSWORD` in `.env` |
+| Board approve/reject/mark-done blocked without auth flash | Production needs `APPROVALS_*`; sign in via `/approvals` then return to the board. Local Mix without credentials is open only when `dev_routes` is on |
 | `/approvals` 401 | Wrong Basic Auth credentials |
 | Nothing happens | `docker compose logs -f` (polling / eligibility) |
 | Stuck before agent runs | `/approvals` (default is untrusted) |
