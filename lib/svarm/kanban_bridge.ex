@@ -14,9 +14,38 @@ defmodule Svarm.KanbanBridge do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
+  # Card/list projection — omit body (large TEXT) unless callers need it.
+  @card_fields [
+    :id,
+    :title,
+    :type,
+    :assignee,
+    :status,
+    :priority,
+    :attempts,
+    :depends_on,
+    :created_by,
+    :created_at,
+    :tenant
+  ]
+
   def create_task(attrs), do: GenServer.call(__MODULE__, {:create, attrs})
   def get_task(id), do: GenServer.call(__MODULE__, {:get, id})
-  def list_tasks(filters \\ []), do: GenServer.call(__MODULE__, {:list, filters})
+
+  @doc """
+  List tasks matching filters.
+
+  Options:
+  - `:include_body` — when `false` (default `true`), skips loading the `body`
+    column. Board/dashboard card paths pass `false`; approval UI and
+    get_task/eligible keep full rows.
+  """
+  def list_tasks(filters \\ [], opts \\ [])
+
+  def list_tasks(filters, opts) when is_list(filters) and is_list(opts) do
+    GenServer.call(__MODULE__, {:list, filters, opts})
+  end
+
   def fetch_eligible(active_states), do: GenServer.call(__MODULE__, {:eligible, active_states})
   def update_status(id, status), do: GenServer.call(__MODULE__, {:update, id, :status, status})
 
@@ -64,13 +93,23 @@ defmodule Svarm.KanbanBridge do
     {:reply, task, state}
   end
 
-  def handle_call({:list, filters}, _from, state) do
-    query = from(t in Task, order_by: [asc: t.priority, asc: t.created_at, asc: t.id])
+  def handle_call({:list, filters, opts}, _from, state) do
+    include_body? = Keyword.get(opts, :include_body, true)
+
+    query =
+      from(t in Task, order_by: [asc: t.priority, asc: t.created_at, asc: t.id])
 
     query =
       Enum.reduce(filters, query, fn {field, value}, q ->
         from(t in q, where: field(t, ^field) == ^value)
       end)
+
+    query =
+      if include_body? do
+        query
+      else
+        from(t in query, select: struct(t, ^@card_fields))
+      end
 
     tasks =
       query

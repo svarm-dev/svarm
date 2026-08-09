@@ -31,8 +31,10 @@ defmodule Svarm.Tracker.Local do
 
   @impl true
   def list_issues(_config, filters \\ []) do
+    {include_body, filters} = Keyword.pop(filters, :include_body, true)
+
     issues =
-      KanbanBridge.list_tasks(filters)
+      KanbanBridge.list_tasks(filters, include_body: include_body)
       |> Normalize.from_maps()
 
     {:ok, issues}
