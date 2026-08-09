@@ -10,7 +10,8 @@ defmodule SvarmWeb.BoardLive do
   @impl true
   def mount(_params, session, socket) do
     agents = Board.list_agents()
-    board_auth_ok = ApprovalsAuth.board_mutation_authorized?(session)
+    # Stamp only — freshness re-checked on each high-trust event (TTL wall clock)
+    board_auth_at = ApprovalsAuth.session_board_auth_at(session)
 
     socket =
       socket
@@ -31,7 +32,7 @@ defmodule SvarmWeb.BoardLive do
       |> assign(:dev_routes, Application.get_env(:svarm, :dev_routes, false))
       |> assign(:demo_routes, Svarm.Demo.routes_enabled?())
       |> assign(:checklist, Svarm.Board.instance_status())
-      |> assign(:board_auth_ok, board_auth_ok)
+      |> assign(:board_auth_at, board_auth_at)
       |> assign(:connected, false)
 
     socket =
@@ -155,8 +156,8 @@ defmodule SvarmWeb.BoardLive do
   end
 
   defp authorize_board_mutation(socket) do
-    # Re-check config on every event (credentials may be set after mount)
-    if ApprovalsAuth.authorize_board_mutation?(socket.assigns.board_auth_ok) do
+    # Re-check config + wall-clock TTL on every event (credentials / expiry may change after mount)
+    if ApprovalsAuth.authorize_board_mutation?(socket.assigns.board_auth_at) do
       :ok
     else
       {:error, :unauthorized}
@@ -165,7 +166,7 @@ defmodule SvarmWeb.BoardLive do
 
   defp unauthorized_mutation_flash(action) do
     if ApprovalsAuth.credentials_configured?() do
-      "Authentication required to #{action}. Sign in via /approvals (same APPROVALS_* credentials), then return to the board."
+      "Authentication required to #{action}. Sign in via /approvals (same APPROVALS_* credentials), then return to the board. Proof expires after a period of inactivity (default 8h)."
     else
       "Board mutations require APPROVALS_USER and APPROVALS_PASSWORD outside local dev. Configure them, sign in via /approvals, then return to the board."
     end
