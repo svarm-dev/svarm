@@ -624,4 +624,40 @@ defmodule SvarmWeb.BoardLiveTest do
     assert html =~ "Moving card"
     assert has_element?(view, "#task-#{task.id}")
   end
+
+  test "run_finished restreams card so cost badge appears", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+    Svarm.Repo.delete_all("usage_records")
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Cost after run",
+        status: "in_progress",
+        assignee: "demo"
+      })
+
+    {:ok, view, html} = live(conn, ~p"/board")
+    refute html =~ ~r/\$\d/
+
+    Svarm.Usage.append(%{
+      run_id: "run_board_cost_1",
+      task_id: task.id,
+      source: "worker",
+      provider: "openrouter",
+      model_id: "claude-sonnet-4-20250514",
+      prompt_tokens: 1_000_000,
+      completion_tokens: 0,
+      estimated: false
+    })
+
+    # Without restream, stream DOM would keep the pre-cost card markup.
+    send(view.pid, {:run_finished, task.id, 0})
+    :sys.get_state(view.pid)
+
+    html = render(view)
+    assert html =~ "Cost after run"
+    # task_cost_summary renders total_cost_usd for known models
+    assert html =~ "$"
+    assert has_element?(view, "#task-#{task.id}")
+  end
 end

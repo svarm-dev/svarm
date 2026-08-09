@@ -99,11 +99,24 @@ defmodule SvarmWeb.DashboardLiveTest do
       send(view.pid, {:orchestrator_status, %{running: i, claimed: 0, retrying: 0, completed: 0}})
     end
 
-    :sys.get_state(view.pid)
+    %{socket: socket} = :sys.get_state(view.pid)
+    timer = socket.assigns.reload_timer
+    assert is_reference(timer)
 
-    # After coalesce window, LiveView is still healthy (no crash / disconnect).
-    Process.sleep(900)
-    :sys.get_state(view.pid)
+    # Further ticks must not schedule a second timer (coalesce, not reset).
+    for i <- 6..10 do
+      send(view.pid, {:orchestrator_status, %{running: i, claimed: 0, retrying: 0, completed: 0}})
+    end
+
+    %{socket: socket2} = :sys.get_state(view.pid)
+    assert socket2.assigns.reload_timer == timer
+
+    # Fire the coalesced reload without sleeping the suite.
+    _ = Process.cancel_timer(timer)
+    send(view.pid, :coalesced_dashboard_reload)
+    %{socket: socket3} = :sys.get_state(view.pid)
+    assert socket3.assigns.reload_timer == nil
+
     html = render(view)
     assert html =~ "Waiting on humans"
     assert html =~ "Dashboard"

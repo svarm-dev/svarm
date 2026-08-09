@@ -309,6 +309,8 @@ defmodule SvarmWeb.BoardLive do
       |> assign(:orchestrator, orchestrator)
       |> assign(:running_started, running_started)
       |> update_costs_for_task(task_id)
+      # Stream items freeze card DOM; re-insert so cost badges pick up new @costs.
+      |> restream_task(task_id)
       # Marker already persisted once in Events.broadcast_run_finished/2.
       |> append_display_log(task_id, banner)
 
