@@ -176,37 +176,55 @@ Do **not** put Svärm architecture rules only in skills. If every edit should kn
 
 Svärm product law always overrides generic Phoenix advice when they conflict (SQLite-only, KanbanBridge-only DB access, Runner.Cli/PiRPC shell-out only, no Postgres).
 
+## Progress bus (coding agents ↔ maintainers)
+
+Chat apps are **not** shared context across tools. Prefer durable surfaces in this repo:
+
+| Surface | For |
+|---------|-----|
+| **[STATUS.md](STATUS.md)** | Short code snapshot — read at session start |
+| **GitHub Issues + PRs** | All code work units |
+
+**Start of every coding session:** `gh issue list` / `gh pr list` for live work, then read [STATUS.md](STATUS.md) (Focus + Blocked). STATUS on `main` lags open PR branches.  
+**When landing work:** update STATUS **only in the same PR** if Focus/`main`/Blocked actually changed — see STATUS noise rules. **Never** a STATUS-only commit/PR.  
+**Blocked on a human:** issue comment (and STATUS Blocked line only if this PR already touches STATUS).
+
 ## GitHub issue → PR workflow (coding agents)
 
-**Role split:** Hermes shapes issues/ADRs; **Pi (or any coding agent) implements**; **human merges**. Do not merge PRs unless the human explicitly asks.
+**Role split:** Hermes shapes issues/ADRs; **coding agent implements**; **human merges**. Do not merge PRs unless the human explicitly asks.
 
 **Required tooling:** `gh` installed and authenticated (`gh auth status`). Prefer `gh` over raw REST. Repo remote is **`origin` → `github.com/svarm-dev/svarm`** only.
 
 ### Loop
 
-1. **Intake** — `gh issue view N` (treat acceptance criteria as law). Optional: comment that you are taking it.
-2. **Sync** — `git fetch origin && git checkout main && git pull --ff-only origin main`
-3. **Branch** — conventional short name from main:
+1. **Orient** — `gh issue list` / `gh pr list`, then [STATUS.md](STATUS.md) Focus + Blocked (STATUS on `main` may lag open PRs).
+2. **Intake** — `gh issue view N` (treat acceptance criteria as law). Optional: comment that you are taking it.
+3. **Sync** — `git fetch origin && git checkout main && git pull --ff-only origin main`
+4. **Branch** — conventional short name from main:
    - `fix/…` · `feat/…` · `docs/…` · `refactor/…` · `test/…` · `ci/…`
-4. **Implement** — only what the issue AC requires. No drive-by refactors.
-5. **Verify** — `mix precommit` before push (larger changes: `mix ci` when practical).
-6. **Push + PR**
+5. **Implement** — only what the issue AC requires. No drive-by refactors.
+6. **Verify** — `mix precommit` before push (larger changes: `mix ci` when practical).
+7. **Push + PR**
    ```bash
    git push -u origin HEAD
    gh pr create --title "type: short description" --body "$(cat <<'EOF'
    ## Summary
    - …
 
-   ## Test plan
+   ## How tested
    - [ ] mix precommit / relevant tests
    - [ ] …
+
+   ## For maintainer
+   - (only if product / positioning needs a maintainer — else delete this section)
 
    Closes #N
    EOF
    )"
    ```
-7. **CI** — `gh pr checks` (or `gh pr checks --watch`). On red: `gh run view <id> --log-failed` → fix → push. **Max 3 fix loops**, then stop and report blocked with logs/PR URL.
-8. **Hand off** — reply with PR URL, summary, residual risk. **Do not merge.**
+8. **CI** — `gh pr checks` (or `gh pr checks --watch`). On red: `gh run view <id> --log-failed` → fix → push. **Max 3 fix loops**, then stop and report blocked with logs/PR URL.
+9. **STATUS** — if Focus/`main`/blockers changed, update [STATUS.md](STATUS.md) **in this same PR** (see STATUS noise rules). Skip if unchanged.
+10. **Hand off** — reply with PR URL, summary, residual risk. **Do not merge.**
 
 ### Hard rules
 
@@ -217,6 +235,7 @@ Svärm product law always overrides generic Phoenix advice when they conflict (S
 | Comment on the issue if blocked | Invent follow-up work “while here” |
 | Keep CI green before pinging the human | Merge to `main` |
 | Commit only intentional paths | Commit `.env`, PEMs, keys, local config |
+| Fold STATUS into a real work PR when needed | STATUS-only commits or PRs |
 
 ### PR title / commits
 
