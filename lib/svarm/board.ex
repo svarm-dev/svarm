@@ -27,10 +27,17 @@ defmodule Svarm.Board do
     end
   end
 
+  @doc """
+  List tasks for board/dashboard card paths.
+
+  Omits full issue `body` (card UI never shows it). Use `get_task/1` when the
+  body is required (agent dispatch, approvals detail).
+  """
   def list_tasks(filters \\ []) do
     config = tracker_config()
+    filters = Keyword.put(filters, :include_body, false)
     {:ok, issues} = tracker().list_issues(config, filters)
-    tasks = Enum.map(issues, &issue_to_map/1)
+    tasks = Enum.map(issues, &issue_to_card_map/1)
     attach_coordination(tasks)
   end
 
@@ -305,12 +312,27 @@ defmodule Svarm.Board do
     tasks
   end
 
-  # Convert %Issue{} struct back to plain map for backward compat with BoardLive
+  # Full issue map (get_task / callers that need body).
   defp issue_to_map(%Svarm.Issue{} = i) do
     %{
       id: i.id,
       title: i.title,
       body: i.body,
+      type: i.type,
+      assignee: i.assignee,
+      status: i.status,
+      priority: i.priority,
+      attempts: i.attempts,
+      created_at: i.created_at,
+      tenant: i.tenant
+    }
+  end
+
+  # Card/list projection — never carry body into LiveView assigns.
+  defp issue_to_card_map(%Svarm.Issue{} = i) do
+    %{
+      id: i.id,
+      title: i.title,
       type: i.type,
       assignee: i.assignee,
       status: i.status,

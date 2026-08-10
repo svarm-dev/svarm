@@ -7,11 +7,16 @@ defmodule SvarmWeb.DashboardLive do
 
   alias Svarm.{Board, Dashboard, Events}
 
+  # Full snapshot reloads are expensive; coalesce PubSub storms (status ticks,
+  # multi-agent task_updated) into one reload.
+  @reload_coalesce_ms 750
+
   @impl true
   def mount(_params, _session, socket) do
     socket =
       socket
       |> assign(:page_title, "Dashboard")
+      |> assign(:reload_timer, nil)
       |> then(fn s ->
         if connected?(s) do
           Events.subscribe()
@@ -42,27 +47,68 @@ defmodule SvarmWeb.DashboardLive do
   end
 
   def handle_event("refresh", _params, socket) do
-    {:noreply, load_dashboard(socket)}
+    {:noreply, socket |> cancel_coalesced_reload() |> load_dashboard()}
   end
 
   @impl true
   def handle_info({:task_updated, _task}, socket) do
-    {:noreply, load_dashboard(socket)}
+    {:noreply, schedule_coalesced_reload(socket)}
   end
 
   def handle_info({:tasks_snapshot, _tasks}, socket) do
-    {:noreply, load_dashboard(socket)}
+    {:noreply, schedule_coalesced_reload(socket)}
   end
 
-  def handle_info({:orchestrator_status, _status}, socket) do
-    {:noreply, load_dashboard(socket)}
+  def handle_info({:orchestrator_status, status}, socket) do
+    # Lightweight: apply status to snapshot immediately; coalesce full reload
+    # so agent roster / distribution catch up without per-tick DB work.
+    snapshot = Map.put(socket.assigns.snapshot, :orchestrator, status)
+
+    socket =
+      socket
+      |> assign(:snapshot, snapshot)
+      |> assign(:now_mono, System.monotonic_time(:millisecond))
+      |> schedule_coalesced_reload()
+
+    {:noreply, socket}
   end
 
   def handle_info({:run_finished, _task_id, _exit_code}, socket) do
-    {:noreply, load_dashboard(socket)}
+    {:noreply, schedule_coalesced_reload(socket)}
+  end
+
+  def handle_info(:coalesced_dashboard_reload, socket) do
+    socket =
+      socket
+      |> assign(:reload_timer, nil)
+      |> load_dashboard()
+
+    {:noreply, socket}
   end
 
   def handle_info(_msg, socket), do: {:noreply, socket}
+
+  defp schedule_coalesced_reload(socket) do
+    case socket.assigns[:reload_timer] do
+      ref when is_reference(ref) ->
+        socket
+
+      _ ->
+        ref = Process.send_after(self(), :coalesced_dashboard_reload, @reload_coalesce_ms)
+        assign(socket, :reload_timer, ref)
+    end
+  end
+
+  defp cancel_coalesced_reload(socket) do
+    case socket.assigns[:reload_timer] do
+      ref when is_reference(ref) ->
+        Process.cancel_timer(ref)
+        assign(socket, :reload_timer, nil)
+
+      _ ->
+        socket
+    end
+  end
 
   @impl true
   def render(assigns) do
@@ -516,7 +562,8 @@ defmodule SvarmWeb.DashboardLive do
       error: nil,
       connected: true,
       now_mono: System.monotonic_time(:millisecond),
-      page_title: "Dashboard"
+      page_title: "Dashboard",
+      reload_timer: nil
     )
   rescue
     e in [DBConnection.ConnectionError, ErlangError, ArgumentError] ->

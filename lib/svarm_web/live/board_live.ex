@@ -6,17 +6,31 @@ defmodule SvarmWeb.BoardLive do
   alias SvarmWeb.Plugs.ApprovalsAuth
 
   @max_log_lines 400
+  # Coalesce session-cost SQL on high-frequency orchestrator_status ticks.
+  @status_cost_interval_ms 2_000
+
+  # Compile-time stream atoms only (no String.to_atom on external input).
+  @column_streams %{
+    "todo" => :col_todo,
+    "pending_approval" => :col_pending_approval,
+    "in_progress" => :col_in_progress,
+    "review" => :col_review,
+    "done" => :col_done,
+    "failed" => :col_failed
+  }
 
   @impl true
   def mount(_params, session, socket) do
     agents = Board.list_agents()
     # Stamp only — freshness re-checked on each high-trust event (TTL wall clock)
     board_auth_at = ApprovalsAuth.session_board_auth_at(session)
+    column_ids = Board.column_ids()
 
     socket =
       socket
-      |> assign(:columns, Board.group_by_status([]))
-      |> assign(:column_ids, Board.column_ids())
+      |> assign(:column_ids, column_ids)
+      |> assign(:column_counts, Map.new(column_ids, &{&1, 0}))
+      |> assign(:tasks_by_id, %{})
       |> assign(:task_count, 0)
       |> assign(:orchestrator, %{})
       |> assign(:selected_task_id, nil)
@@ -34,6 +48,8 @@ defmodule SvarmWeb.BoardLive do
       |> assign(:checklist, Svarm.Board.instance_status())
       |> assign(:board_auth_at, board_auth_at)
       |> assign(:connected, false)
+      |> assign(:last_status_cost_mono, 0)
+      |> reset_column_streams(column_ids)
 
     socket =
       if connected?(socket) do
@@ -152,7 +168,16 @@ defmodule SvarmWeb.BoardLive do
   end
 
   def handle_event("board_tick", _params, socket) do
-    {:noreply, assign(socket, :now_mono, System.monotonic_time(:millisecond))}
+    now = System.monotonic_time(:millisecond)
+    # Streams freeze card DOM; re-insert only running cards so elapsed chips tick.
+    running_ids = Map.get(socket.assigns.orchestrator, :running_ids, [])
+
+    socket =
+      Enum.reduce(running_ids, assign(socket, :now_mono, now), fn id, s ->
+        restream_task(s, id)
+      end)
+
+    {:noreply, socket}
   end
 
   defp authorize_board_mutation(socket) do
@@ -174,9 +199,11 @@ defmodule SvarmWeb.BoardLive do
 
   @impl true
   def handle_info({:task_updated, task}, socket) do
+    task = card_task(task)
+
     socket =
       socket
-      |> update_task_in_columns(task)
+      |> update_task_in_streams(task)
       |> maybe_append_status_marker(task)
 
     {:noreply, socket}
@@ -184,18 +211,47 @@ defmodule SvarmWeb.BoardLive do
 
   @impl true
   def handle_info({:tasks_snapshot, tasks}, socket) do
-    {:noreply, put_columns(socket, tasks)}
+    {:noreply, put_columns(socket, Enum.map(tasks, &card_task/1))}
   end
 
   @impl true
   def handle_info({:orchestrator_status, status}, socket) do
-    session_cost = Usage.session_cost_summary()
-    status = Map.put(status, :session_cost, session_cost)
+    now = System.monotonic_time(:millisecond)
+    last = socket.assigns.last_status_cost_mono || 0
+
+    {session_cost, last} =
+      if now - last >= @status_cost_interval_ms do
+        {Usage.session_cost_summary(), now}
+      else
+        {Map.get(socket.assigns.orchestrator, :session_cost), last}
+      end
+
+    status =
+      if session_cost do
+        Map.put(status, :session_cost, session_cost)
+      else
+        status
+      end
+
+    old_running = MapSet.new(Map.get(socket.assigns.orchestrator, :running_ids, []))
+    new_running = MapSet.new(Map.get(status, :running_ids, []))
+    old_retry = MapSet.new(Map.get(socket.assigns.orchestrator, :retry_ids, []))
+    new_retry = MapSet.new(Map.get(status, :retry_ids, []))
+
+    # Re-stream only cards whose running/retry chrome changed.
+    refresh_ids =
+      MapSet.union(
+        MapSet.symmetric_difference(old_running, new_running),
+        MapSet.symmetric_difference(old_retry, new_retry)
+      )
 
     socket =
       socket
       |> assign(:orchestrator, status)
       |> assign(:running_started, Map.get(status, :running_started, %{}))
+      |> assign(:last_status_cost_mono, last)
+
+    socket = Enum.reduce(refresh_ids, socket, fn id, s -> restream_task(s, id) end)
 
     {:noreply, socket}
   end
@@ -254,6 +310,8 @@ defmodule SvarmWeb.BoardLive do
       |> assign(:orchestrator, orchestrator)
       |> assign(:running_started, running_started)
       |> update_costs_for_task(task_id)
+      # Stream items freeze card DOM; re-insert so cost badges pick up new @costs.
+      |> restream_task(task_id)
       # Marker already persisted once in Events.broadcast_run_finished/2.
       |> append_display_log(task_id, banner)
 
@@ -307,7 +365,7 @@ defmodule SvarmWeb.BoardLive do
           <% @task_count == 0 -> %>
             <.board_empty demo_routes={@demo_routes} checklist={@checklist} />
           <% true -> %>
-            <.demo_bridge_banner columns={@columns} checklist={@checklist} />
+            <.demo_bridge_banner tasks_by_id={@tasks_by_id} checklist={@checklist} />
             <.orchestrator_bar
               orchestrator={@orchestrator}
               agents={@agents}
@@ -331,7 +389,8 @@ defmodule SvarmWeb.BoardLive do
                   id={col}
                   title={column_label(col)}
                   status_id={col}
-                  tasks={Map.get(@columns, col, [])}
+                  tasks_stream={column_stream(assigns, col)}
+                  count={Map.get(@column_counts, col, 0)}
                   selected_task_id={@selected_task_id}
                   running_ids={Map.get(@orchestrator, :running_ids, [])}
                   retry_ids={Map.get(@orchestrator, :retry_ids, [])}
@@ -346,7 +405,7 @@ defmodule SvarmWeb.BoardLive do
 
             <.run_console
               task_id={@selected_task_id}
-              task={selected_task(@columns, @selected_task_id)}
+              task={selected_task(@tasks_by_id, @selected_task_id)}
               log={Map.get(@run_logs, @selected_task_id, "")}
               meta={Map.get(@run_meta, @selected_task_id, %{})}
               agents={@agents}
@@ -369,11 +428,13 @@ defmodule SvarmWeb.BoardLive do
     # Attach session cost for the bar
     session_cost = Usage.session_cost_summary()
     orchestrator = Map.put(orchestrator, :session_cost, session_cost)
+    now = System.monotonic_time(:millisecond)
 
     socket
     |> put_columns(tasks, costs)
     |> assign(:orchestrator, orchestrator)
     |> assign(:running_started, Map.get(orchestrator, :running_started, %{}))
+    |> assign(:last_status_cost_mono, now)
   end
 
   # One batched usage query for all visible tasks (no per-task N+1).
@@ -385,37 +446,113 @@ defmodule SvarmWeb.BoardLive do
 
   defp put_columns(socket, tasks, costs \\ nil) do
     costs = costs || compute_costs(tasks)
+    column_ids = Board.column_ids()
+    grouped = Board.group_by_status(tasks)
+    counts = Map.new(column_ids, fn col -> {col, length(Map.get(grouped, col, []))} end)
+    tasks_by_id = Map.new(tasks, fn t -> {t.id, card_task(t)} end)
+
+    socket =
+      Enum.reduce(column_ids, socket, fn col, s ->
+        items = Map.get(grouped, col, []) |> Enum.map(&card_task/1)
+
+        case stream_name(col) do
+          nil -> s
+          name -> stream(s, name, items, reset: true)
+        end
+      end)
 
     socket
-    |> assign(:column_ids, Board.column_ids())
-    |> assign(:columns, Board.group_by_status(tasks))
+    |> assign(:column_ids, column_ids)
+    |> assign(:column_counts, counts)
+    |> assign(:tasks_by_id, tasks_by_id)
     |> assign(:task_count, length(tasks))
     |> assign(:costs, costs)
     |> assign(:workload, Board.counts_by_assignee(tasks))
   end
 
-  defp update_task_in_columns(socket, task) do
-    cols = socket.assigns.columns
+  defp update_task_in_streams(socket, task) do
+    incoming = card_task(task)
+    old = Map.get(socket.assigns.tasks_by_id, incoming.id)
+    # Partial PubSub payloads (e.g. status-only) merge onto the known card.
+    task = if old, do: Map.merge(old, incoming), else: incoming
+    old_status = old && old.status
+    new_status = task.status
 
-    cols =
-      cols
-      |> Enum.map(fn {status, list} ->
-        {status, Enum.reject(list, &(&1.id == task.id))}
-      end)
-      |> Map.new()
+    socket =
+      cond do
+        is_nil(old_status) ->
+          insert_into_column(socket, new_status, task)
 
-    status = task.status
-    cols = Map.update(cols, status, [task], fn list -> list ++ [task] end)
+        old_status == new_status ->
+          insert_into_column(socket, new_status, task)
 
-    task_count =
-      cols
-      |> Map.values()
-      |> List.flatten()
-      |> length()
+        true ->
+          socket
+          |> delete_from_column(old_status, old || task)
+          |> insert_into_column(new_status, task)
+      end
+
+    tasks_by_id = Map.put(socket.assigns.tasks_by_id, task.id, task)
+    counts = recompute_column_counts(tasks_by_id, socket.assigns.column_ids)
+    workload = Board.counts_by_assignee(Map.values(tasks_by_id))
 
     socket
-    |> assign(:columns, cols)
-    |> assign(:task_count, task_count)
+    |> assign(:tasks_by_id, tasks_by_id)
+    |> assign(:column_counts, counts)
+    |> assign(:task_count, map_size(tasks_by_id))
+    |> assign(:workload, workload)
+  end
+
+  defp insert_into_column(socket, status, task) do
+    case stream_name(status) do
+      nil -> socket
+      name -> stream_insert(socket, name, task)
+    end
+  end
+
+  defp delete_from_column(socket, status, task) do
+    case stream_name(status) do
+      nil -> socket
+      name -> stream_delete(socket, name, task)
+    end
+  end
+
+  defp restream_task(socket, id) when is_binary(id) do
+    case Map.get(socket.assigns.tasks_by_id, id) do
+      nil -> socket
+      task -> insert_into_column(socket, task.status, task)
+    end
+  end
+
+  defp restream_task(socket, _), do: socket
+
+  defp reset_column_streams(socket, column_ids) do
+    Enum.reduce(column_ids, socket, fn col, s ->
+      case stream_name(col) do
+        nil -> s
+        name -> stream(s, name, [])
+      end
+    end)
+  end
+
+  defp stream_name(status) when is_binary(status), do: Map.get(@column_streams, status)
+  defp stream_name(_), do: nil
+
+  defp column_stream(assigns, col) do
+    case stream_name(col) do
+      nil -> []
+      name -> Map.get(assigns.streams, name, [])
+    end
+  end
+
+  defp recompute_column_counts(tasks_by_id, column_ids) do
+    grouped = Enum.group_by(Map.values(tasks_by_id), & &1.status)
+    Map.new(column_ids, fn col -> {col, length(Map.get(grouped, col, []))} end)
+  end
+
+  # Drop body / raw so streams never retain large TEXT payloads.
+  defp card_task(task) when is_map(task) do
+    Map.drop(task, [:body, "body", :raw, "raw"])
   end
 
   # Marker already persisted once in Events.broadcast_task_updated/1.
@@ -467,14 +604,8 @@ defmodule SvarmWeb.BoardLive do
     end
   end
 
-  defp selected_task(_columns, nil), do: nil
-
-  defp selected_task(columns, id) do
-    columns
-    |> Map.values()
-    |> List.flatten()
-    |> Enum.find(&(&1.id == id))
-  end
+  defp selected_task(_tasks_by_id, nil), do: nil
+  defp selected_task(tasks_by_id, id), do: Map.get(tasks_by_id, id)
 
   attr :demo_routes, :boolean, default: false
   attr :checklist, :map, default: %{}
@@ -513,15 +644,12 @@ defmodule SvarmWeb.BoardLive do
     """
   end
 
-  attr :columns, :map, required: true
+  attr :tasks_by_id, :map, required: true
   attr :checklist, :map, default: %{}
 
   defp demo_bridge_banner(assigns) do
     has_demo_tasks =
-      assigns.columns
-      |> Map.values()
-      |> List.flatten()
-      |> Enum.any?(fn t ->
+      Enum.any?(assigns.tasks_by_id, fn {_id, t} ->
         assignee = t.assignee || ""
         String.starts_with?(assignee, "demo_")
       end)
@@ -757,7 +885,8 @@ defmodule SvarmWeb.BoardLive do
   attr :id, :string, required: true
   attr :title, :string, required: true
   attr :status_id, :string, required: true
-  attr :tasks, :list, required: true
+  attr :tasks_stream, :any, required: true
+  attr :count, :integer, default: 0
   attr :selected_task_id, :string, default: nil
   attr :running_ids, :list, default: []
   attr :retry_ids, :list, default: []
@@ -788,92 +917,90 @@ defmodule SvarmWeb.BoardLive do
           human_column?(@status_id) && "badge-warning",
           not human_column?(@status_id) && "badge-ghost"
         ]}>
-          {length(@tasks)}
+          {@count}
         </span>
       </h2>
-      <ul class="flex flex-col gap-2 min-h-[3rem]">
-        <%= if @tasks == [] do %>
-          <li class="px-1 py-2 text-[10px] italic opacity-40">{column_empty_hint(@status_id)}</li>
-        <% end %>
-        <%= for task <- @tasks do %>
+      <%= if @count == 0 do %>
+        <p class="px-1 py-2 text-[10px] italic opacity-40">{column_empty_hint(@status_id)}</p>
+      <% end %>
+      <ul id={"col-#{@status_id}-tasks"} phx-update="stream" class="flex flex-col gap-2 min-h-[3rem]">
+        <li :for={{dom_id, task} <- @tasks_stream} id={dom_id}>
           <% cost = Map.get(@costs, task.id) %>
           <% card = card_activity(task, @running_ids, @retry_ids) %>
-          <li>
-            <div class={[
-              "rounded-md p-2 text-sm border transition relative",
-              @selected_task_id == task.id && "border-primary bg-base-100 ring-2 ring-primary/30",
-              @selected_task_id != task.id &&
-                "border-transparent bg-base-100/80 hover:border-base-300",
-              card.running && "ring-2 ring-primary/50 bg-primary/5",
-              card.retrying && "ring-2 ring-warning/40",
-              card.wait_reason in [:approval, :review, :ci_circuit] &&
-                "border-dashed border-warning/60"
-            ]}>
-              <button
-                type="button"
-                id={"task-#{task.id}"}
-                phx-click="select_task"
-                phx-value-id={task.id}
-                class="w-full text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary rounded-sm"
-              >
-                <div class="flex items-start justify-between gap-1">
-                  <div class="font-medium line-clamp-2 flex-1 min-w-0 break-words">{task.title}</div>
-                  <.card_status_chip
-                    card={card}
-                    task={task}
-                    running_started={@running_started}
-                    now_mono={@now_mono}
-                  />
+          <div class={[
+            "rounded-md p-2 text-sm border transition relative",
+            @selected_task_id == task.id && "border-primary bg-base-100 ring-2 ring-primary/30",
+            @selected_task_id != task.id &&
+              "border-transparent bg-base-100/80 hover:border-base-300",
+            card.running && "ring-2 ring-primary/50 bg-primary/5",
+            card.retrying && "ring-2 ring-warning/40",
+            card.wait_reason in [:approval, :review, :ci_circuit] &&
+              "border-dashed border-warning/60"
+          ]}>
+            <button
+              type="button"
+              id={"task-#{task.id}"}
+              phx-click="select_task"
+              phx-value-id={task.id}
+              class="w-full text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary rounded-sm"
+            >
+              <div class="flex items-start justify-between gap-1">
+                <div class="font-medium line-clamp-2 flex-1 min-w-0 break-words">{task.title}</div>
+                <.card_status_chip
+                  card={card}
+                  task={task}
+                  running_started={@running_started}
+                  now_mono={@now_mono}
+                />
+              </div>
+              <div class="mt-1.5 flex items-center justify-between gap-2">
+                <.agent_badge
+                  identity={AgentRegistry.identity(task.assignee, @agents)}
+                  compact
+                  workload={Map.get(@workload, task.assignee || "default")}
+                />
+                <div class="flex items-center gap-1 shrink-0">
+                  <%= if reviewer = Board.reviewer(task) do %>
+                    <span class="text-[10px] opacity-60" title="Reviewer">{reviewer}</span>
+                  <% end %>
+                  <span class="text-[10px] opacity-50">{type_label(task.type)}</span>
                 </div>
-                <div class="mt-1.5 flex items-center justify-between gap-2">
-                  <.agent_badge
-                    identity={AgentRegistry.identity(task.assignee, @agents)}
-                    compact
-                    workload={Map.get(@workload, task.assignee || "default")}
-                  />
-                  <div class="flex items-center gap-1 shrink-0">
-                    <%= if reviewer = Board.reviewer(task) do %>
-                      <span class="text-[10px] opacity-60" title="Reviewer">{reviewer}</span>
-                    <% end %>
-                    <span class="text-[10px] opacity-50">{type_label(task.type)}</span>
-                  </div>
-                </div>
+              </div>
 
-                <%= if cost && cost.record_count > 0 do %>
-                  <div class="mt-1">
-                    <span class={[
-                      "inline-block text-[10px] font-mono px-1.5 py-0.5 rounded badge-ghost",
-                      cost.estimated && "opacity-70"
-                    ]}>
-                      {if cost.estimated, do: "est. ", else: ""}${cost.total_cost_usd}
-                    </span>
-                  </div>
-                <% end %>
-              </button>
-
-              <%= if card.wait_reason == :approval do %>
-                <div class="mt-2 flex gap-1">
-                  <button
-                    type="button"
-                    phx-click="approve_task"
-                    phx-value-id={task.id}
-                    class="btn btn-primary btn-xs"
-                  >
-                    Approve
-                  </button>
-                  <button
-                    type="button"
-                    phx-click="reject_task"
-                    phx-value-id={task.id}
-                    class="btn btn-ghost btn-xs"
-                  >
-                    Reject
-                  </button>
+              <%= if cost && cost.record_count > 0 do %>
+                <div class="mt-1">
+                  <span class={[
+                    "inline-block text-[10px] font-mono px-1.5 py-0.5 rounded badge-ghost",
+                    cost.estimated && "opacity-70"
+                  ]}>
+                    {if cost.estimated, do: "est. ", else: ""}${cost.total_cost_usd}
+                  </span>
                 </div>
               <% end %>
-            </div>
-          </li>
-        <% end %>
+            </button>
+
+            <%= if card.wait_reason == :approval do %>
+              <div class="mt-2 flex gap-1">
+                <button
+                  type="button"
+                  phx-click="approve_task"
+                  phx-value-id={task.id}
+                  class="btn btn-primary btn-xs"
+                >
+                  Approve
+                </button>
+                <button
+                  type="button"
+                  phx-click="reject_task"
+                  phx-value-id={task.id}
+                  class="btn btn-ghost btn-xs"
+                >
+                  Reject
+                </button>
+              </div>
+            <% end %>
+          </div>
+        </li>
       </ul>
     </div>
     """
@@ -1243,6 +1370,7 @@ defmodule SvarmWeb.BoardLive do
   defp select_task(socket, id, opts \\ []) do
     patch? = Keyword.get(opts, :patch, true)
     attach? = Keyword.get(opts, :attach, false)
+    prev_id = socket.assigns.selected_task_id
     costs = fetch_task_cost(id, socket.assigns.task_costs)
     log = Svarm.RunLog.get(id) |> trim_log()
     focused? = attach? or task_running?(socket, id)
@@ -1253,6 +1381,9 @@ defmodule SvarmWeb.BoardLive do
       |> assign(:task_costs, costs)
       |> assign(:run_logs, %{id => log})
       |> assign(:console_focused?, focused?)
+      # Stream items do not re-render on assign changes — refresh selection chrome.
+      |> restream_task(prev_id)
+      |> restream_task(id)
 
     if patch? do
       query = if attach?, do: [task: id, attach: 1], else: [task: id]
@@ -1263,10 +1394,13 @@ defmodule SvarmWeb.BoardLive do
   end
 
   defp clear_selection(socket) do
+    prev_id = socket.assigns.selected_task_id
+
     socket
     |> assign(:selected_task_id, nil)
     |> assign(:console_focused?, false)
     |> assign(:run_logs, %{})
+    |> restream_task(prev_id)
     |> push_patch(to: ~p"/board", replace: true)
   end
 
@@ -1299,7 +1433,7 @@ defmodule SvarmWeb.BoardLive do
   defp handle_board_key(socket, _), do: socket
 
   defp select_relative(socket, delta) do
-    ids = task_ids_in_order(socket.assigns.columns, socket.assigns.column_ids)
+    ids = task_ids_in_order(socket.assigns.tasks_by_id, socket.assigns.column_ids)
 
     case ids do
       [] ->
@@ -1313,10 +1447,13 @@ defmodule SvarmWeb.BoardLive do
     end
   end
 
-  defp task_ids_in_order(columns, column_ids) do
+  defp task_ids_in_order(tasks_by_id, column_ids) do
+    by_status = Enum.group_by(Map.values(tasks_by_id), & &1.status)
+
     Enum.flat_map(column_ids, fn col ->
-      columns
+      by_status
       |> Map.get(col, [])
+      |> Enum.sort_by(&{&1.priority || 0, &1.created_at || 0, &1.id})
       |> Enum.map(& &1.id)
     end)
   end
