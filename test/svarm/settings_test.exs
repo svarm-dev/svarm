@@ -101,6 +101,40 @@ defmodule Svarm.SettingsTest do
     assert merged["demo"].model == "x"
   end
 
+  test "merge_agents replaces skills list when Settings provides one" do
+    agents = %{
+      "default" => %{
+        command: "pi",
+        model: "m",
+        provider: "openrouter",
+        skills: ["packs/old"]
+      },
+      "demo" => %{command: "sh", skills: ["packs/demo"]}
+    }
+
+    assert {:ok, _} =
+             Settings.put_section("agents", %{
+               "default" => %{"skills" => [" packs/new ", "", "packs/shared"]}
+             })
+
+    merged = Resolve.merge_agents(agents)
+    assert merged["default"].skills == ["packs/new", "packs/shared"]
+    assert merged["demo"].skills == ["packs/demo"]
+  end
+
+  test "merge_agents leaves file skills when Settings omits skills" do
+    agents = %{
+      "default" => %{command: "pi", skills: ["packs/keep"]}
+    }
+
+    assert {:ok, _} =
+             Settings.put_section("agents", %{"default" => %{"model" => "only-model"}})
+
+    merged = Resolve.merge_agents(agents)
+    assert merged["default"].skills == ["packs/keep"]
+    assert merged["default"].model == "only-model"
+  end
+
   test "status reports local tracker ready without Settings" do
     status = Settings.status()
     assert status.tracker_ready? == true

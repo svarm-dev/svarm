@@ -43,6 +43,38 @@ defmodule Svarm.AgentRunnerTest do
 
       assert AgentRunner.load_agents(path) == %{}
     end
+
+    test "omitted skills default to empty list on all agents" do
+      agents = AgentRunner.load_agents(@agents_path)
+
+      for {_name, cfg} <- agents do
+        assert cfg.skills == []
+      end
+    end
+
+    test "declared skills parse; blanks and non-strings dropped" do
+      path =
+        write_agents_toml("""
+        [agent.with_skills]
+        command = "echo"
+        skills = [" packs/backend ", "/abs/elixir", ""]
+
+        [agent.bad_skills]
+        command = "echo"
+        skills = "not-a-list"
+
+        [agent.no_skills]
+        command = "echo"
+        """)
+
+      on_exit(fn -> File.rm(path) end)
+
+      agents = AgentRunner.load_agents(path)
+
+      assert agents["with_skills"].skills == ["packs/backend", "/abs/elixir"]
+      assert agents["bad_skills"].skills == []
+      assert agents["no_skills"].skills == []
+    end
   end
 
   describe "resolve!/2" do
@@ -79,5 +111,28 @@ defmodule Svarm.AgentRunnerTest do
       assert AgentRunner.resolve_adapter(nil) == Cli
       assert AgentRunner.resolve_adapter("unknown") == Cli
     end
+  end
+
+  describe "normalize_skills/1 via Cli" do
+    test "nil, non-list, and empty list become []" do
+      assert Cli.normalize_skills(nil) == []
+      assert Cli.normalize_skills("x") == []
+      assert Cli.normalize_skills([]) == []
+    end
+
+    test "trims and drops blank or non-string entries" do
+      assert Cli.normalize_skills([" a ", "", nil, 1, "b"]) == ["a", "b"]
+    end
+  end
+
+  defp write_agents_toml(contents) do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "svarm_agents_skills_#{System.unique_integer([:positive])}.toml"
+      )
+
+    File.write!(path, contents)
+    path
   end
 end

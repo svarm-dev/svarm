@@ -104,7 +104,13 @@ defmodule Svarm.Runner.Cli do
     end
   end
 
-  @doc "Parse priv/agents.toml into a map of agent configs."
+  @doc """
+  Parse priv/agents.toml into a map of agent configs.
+
+  Optional `skills` is a list of path strings (pack directories or `SKILL.md`
+  files). Omitted, empty, or malformed values become `[]` so existing configs
+  without skills keep loading.
+  """
   def load_agents(path \\ @agents_file) do
     with {:ok, contents} <- File.read(path),
          {:ok, map} <- Toml.decode(contents) do
@@ -121,13 +127,28 @@ defmodule Svarm.Runner.Cli do
            avatar: Map.get(cfg, "avatar"),
            adapter: Map.get(cfg, "adapter", "cli"),
            provider: Map.get(cfg, "provider"),
-           model: Map.get(cfg, "model")
+           model: Map.get(cfg, "model"),
+           skills: normalize_skills(Map.get(cfg, "skills"))
          }}
       end)
     else
       _ -> %{}
     end
   end
+
+  @doc """
+  Normalize a raw `skills` value from TOML or Settings to a list of trimmed
+  non-empty path strings. Non-lists and non-string entries are dropped.
+  """
+  def normalize_skills(nil), do: []
+
+  def normalize_skills(list) when is_list(list) do
+    list
+    |> Enum.filter(&(is_binary(&1) and String.trim(&1) != ""))
+    |> Enum.map(&String.trim/1)
+  end
+
+  def normalize_skills(_), do: []
 
   @doc "Resolve an agent config by name, falling back to the 'default' agent."
   def resolve!(name, agents) do
