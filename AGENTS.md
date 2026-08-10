@@ -176,37 +176,56 @@ Do **not** put Svärm architecture rules only in skills. If every edit should kn
 
 Svärm product law always overrides generic Phoenix advice when they conflict (SQLite-only, KanbanBridge-only DB access, Runner.Cli/PiRPC shell-out only, no Postgres).
 
+## Progress bus (Maino ↔ coding agent)
+
+Human chat is **not** shared context between Hermes (Maino) and the coding harness (Pi / Grok Build / …). Use durable surfaces:
+
+| Surface | For |
+|---------|-----|
+| **[STATUS.md](STATUS.md)** | Code snapshot — read at session start; update at session end |
+| **GitHub Issues + PRs** | All code work units (never chat-only tasks) |
+| **Vault `Ops/Agent Desk.md`** | Non-code handoffs (strategy/launch) — if you have vault access |
+
+**Start of every coding session:** read `STATUS.md`, then `gh issue view` on your claim.  
+**End of session / when opening a PR:** refresh STATUS **Snapshot** + one **Session log** line.  
+**Blocked on human:** STATUS **Blocked** line + issue/PR comment — do not rely on Telegram.
+
 ## GitHub issue → PR workflow (coding agents)
 
-**Role split:** Hermes shapes issues/ADRs; **Pi (or any coding agent) implements**; **human merges**. Do not merge PRs unless the human explicitly asks.
+**Role split:** Hermes shapes issues/ADRs; **coding agent implements**; **human merges**. Do not merge PRs unless the human explicitly asks.
 
 **Required tooling:** `gh` installed and authenticated (`gh auth status`). Prefer `gh` over raw REST. Repo remote is **`origin` → `github.com/svarm-dev/svarm`** only.
 
 ### Loop
 
-1. **Intake** — `gh issue view N` (treat acceptance criteria as law). Optional: comment that you are taking it.
-2. **Sync** — `git fetch origin && git checkout main && git pull --ff-only origin main`
-3. **Branch** — conventional short name from main:
+1. **Orient** — read [STATUS.md](STATUS.md) (focus + blockers).
+2. **Intake** — `gh issue view N` (treat acceptance criteria as law). Optional: comment that you are taking it.
+3. **Sync** — `git fetch origin && git checkout main && git pull --ff-only origin main`
+4. **Branch** — conventional short name from main:
    - `fix/…` · `feat/…` · `docs/…` · `refactor/…` · `test/…` · `ci/…`
-4. **Implement** — only what the issue AC requires. No drive-by refactors.
-5. **Verify** — `mix precommit` before push (larger changes: `mix ci` when practical).
-6. **Push + PR**
+5. **Implement** — only what the issue AC requires. No drive-by refactors.
+6. **Verify** — `mix precommit` before push (larger changes: `mix ci` when practical).
+7. **Push + PR**
    ```bash
    git push -u origin HEAD
    gh pr create --title "type: short description" --body "$(cat <<'EOF'
    ## Summary
    - …
 
-   ## Test plan
+   ## How tested
    - [ ] mix precommit / relevant tests
    - [ ] …
+
+   ## For Maino
+   - (only if strategy / fence / positioning needs a non-coder — else delete this section)
 
    Closes #N
    EOF
    )"
    ```
-7. **CI** — `gh pr checks` (or `gh pr checks --watch`). On red: `gh run view <id> --log-failed` → fix → push. **Max 3 fix loops**, then stop and report blocked with logs/PR URL.
-8. **Hand off** — reply with PR URL, summary, residual risk. **Do not merge.**
+8. **CI** — `gh pr checks` (or `gh pr checks --watch`). On red: `gh run view <id> --log-failed` → fix → push. **Max 3 fix loops**, then stop and report blocked with logs/PR URL.
+9. **STATUS** — update [STATUS.md](STATUS.md) Snapshot + Session log (same PR or immediate follow-up).
+10. **Hand off** — reply with PR URL, summary, residual risk. **Do not merge.**
 
 ### Hard rules
 
@@ -217,6 +236,7 @@ Svärm product law always overrides generic Phoenix advice when they conflict (S
 | Comment on the issue if blocked | Invent follow-up work “while here” |
 | Keep CI green before pinging the human | Merge to `main` |
 | Commit only intentional paths | Commit `.env`, PEMs, keys, local config |
+| Update STATUS.md after meaningful work | Use human chat as the only handoff |
 
 ### PR title / commits
 
