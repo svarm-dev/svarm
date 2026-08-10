@@ -137,7 +137,9 @@ defmodule SvarmWeb.BoardLiveTest do
     assert KanbanBridge.get_task(task.id).status == "todo"
   end
 
-  test "sticky board auth: session proof survives header-less follow-up", %{conn: conn} do
+  test "sticky board auth: session proof survives header-less follow-up within TTL", %{
+    conn: conn
+  } do
     prev_auth = Application.get_env(:svarm, :approvals_auth)
     Application.put_env(:svarm, :approvals_auth, %{username: "op", password: "secret"})
 
@@ -158,16 +160,112 @@ defmodule SvarmWeb.BoardLiveTest do
 
     creds = Base.encode64("op:secret")
 
-    # First request establishes session board_auth_ok
+    # First request establishes session board_auth_at
     conn =
       conn
       |> put_req_header("authorization", "Basic #{creds}")
       |> get(~p"/board")
 
     assert html_response(conn, 200)
+    assert is_integer(get_session(conn, "board_auth_at"))
 
     # Recycle keeps session; no Authorization header on follow-up
     {:ok, view, _html} = live(recycle(conn), ~p"/board")
+    view |> element("button", "Approve") |> render_click()
+    assert KanbanBridge.get_task(task.id).status == "todo"
+  end
+
+  test "expired board auth stamp blocks approve", %{conn: conn} do
+    prev_auth = Application.get_env(:svarm, :approvals_auth)
+    prev_ttl = Application.get_env(:svarm, :board_auth_ttl_seconds)
+    Application.put_env(:svarm, :approvals_auth, %{username: "op", password: "secret"})
+    Application.put_env(:svarm, :board_auth_ttl_seconds, 60)
+
+    on_exit(fn ->
+      if prev_auth == nil,
+        do: Application.delete_env(:svarm, :approvals_auth),
+        else: Application.put_env(:svarm, :approvals_auth, prev_auth)
+
+      if prev_ttl == nil,
+        do: Application.delete_env(:svarm, :board_auth_ttl_seconds),
+        else: Application.put_env(:svarm, :board_auth_ttl_seconds, prev_ttl)
+    end)
+
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Expired auth",
+        status: Approval.pending_status(),
+        assignee: "demo"
+      })
+
+    expired_at = System.system_time(:second) - 120
+
+    {:ok, view, _html} =
+      conn
+      |> init_test_session(%{"board_auth_at" => expired_at})
+      |> live(~p"/board")
+
+    view |> element("button", "Approve") |> render_click()
+    assert render(view) =~ "Authentication required"
+    assert KanbanBridge.get_task(task.id).status == Approval.pending_status()
+  end
+
+  test "missing board auth stamp blocks approve when credentials configured", %{conn: conn} do
+    prev_auth = Application.get_env(:svarm, :approvals_auth)
+    Application.put_env(:svarm, :approvals_auth, %{username: "op", password: "secret"})
+
+    on_exit(fn ->
+      if prev_auth == nil,
+        do: Application.delete_env(:svarm, :approvals_auth),
+        else: Application.put_env(:svarm, :approvals_auth, prev_auth)
+    end)
+
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Missing auth stamp",
+        status: Approval.pending_status(),
+        assignee: "demo"
+      })
+
+    # Session present but no board_auth_at (and no Authorization header)
+    {:ok, view, _html} =
+      conn
+      |> init_test_session(%{})
+      |> live(~p"/board")
+
+    view |> element("button", "Approve") |> render_click()
+    assert render(view) =~ "Authentication required"
+    assert KanbanBridge.get_task(task.id).status == Approval.pending_status()
+  end
+
+  test "fresh board_auth_at session allows approve without Authorization header", %{conn: conn} do
+    prev_auth = Application.get_env(:svarm, :approvals_auth)
+    Application.put_env(:svarm, :approvals_auth, %{username: "op", password: "secret"})
+
+    on_exit(fn ->
+      if prev_auth == nil,
+        do: Application.delete_env(:svarm, :approvals_auth),
+        else: Application.put_env(:svarm, :approvals_auth, prev_auth)
+    end)
+
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Fresh stamp",
+        status: Approval.pending_status(),
+        assignee: "demo"
+      })
+
+    {:ok, view, _html} =
+      conn
+      |> init_test_session(%{"board_auth_at" => System.system_time(:second)})
+      |> live(~p"/board")
+
     view |> element("button", "Approve") |> render_click()
     assert KanbanBridge.get_task(task.id).status == "todo"
   end
