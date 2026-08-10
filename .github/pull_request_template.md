@@ -9,8 +9,8 @@
 - [ ] `mix ci` (for larger changes)
 - [ ] Manual: …
 
-## For Maino
-<!-- Strategy / fence / positioning questions only. Delete this section if none. -->
+## For maintainer
+<!-- Product / positioning questions only. Delete this section if none. -->
 -
 
 ## Notes for reviewers

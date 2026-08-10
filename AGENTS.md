@@ -176,19 +176,18 @@ Do **not** put Svärm architecture rules only in skills. If every edit should kn
 
 Svärm product law always overrides generic Phoenix advice when they conflict (SQLite-only, KanbanBridge-only DB access, Runner.Cli/PiRPC shell-out only, no Postgres).
 
-## Progress bus (Maino ↔ coding agent)
+## Progress bus (coding agents ↔ maintainers)
 
-Human chat is **not** shared context between Hermes (Maino) and the coding harness (Pi / Grok Build / …). Use durable surfaces:
+Chat apps are **not** shared context across tools. Prefer durable surfaces in this repo:
 
 | Surface | For |
 |---------|-----|
-| **[STATUS.md](STATUS.md)** | Code snapshot — read at session start; update at session end |
-| **GitHub Issues + PRs** | All code work units (never chat-only tasks) |
-| **Vault `Ops/Agent Desk.md`** | Non-code handoffs (strategy/launch) — if you have vault access |
+| **[STATUS.md](STATUS.md)** | Short code snapshot — read at session start |
+| **GitHub Issues + PRs** | All code work units |
 
 **Start of every coding session:** read `STATUS.md`, then `gh issue view` on your claim.  
-**End of session / when opening a PR:** refresh STATUS **Snapshot** + one **Session log** line.  
-**Blocked on human:** STATUS **Blocked** line + issue/PR comment — do not rely on Telegram.
+**When landing work:** update STATUS **only in the same PR** as the real change — see noise rules in STATUS.md. **Never** a STATUS-only commit/PR.  
+**Blocked on a human:** one line under STATUS **Blocked** (in that PR) and/or an issue comment.
 
 ## GitHub issue → PR workflow (coding agents)
 
@@ -216,15 +215,15 @@ Human chat is **not** shared context between Hermes (Maino) and the coding harne
    - [ ] mix precommit / relevant tests
    - [ ] …
 
-   ## For Maino
-   - (only if strategy / fence / positioning needs a non-coder — else delete this section)
+   ## For maintainer
+   - (only if product / positioning needs a maintainer — else delete this section)
 
    Closes #N
    EOF
    )"
    ```
 8. **CI** — `gh pr checks` (or `gh pr checks --watch`). On red: `gh run view <id> --log-failed` → fix → push. **Max 3 fix loops**, then stop and report blocked with logs/PR URL.
-9. **STATUS** — update [STATUS.md](STATUS.md) Snapshot + Session log (same PR or immediate follow-up).
+9. **STATUS** — if Focus/`main`/blockers changed, update [STATUS.md](STATUS.md) **in this same PR** (see STATUS noise rules). Skip if unchanged.
 10. **Hand off** — reply with PR URL, summary, residual risk. **Do not merge.**
 
 ### Hard rules
@@ -236,7 +235,7 @@ Human chat is **not** shared context between Hermes (Maino) and the coding harne
 | Comment on the issue if blocked | Invent follow-up work “while here” |
 | Keep CI green before pinging the human | Merge to `main` |
 | Commit only intentional paths | Commit `.env`, PEMs, keys, local config |
-| Update STATUS.md after meaningful work | Use human chat as the only handoff |
+| Fold STATUS into a real work PR when needed | STATUS-only commits or PRs |
 
 ### PR title / commits
 
