@@ -137,7 +137,9 @@ defmodule SvarmWeb.BoardLiveTest do
     assert KanbanBridge.get_task(task.id).status == "todo"
   end
 
-  test "sticky board auth: session proof survives header-less follow-up", %{conn: conn} do
+  test "sticky board auth: session proof survives header-less follow-up within TTL", %{
+    conn: conn
+  } do
     prev_auth = Application.get_env(:svarm, :approvals_auth)
     Application.put_env(:svarm, :approvals_auth, %{username: "op", password: "secret"})
 
@@ -158,16 +160,112 @@ defmodule SvarmWeb.BoardLiveTest do
 
     creds = Base.encode64("op:secret")
 
-    # First request establishes session board_auth_ok
+    # First request establishes session board_auth_at
     conn =
       conn
       |> put_req_header("authorization", "Basic #{creds}")
       |> get(~p"/board")
 
     assert html_response(conn, 200)
+    assert is_integer(get_session(conn, "board_auth_at"))
 
     # Recycle keeps session; no Authorization header on follow-up
     {:ok, view, _html} = live(recycle(conn), ~p"/board")
+    view |> element("button", "Approve") |> render_click()
+    assert KanbanBridge.get_task(task.id).status == "todo"
+  end
+
+  test "expired board auth stamp blocks approve", %{conn: conn} do
+    prev_auth = Application.get_env(:svarm, :approvals_auth)
+    prev_ttl = Application.get_env(:svarm, :board_auth_ttl_seconds)
+    Application.put_env(:svarm, :approvals_auth, %{username: "op", password: "secret"})
+    Application.put_env(:svarm, :board_auth_ttl_seconds, 60)
+
+    on_exit(fn ->
+      if prev_auth == nil,
+        do: Application.delete_env(:svarm, :approvals_auth),
+        else: Application.put_env(:svarm, :approvals_auth, prev_auth)
+
+      if prev_ttl == nil,
+        do: Application.delete_env(:svarm, :board_auth_ttl_seconds),
+        else: Application.put_env(:svarm, :board_auth_ttl_seconds, prev_ttl)
+    end)
+
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Expired auth",
+        status: Approval.pending_status(),
+        assignee: "demo"
+      })
+
+    expired_at = System.system_time(:second) - 120
+
+    {:ok, view, _html} =
+      conn
+      |> init_test_session(%{"board_auth_at" => expired_at})
+      |> live(~p"/board")
+
+    view |> element("button", "Approve") |> render_click()
+    assert render(view) =~ "Authentication required"
+    assert KanbanBridge.get_task(task.id).status == Approval.pending_status()
+  end
+
+  test "missing board auth stamp blocks approve when credentials configured", %{conn: conn} do
+    prev_auth = Application.get_env(:svarm, :approvals_auth)
+    Application.put_env(:svarm, :approvals_auth, %{username: "op", password: "secret"})
+
+    on_exit(fn ->
+      if prev_auth == nil,
+        do: Application.delete_env(:svarm, :approvals_auth),
+        else: Application.put_env(:svarm, :approvals_auth, prev_auth)
+    end)
+
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Missing auth stamp",
+        status: Approval.pending_status(),
+        assignee: "demo"
+      })
+
+    # Session present but no board_auth_at (and no Authorization header)
+    {:ok, view, _html} =
+      conn
+      |> init_test_session(%{})
+      |> live(~p"/board")
+
+    view |> element("button", "Approve") |> render_click()
+    assert render(view) =~ "Authentication required"
+    assert KanbanBridge.get_task(task.id).status == Approval.pending_status()
+  end
+
+  test "fresh board_auth_at session allows approve without Authorization header", %{conn: conn} do
+    prev_auth = Application.get_env(:svarm, :approvals_auth)
+    Application.put_env(:svarm, :approvals_auth, %{username: "op", password: "secret"})
+
+    on_exit(fn ->
+      if prev_auth == nil,
+        do: Application.delete_env(:svarm, :approvals_auth),
+        else: Application.put_env(:svarm, :approvals_auth, prev_auth)
+    end)
+
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Fresh stamp",
+        status: Approval.pending_status(),
+        assignee: "demo"
+      })
+
+    {:ok, view, _html} =
+      conn
+      |> init_test_session(%{"board_auth_at" => System.system_time(:second)})
+      |> live(~p"/board")
+
     view |> element("button", "Approve") |> render_click()
     assert KanbanBridge.get_task(task.id).status == "todo"
   end
@@ -560,5 +658,104 @@ defmodule SvarmWeb.BoardLiveTest do
     :sys.get_state(view.pid)
 
     assert render(view) =~ "streamed chunk"
+  end
+
+  test "board columns use LiveView streams for task cards", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Streamed card",
+        status: "todo",
+        assignee: "demo",
+        body: String.duplicate("SECRET_BODY_PAYLOAD ", 50)
+      })
+
+    {:ok, view, html} = live(conn, ~p"/board")
+
+    assert html =~ ~s(id="col-todo-tasks")
+    assert html =~ ~s(phx-update="stream")
+    assert html =~ "Streamed card"
+    assert has_element?(view, "#task-#{task.id}")
+    # Full issue body must not appear in the board DOM
+    refute html =~ "SECRET_BODY_PAYLOAD"
+  end
+
+  test "Board.list_tasks omits body on card projection", %{conn: conn} do
+    _ = conn
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Has body",
+        status: "todo",
+        assignee: "demo",
+        body: "full issue body for agents only"
+      })
+
+    listed = Svarm.Board.list_tasks()
+    assert Enum.any?(listed, &(&1.id == task.id))
+    card = Enum.find(listed, &(&1.id == task.id))
+    refute Map.get(card, :body) in ["full issue body for agents only"]
+    # get_task still returns body for dispatch / detail paths
+    full = Svarm.Board.get_task(task.id)
+    assert full.body == "full issue body for agents only"
+  end
+
+  test "task_updated moves card between column streams", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Moving card",
+        status: "todo",
+        assignee: "demo"
+      })
+
+    {:ok, view, html} = live(conn, ~p"/board")
+    assert html =~ "Moving card"
+
+    Events.broadcast_task_updated(%{id: task.id, status: "in_progress", title: "Moving card"})
+    :sys.get_state(view.pid)
+
+    html = render(view)
+    assert html =~ "Moving card"
+    assert has_element?(view, "#task-#{task.id}")
+  end
+
+  test "run_finished restreams card so cost badge appears", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+    Svarm.Repo.delete_all("usage_records")
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Cost after run",
+        status: "in_progress",
+        assignee: "demo"
+      })
+
+    {:ok, view, html} = live(conn, ~p"/board")
+    refute html =~ ~r/\$\d/
+
+    Svarm.Usage.append(%{
+      run_id: "run_board_cost_1",
+      task_id: task.id,
+      source: "worker",
+      provider: "openrouter",
+      model_id: "claude-sonnet-4-20250514",
+      prompt_tokens: 1_000_000,
+      completion_tokens: 0,
+      estimated: false
+    })
+
+    # Without restream, stream DOM would keep the pre-cost card markup.
+    send(view.pid, {:run_finished, task.id, 0})
+    :sys.get_state(view.pid)
+
+    html = render(view)
+    assert html =~ "Cost after run"
+    # task_cost_summary renders total_cost_usd for known models
+    assert html =~ "$"
+    assert has_element?(view, "#task-#{task.id}")
   end
 end

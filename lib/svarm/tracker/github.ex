@@ -113,6 +113,7 @@ defmodule Svarm.Tracker.GitHub do
 
   @impl true
   def list_issues(config, filters \\ []) do
+    {include_body, filters} = Keyword.pop(filters, :include_body, true)
     owner = Map.fetch!(config, :owner)
     repo = Map.fetch!(config, :repo)
 
@@ -121,17 +122,29 @@ defmodule Svarm.Tracker.GitHub do
 
     case Req.get(url, params: params, headers: headers(config)) do
       {:ok, %{status: 200, body: issues}} ->
-        status_labels = Map.get(config, :status_labels, @default_status_labels)
-        normalized_config = Map.put(config, :status_labels, status_labels)
-
-        {:ok,
-         issues
-         |> Enum.map(&Normalize.from_api_response(&1, normalized_config))
-         |> Enum.filter(&Eligibility.board_visible?(&1, normalized_config))}
+        {:ok, normalize_listed_issues(issues, config, include_body)}
 
       _ ->
         {:ok, []}
     end
+  end
+
+  defp normalize_listed_issues(issues, config, include_body) do
+    status_labels = Map.get(config, :status_labels, @default_status_labels)
+    normalized_config = Map.put(config, :status_labels, status_labels)
+
+    issues
+    |> Enum.map(&Normalize.from_api_response(&1, normalized_config))
+    |> Enum.filter(&Eligibility.board_visible?(&1, normalized_config))
+    |> maybe_strip_list_bodies(include_body)
+  end
+
+  defp maybe_strip_list_bodies(issues, true), do: issues
+  defp maybe_strip_list_bodies(issues, false), do: Enum.map(issues, &strip_list_body/1)
+
+  # Board/dashboard card lists do not need issue body or raw API payload.
+  defp strip_list_body(%Svarm.Issue{} = issue) do
+    %{issue | body: nil, raw: nil}
   end
 
   @impl true

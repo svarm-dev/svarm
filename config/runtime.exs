@@ -33,6 +33,22 @@ if is_binary(approvals_user) and approvals_user != "" and is_binary(approvals_pa
   config :svarm, :approvals_auth, %{username: approvals_user, password: approvals_pass}
 end
 
+# Optional override for sticky board mutation auth TTL (seconds, positive integer).
+# Default 8 hours — see SECURITY.md.
+case System.get_env("BOARD_AUTH_TTL_SECONDS") do
+  nil ->
+    :ok
+
+  raw ->
+    case Integer.parse(String.trim(raw)) do
+      {n, ""} when n > 0 ->
+        config :svarm, :board_auth_ttl_seconds, n
+
+      _ ->
+        :ok
+    end
+end
+
 # Demo knobs (prod release keeps these off unless env is set):
 #   SVARM_SEED_DEMO=1   → boot-seed mock tasks when board empty (Docker demo)
 #   SVARM_DEMO_ROUTES=1 → Seed demo button + POST /dev/demo/seed (not implied by SEED)

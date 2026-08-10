@@ -83,4 +83,42 @@ defmodule SvarmWeb.DashboardLiveTest do
     assert html =~ "Spend"
     assert html =~ "1.5K"
   end
+
+  test "orchestrator_status bursts coalesce into one dashboard reload", %{conn: conn} do
+    KanbanBridge.create_task(%{
+      title: "Dash coalesce",
+      status: "todo",
+      assignee: "demo"
+    })
+
+    {:ok, view, html} = live(conn, ~p"/dashboard")
+    assert html =~ "Waiting on humans"
+
+    # Storm of high-frequency status ticks — schedules at most one coalesced reload.
+    for i <- 1..5 do
+      send(view.pid, {:orchestrator_status, %{running: i, claimed: 0, retrying: 0, completed: 0}})
+    end
+
+    %{socket: socket} = :sys.get_state(view.pid)
+    timer = socket.assigns.reload_timer
+    assert is_reference(timer)
+
+    # Further ticks must not schedule a second timer (coalesce, not reset).
+    for i <- 6..10 do
+      send(view.pid, {:orchestrator_status, %{running: i, claimed: 0, retrying: 0, completed: 0}})
+    end
+
+    %{socket: socket2} = :sys.get_state(view.pid)
+    assert socket2.assigns.reload_timer == timer
+
+    # Fire the coalesced reload without sleeping the suite.
+    _ = Process.cancel_timer(timer)
+    send(view.pid, :coalesced_dashboard_reload)
+    %{socket: socket3} = :sys.get_state(view.pid)
+    assert socket3.assigns.reload_timer == nil
+
+    html = render(view)
+    assert html =~ "Waiting on humans"
+    assert html =~ "Dashboard"
+  end
 end

@@ -4,13 +4,14 @@ defmodule SvarmWeb.Plugs.BoardAuthCapture do
 
   Does **not** challenge or block the request — board reads stay open when
   `approvals_auth` is configured. High-trust LiveView events re-check
-  `session["board_auth_ok"]` via `ApprovalsAuth.board_mutation_authorized?/1`.
+  `session["board_auth_at"]` freshness via `ApprovalsAuth.board_mutation_authorized?/1`
+  and wall-clock TTL on each mutation.
 
   When credentials are configured: valid Authorization **promotes** the session
-  flag to true and is never cleared by a later request without a header (sticky
-  until the session ends). When credentials are not configured: this plug is a
-  no-op; mutation policy is decided by `ApprovalsAuth` (`dev_routes` open vs
-  production fail-closed).
+  stamp to the current unix second (refreshing TTL). Follow-up requests without
+  a header keep the existing stamp (sticky until `board_auth_ttl_seconds/0`
+  elapses). When credentials are not configured: this plug is a no-op; mutation
+  policy is decided by `ApprovalsAuth` (`dev_routes` open vs production fail-closed).
   """
   import Plug.Conn
 
@@ -25,10 +26,11 @@ defmodule SvarmWeb.Plugs.BoardAuthCapture do
         conn
 
       ApprovalsAuth.authorized_header?(conn) ->
-        put_session(conn, "board_auth_ok", true)
+        # Fresh proof: stamp now (also refreshes TTL on re-challenge)
+        put_session(conn, "board_auth_at", System.system_time(:second))
 
       true ->
-        # Sticky: keep an earlier successful Basic Auth proof; do not demote
+        # Sticky: keep an earlier successful Basic Auth stamp; do not demote
         conn
     end
   end
