@@ -10,11 +10,18 @@ defmodule SvarmWeb.Plugs.ApprovalsAuth do
   Shared helpers are also used by the board LiveView to gate high-trust
   mutations (approve / reject / complete_review):
 
-  - Credentials configured → requires sticky session proof from Basic Auth.
+  - Credentials configured → requires a **fresh** session stamp from Basic Auth
+    (`session["board_auth_at"]` unix seconds, set by `BoardAuthCapture`).
+    Stamp is sticky for `board_auth_ttl_seconds/0` (default 8h) so normal sessions
+    are not re-challenged on every click; expired stamps fail closed until re-auth.
   - Credentials **missing** + `dev_routes` → open (local Mix / intentional demo).
   - Credentials **missing** without `dev_routes` → **fail closed** (production-safe default).
   """
   import Plug.Conn
+
+  # Workday-scale default: operators are not re-prompted mid-session; cookie theft
+  # / shared browser risk is bounded. Override via config or BOARD_AUTH_TTL_SECONDS.
+  @default_board_auth_ttl_seconds 8 * 60 * 60
 
   def init(opts), do: opts
 
@@ -66,6 +73,19 @@ defmodule SvarmWeb.Plugs.ApprovalsAuth do
     Application.get_env(:svarm, :dev_routes, false) == true
   end
 
+  @doc """
+  How long a successful Basic Auth proof authorizes board mutations (seconds).
+
+  Default: 8 hours. Config: `:board_auth_ttl_seconds`. Runtime env:
+  `BOARD_AUTH_TTL_SECONDS` (positive integer).
+  """
+  def board_auth_ttl_seconds do
+    case Application.get_env(:svarm, :board_auth_ttl_seconds, @default_board_auth_ttl_seconds) do
+      n when is_integer(n) and n > 0 -> n
+      _ -> @default_board_auth_ttl_seconds
+    end
+  end
+
   @doc "True when the request carries valid Basic Auth for configured credentials."
   def authorized_header?(conn) do
     with ["Basic " <> encoded] <- get_req_header(conn, "authorization"),
@@ -81,17 +101,46 @@ defmodule SvarmWeb.Plugs.ApprovalsAuth do
   end
 
   @doc """
+  Unix second stamp from the session, or `nil` when missing/invalid.
+
+  Only `board_auth_at` (integer) counts. Legacy boolean `board_auth_ok` is
+  ignored so upgrades force a fresh Basic Auth proof under TTL rules.
+  """
+  def session_board_auth_at(session) when is_map(session) do
+    case session["board_auth_at"] do
+      at when is_integer(at) -> at
+      _ -> nil
+    end
+  end
+
+  def session_board_auth_at(_), do: nil
+
+  @doc """
+  Whether `board_auth_at` (unix seconds) is still within `board_auth_ttl_seconds/0`.
+
+  Rejects missing stamps, non-integers, and future stamps (clock skew abuse).
+  """
+  def board_auth_at_fresh?(at) when is_integer(at) do
+    now = System.system_time(:second)
+    age = now - at
+    age >= 0 and age <= board_auth_ttl_seconds()
+  end
+
+  def board_auth_at_fresh?(_), do: false
+
+  @doc """
   Whether a LiveView may perform high-trust board mutations.
 
-  - Credentials configured → requires `session["board_auth_ok"] == true`
-    (set by `BoardAuthCapture` when a request had valid Basic Auth; sticky).
+  - Credentials configured → requires fresh `session["board_auth_at"]`
+    (set by `BoardAuthCapture` when a request had valid Basic Auth; sticky
+    until TTL expires).
   - Credentials **not** configured + `dev_routes` → open (local/dev).
   - Credentials **not** configured without `dev_routes` → denied (prod fail-closed).
   """
   def board_mutation_authorized?(session) when is_map(session) do
     cond do
       credentials_configured?() ->
-        session["board_auth_ok"] == true
+        board_auth_at_fresh?(session_board_auth_at(session))
 
       open_board_mutations_without_auth?() ->
         true
@@ -108,13 +157,14 @@ defmodule SvarmWeb.Plugs.ApprovalsAuth do
   @doc """
   Re-check board mutation policy from LiveView assigns + current config.
 
-  Fail closed when credentials are configured and the mount-time proof is missing,
-  or when credentials are missing outside the local `dev_routes` open model.
+  Pass the mount-time `board_auth_at` stamp (integer or nil). Freshness is
+  evaluated with wall clock on **every** call so a long-lived LiveView socket
+  cannot keep mutating after TTL expiry.
   """
-  def authorize_board_mutation?(board_auth_ok) when is_boolean(board_auth_ok) do
+  def authorize_board_mutation?(board_auth_at) do
     cond do
       credentials_configured?() ->
-        board_auth_ok
+        board_auth_at_fresh?(board_auth_at)
 
       open_board_mutations_without_auth?() ->
         true
