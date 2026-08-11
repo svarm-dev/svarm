@@ -163,4 +163,38 @@ defmodule Svarm.Runner.CliTest do
     assert Cli.resolve!("demo_code", from_cli).args ==
              AgentRunner.resolve!("demo_code", from_facade).args
   end
+
+  @sample_pack Path.expand("../../fixtures/skill_packs/sample", __DIR__)
+
+  test "skills inject: pack lands in workspace on happy path", %{
+    workspace_root: root,
+    statuses: statuses
+  } do
+    id = "sva_cli_skills_ok"
+    cfg = Map.put(agent_config("ok"), :skills, [@sample_pack])
+
+    assert :ok = Cli.run(task(id), cfg, run_opts(root, statuses))
+    assert last_status(statuses, id) == "review"
+
+    skill_md = Path.join([root, id, ".agents", "skills", "sample", "SKILL.md"])
+    assert File.regular?(skill_md)
+    assert File.read!(skill_md) =~ "Fixture skill pack"
+  end
+
+  test "skills inject: missing pack fails closed without spawn", %{
+    workspace_root: root,
+    statuses: statuses
+  } do
+    id = "sva_cli_skills_missing"
+    missing = Path.join(@sample_pack, "../does-not-exist-#{System.unique_integer([:positive])}")
+    cfg = Map.put(agent_config("ok"), :skills, [missing])
+
+    assert {:error, {:skills, :missing, _, _}} =
+             Cli.run(task(id), cfg, run_opts(root, statuses))
+
+    assert last_status(statuses, id) == "failed"
+    assert_agent_line(id, "skill pack missing")
+    # Workspace has no agent run.log — spawn never happened
+    refute File.exists?(Path.join([root, id, "run.log"]))
+  end
 end

@@ -91,13 +91,18 @@ skills = [
 |------|--------|
 | Layout | TOML array of strings under `skills` on the agent table |
 | Paths | Absolute, or **relative to the process working directory** when Svärm starts |
-| Omitted / empty | Loader sets `skills` to `[]` — same as today’s configs |
-| Malformed entries | Non-string or blank values are dropped; load still succeeds |
+| Pack shape | Each path is a **directory with `SKILL.md`**, or a **`.md` file** (copied as `SKILL.md`) |
+| Omitted / empty | Loader sets `skills` to `[]` — no packs injected |
+| Malformed entries | Non-string or blank values are dropped at load; load still succeeds |
 | Settings overlay | `/setup` / Settings can replace `skills` for a known agent name (list replace, not append) |
+| Dispatch inject | At run start, packs are **copied** into the ticket workspace under `.agents/skills/<name>/` |
+| Fail closed | Missing path, directory without `SKILL.md`, or name conflict → task `failed` with a clear board line (no silent skip) |
+| Prompt note | A short “Attached skill packs” section is appended so CLI agents see the paths |
+| Pi RPC | Also passes `--skill <dest>` per pack so skills load even on an untrusted fresh workspace |
 
 **Run Svärm where toolchains and packs live.** Relative pack paths resolve from the host CWD (or container workdir), not from the ticket workspace. Keep packs on the operator host; Svärm does not install or vendor them.
 
-**Not yet:** declaring `skills` is parsed and resolved into the agent config map only. Dispatch does **not** inject pack content into the workspace or prompt yet — that is a separate follow-up. Until then, configure paths early so agents are ready when inject ships.
+Each pack follows the [Agent Skills](https://agentskills.io/specification) layout (`SKILL.md` + optional scripts/references). Pi discovers project skills under `.agents/skills/`; the workspace copy is the shared contract for CLI runners too.
 
 ## Pi RPC profile (Path B default)
 

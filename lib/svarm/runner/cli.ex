@@ -8,7 +8,6 @@ defmodule Svarm.Runner.Cli do
   require Logger
 
   alias Svarm.{Events, ProfileRouter, Tracker, Workspace}
-  alias Svarm.Workflow.Render
 
   @agents_file Path.join(:code.priv_dir(:svarm), "agents.toml")
 
@@ -28,8 +27,8 @@ defmodule Svarm.Runner.Cli do
 
     attempt = (task.attempts || 0) + 1
 
-    case Render.render_prompt(task, attempt) do
-      {:ok, prompt} ->
+    case Svarm.Runner.prepare_prompt(task, agent_config, workspace_path, attempt) do
+      {:ok, prompt, _injected} ->
         do_run_agent(
           task,
           agent_config,
@@ -42,9 +41,7 @@ defmodule Svarm.Runner.Cli do
         )
 
       {:error, reason} ->
-        Logger.error("prompt render failed for task #{task.id}: #{inspect(reason)}")
-        tracker.update_status(tracker_config, task.id, "failed")
-        {:error, {:prompt_render_error, reason}}
+        Svarm.Runner.fail_prepare(task, tracker, tracker_config, reason, "cli")
     end
   end
 

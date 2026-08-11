@@ -11,7 +11,8 @@ Post-0.1.3 on `main` (not yet tagged): run console, optional CI resume, trust/pe
 
 ### Added
 
-- **Agent `skills` schema** ([#106](https://github.com/svarm-dev/svarm/issues/106)): optional path list on `agents.toml` / Settings overlay; parse + docs only (dispatch inject is a follow-up)
+- **Agent skills dispatch inject** ([#107](https://github.com/svarm-dev/svarm/issues/107)): configured `skills` packs are copied into the ticket workspace (`.agents/skills/`) at run start, with a prompt note and Pi `--skill` flags; missing/invalid packs fail closed
+- **Agent `skills` schema** ([#106](https://github.com/svarm-dev/svarm/issues/106)): optional path list on `agents.toml` / Settings overlay
 - **CI resume + circuit breaker** ([#44](https://github.com/svarm-dev/svarm/issues/44), [#60](https://github.com/svarm-dev/svarm/pull/60)): when enabled, poll GitHub Checks for managed PRs in **review** and re-dispatch a **fresh** agent run with failure context until **N** attempts open a durable circuit; board chip **“CI retries exhausted”**; default **off** (`ci_resume` in WORKFLOW / `SVARM_CI_RESUME_*`); durable `task_coordination` (PR link, counts); GitHub `todo` strips status labels; PR owner/repo bound to tracker; resume skips re-approval after first human gate; Checks HTTP timeouts + max polls/tick
 - **Run console** on the board ([#43](https://github.com/svarm-dev/svarm/issues/43), [#47](https://github.com/svarm-dev/svarm/pull/47)): dense mono console with agent/model/status/cost chrome, late-join hydrate from `RunLog`, attach deep links (`/board?task=…&attach=1`); agent lines and run markers persist once in `Events` (zero open boards still record; multiple LiveViews never double-write)
 - DB indexes for usage window queries and task eligibility sort ([#70](https://github.com/svarm-dev/svarm/issues/70), [#88](https://github.com/svarm-dev/svarm/pull/88))

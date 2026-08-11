@@ -25,12 +25,12 @@ If nothing material changed, **do not** edit this file.
 
 | Field | Value |
 |-------|--------|
-| **Updated** | 2026-08-10 |
-| **`main`** | `34e518e` — perf(board): reduce LiveView load (#104) |
+| **Updated** | 2026-08-11 |
+| **`main`** | `149ab76` — feat(skills): agents.toml skills path schema + docs (#117) |
 | **Latest tag** | **v0.1.3** (2026-08-02) |
-| **Unreleased** | Run console, CI resume (default off), trust/perf — see CHANGELOG |
-| **Focus** | **[#48](https://github.com/svarm-dev/svarm/issues/48)** — thin toolchain preflight + shared agent skills |
-| **Next** | [#49](https://github.com/svarm-dev/svarm/issues/49) typed stream · [#50](https://github.com/svarm-dev/svarm/issues/50) review-changes resume |
+| **Unreleased** | Run console, CI resume (default off), skills inject, trust/perf — see CHANGELOG |
+| **Focus** | **[#108](https://github.com/svarm-dev/svarm/issues/108)** — toolchain preflight contract fail/warn |
+| **Next** | [#52](https://github.com/svarm-dev/svarm/issues/52) sample pack · typed stream / review-resume children under later epics |
 
 `main` STATUS **lags open PR branches** — always check `gh pr list` / `gh issue list` for live work.
 
@@ -45,5 +45,6 @@ Format: `YYYY-MM-DD · one sentence · issue/PR link`
 
 ## Session log (newest first, max 3)
 
+- 2026-08-11 · skills dispatch inject (#107); Focus → #108
 - 2026-08-10 · slim STATUS after independent review (#105)
 - 2026-08-10 · main · #104 board streams · #103 tests · #102 auth TTL

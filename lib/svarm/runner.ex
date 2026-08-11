@@ -3,7 +3,10 @@ defmodule Svarm.Runner do
   Behaviour for agent runners. Each adapter implements how to execute
   an agent for a given task — CLI subprocess, pi RPC session, etc.
   """
-  alias Svarm.Issue
+  require Logger
+
+  alias Svarm.{Events, Issue, Skills}
+  alias Svarm.Workflow.Render
 
   # When Port `env` is set it replaces the whole environment. Re-include only
   # these keys from the host process — not every secret Svärm may hold.
@@ -84,6 +87,40 @@ defmodule Svarm.Runner do
   """
   def write_run_log(path, content) when is_binary(path) and is_binary(content) do
     File.write!(path, Svarm.Redact.text(content))
+  end
+
+  @doc """
+  Inject configured skill packs into the workspace, render the task prompt, and
+  append the skills section. Shared by CLI and PiRPC adapters.
+  """
+  @spec prepare_prompt(Issue.t(), map(), String.t(), non_neg_integer()) ::
+          {:ok, String.t(), [Skills.injected()]} | {:error, term()}
+  def prepare_prompt(task, agent_config, workspace_path, attempt)
+      when is_map(agent_config) and is_binary(workspace_path) do
+    with {:ok, injected} <- Skills.inject(agent_config[:skills], workspace_path),
+         {:ok, prompt} <- Render.render_prompt(task, attempt) do
+      {:ok, Skills.append_prompt_section(prompt, injected), injected}
+    end
+  end
+
+  @doc """
+  Fail a run when skill inject or prompt render fails. Marks the task `failed`
+  and, for skills errors, broadcasts a clear board line.
+  """
+  @spec fail_prepare(Issue.t(), module(), map(), term(), String.t()) :: {:error, term()}
+  def fail_prepare(task, tracker, tracker_config, reason, adapter_label)
+      when is_binary(adapter_label) do
+    if Skills.error?(reason) do
+      msg = Skills.format_error(reason)
+      Logger.error("#{adapter_label} skills inject failed for task #{task.id}: #{msg}")
+      Events.broadcast_agent_line(task.id, "\n[skills: #{msg}]\n")
+      tracker.update_status(tracker_config, task.id, "failed")
+      {:error, reason}
+    else
+      Logger.error("prompt render failed for task #{task.id}: #{inspect(reason)}")
+      tracker.update_status(tracker_config, task.id, "failed")
+      {:error, {:prompt_render_error, reason}}
+    end
   end
 
   defp resolve_env_value("$" <> var), do: System.get_env(var) || ""
