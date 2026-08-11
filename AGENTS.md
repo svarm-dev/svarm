@@ -185,7 +185,7 @@ Chat apps are **not** shared context across tools. Prefer durable surfaces in th
 | **[STATUS.md](STATUS.md)** | Short code snapshot — read at session start |
 | **GitHub Issues + PRs** | All code work units |
 
-**Start of every coding session:** `gh issue list` / `gh pr list` for live work, then read [STATUS.md](STATUS.md) (Focus + Blocked). STATUS on `main` lags open PR branches.  
+**Start of every coding session:** `gh issue list` / `gh pr list` for live work, then read [STATUS.md](STATUS.md) (Focus + Blocked). STATUS on `main` lags open PR branches. Use `gh issue view` / `gh pr view` with **`--json`** (see below) — bare view hits deprecated classic Projects GraphQL and fails.  
 **When landing work:** update STATUS **only in the same PR** if Focus/`main`/Blocked actually changed — see STATUS noise rules. **Never** a STATUS-only commit/PR.  
 **Blocked on a human:** issue comment (and STATUS Blocked line only if this PR already touches STATUS).
 
@@ -195,10 +195,42 @@ Chat apps are **not** shared context across tools. Prefer durable surfaces in th
 
 **Required tooling:** `gh` installed and authenticated (`gh auth status`). Prefer `gh` over raw REST. Repo remote is **`origin` → `github.com/svarm-dev/svarm`** only.
 
+### `gh` CLI: avoid classic Projects GraphQL
+
+Default `gh issue view` / `gh pr view` (pretty-print, no flags) still query **Projects (classic)** via GraphQL (`repository.issue.projectCards` / `repository.pullRequest.projectCards`). GitHub has deprecated that API; those commands **exit non-zero** with:
+
+```text
+GraphQL: Projects (classic) is being deprecated … (repository.issue.projectCards)
+```
+
+**Do this instead** — request explicit fields with `--json` (no `projectCards`):
+
+```bash
+# Issue intake (body + labels + comments)
+gh issue view N --json number,title,body,labels,state,comments
+
+# Compact one-liner for shells
+gh issue view N --json number,title,body --jq '"#\(.number) \(.title)\n\(.body)"'
+
+# PR status
+gh pr view N --json number,title,state,url,statusCheckRollup
+gh pr list --json number,title,url,headRefName
+gh pr checks N
+```
+
+| Safe | Broken (until gh drops classic projectCards) |
+|------|-----------------------------------------------|
+| `gh issue list` / `gh pr list` | Bare `gh issue view N` |
+| `gh issue view N --json …` | Bare `gh pr view N` |
+| `gh pr view N --json …` | `gh issue view N --comments` (pretty) |
+| `gh pr create` / `gh pr checks` / `gh run view` | |
+
+Optional human-readable print after JSON: pipe through `--jq` or `jq`. Do **not** “fix” this by querying classic project boards.
+
 ### Loop
 
 1. **Orient** — `gh issue list` / `gh pr list`, then [STATUS.md](STATUS.md) Focus + Blocked (STATUS on `main` may lag open PRs).
-2. **Intake** — `gh issue view N` (treat acceptance criteria as law). Optional: comment that you are taking it.
+2. **Intake** — `gh issue view N --json number,title,body,labels,state,comments` (treat acceptance criteria as law). Optional: comment that you are taking it.
 3. **Sync** — `git fetch origin && git checkout main && git pull --ff-only origin main`
 4. **Branch** — conventional short name from main:
    - `fix/…` · `feat/…` · `docs/…` · `refactor/…` · `test/…` · `ci/…`
@@ -222,7 +254,7 @@ Chat apps are **not** shared context across tools. Prefer durable surfaces in th
    EOF
    )"
    ```
-8. **CI** — `gh pr checks` (or `gh pr checks --watch`). On red: `gh run view <id> --log-failed` → fix → push. **Max 3 fix loops**, then stop and report blocked with logs/PR URL.
+8. **CI** — `gh pr checks` (or `gh pr checks --watch`). On red: `gh run view <id> --log-failed` → fix → push. **Max 3 fix loops**, then stop and report blocked with logs/PR URL. Inspect a PR with `gh pr view N --json number,title,state,url,statusCheckRollup` (not bare `gh pr view`).
 9. **STATUS** — if Focus/`main`/blockers changed, update [STATUS.md](STATUS.md) **in this same PR** (see STATUS noise rules). Skip if unchanged.
 10. **Hand off** — reply with PR URL, summary, residual risk. **Do not merge.**
 
