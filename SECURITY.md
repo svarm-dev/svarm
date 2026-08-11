@@ -91,6 +91,6 @@ Production runtime enables LiveView/WebSocket **origin checks** from `PHX_HOST` 
 |----------|------|
 | `PHX_HOST` | Public hostname used for URL generation and default origin allow-list (`//PHX_HOST`) |
 | `PHX_CHECK_ORIGIN` | Optional comma-separated allow-list when you need extra hosts/origins |
-| `PHX_SECURE_COOKIES` | Session `Secure` flag (prod default `true`). Compose sets `false` only for plain-HTTP localhost demos |
+| `PHX_SECURE_COOKIES` | Session `Secure` flag (prod default `true`). **Today** both compose `app` and `demo` inject `PHX_SECURE_COOKIES=false` by default — fine for plain-HTTP localhost; **set `PHX_SECURE_COOKIES=true` (or remove the override) for any HTTPS / reverse-proxy deploy** until compose is fixed ([#97](https://github.com/svarm-dev/svarm/issues/97)) |
 
 **Proxy assumptions:** terminate TLS at Caddy/nginx/NPM/etc., forward to the container on port 4000, and pass `Host` (and `X-Forwarded-Proto` if you later enable app-level `force_ssl`). Set `PHX_HOST` / `SVARM_BASE_URL` to the public name operators open in the browser. App-level `force_ssl` may remain proxy-owned — see `config/prod.exs`.
