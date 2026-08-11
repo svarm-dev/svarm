@@ -42,15 +42,12 @@ defmodule Svarm.StreamEventTest do
     end
 
     test "does not create atoms from arbitrary strings" do
-      before = :erlang.system_info(:atom_count)
+      # Global :atom_count is racy under async ExUnit (other tests create atoms).
+      # Prove this label was never interned: to_existing_atom/1 must still raise.
+      label = "not_a_real_stream_kind_#{System.unique_integer([:positive])}"
 
-      assert StreamEvent.parse_kind(
-               "not_a_real_stream_kind_#{System.unique_integer([:positive])}"
-             ) ==
-               :error
-
-      # Whitelist Map.fetch only — atom table must not grow from reject path.
-      assert :erlang.system_info(:atom_count) == before
+      assert StreamEvent.parse_kind(label) == :error
+      assert_raise ArgumentError, fn -> String.to_existing_atom(label) end
     end
   end
 
