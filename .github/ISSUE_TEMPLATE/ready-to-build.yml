@@ -1,0 +1,76 @@
+name: Ready to build
+description: Claimable work item with AC — use for agent/human delivery, not raw ideas
+title: ""
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For **build-ready** work (enhancement or bugfix). External product ideas → Feature request.
+        Epics that must be sliced first → Epic. Add `ai-task` only when AC is concrete and agent-safe.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What's wrong or missing, where it lives, and the failure mode — not just a symptom.
+      placeholder: |
+        …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+      description: Testable behavior. Prefer checkbox acceptance criteria. Note deliberate non-goals only if short; use Out of scope for the rest.
+      placeholder: |
+        - [ ] …
+        - [ ] …
+    validations:
+      required: true
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: What this issue deliberately does not cover.
+      placeholder: |
+        - …
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it matters
+      description: Optional. One short paragraph on product fit — skip if Problem already makes it obvious.
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Prior issues/PRs, modules, docs, review residuals.
+      placeholder: |
+        - #N · `path/to/file.ex`
+  - type: textarea
+    id: depends
+    attributes:
+      label: Depends on
+      description: Blocking siblings or parents. Use `Part of #N` at the top of the body for epic children.
+      placeholder: |
+        - #N (if any)
+        - None
+  - type: textarea
+    id: done_when
+    attributes:
+      label: Done when
+      description: Exit criteria for closing the issue.
+      placeholder: |
+        - [ ] …
+        - [ ] `mix precommit` green
+    validations:
+      required: true
+  - type: textarea
+    id: test_plan
+    attributes:
+      label: Test plan
+      description: How implementers prove the AC.
+      placeholder: |
+        - [ ] `mix precommit`
+        - [ ] Focused tests / manual path
+    validations:
+      required: true
