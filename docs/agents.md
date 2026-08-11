@@ -65,6 +65,39 @@ Trusted under default `approval.mode: untrusted`. Used by Seed demo / `SVARM_SEE
 | `provider` / `model` | LLM routing for adapters that use them |
 | `args` | CLI only |
 | `env` | Extra env for the child Port; `$VAR` expands from the **host** process. Empty/absent `env` does **not** inherit the full host environment — only PATH/HOME/locale/temp/shell plus listed keys. Put API keys here explicitly (e.g. `OPENROUTER_API_KEY = "$OPENROUTER_API_KEY"`). |
+| `skills` | Optional list of **paths** to skill packs (see below). Omitted or empty means no packs. |
+
+## Skill packs (`skills`)
+
+Attach the same playbook to every run of a named agent by listing **filesystem paths** — not marketplace pack IDs (there is no registry).
+
+```toml
+[agent.default]
+name = "Pi"
+role = "Backend"
+command = "pi"
+adapter = "pi_rpc"
+provider = "openrouter"
+model = "openrouter/free"
+env = { GITHUB_TOKEN = "$GITHUB_TOKEN", OPENROUTER_API_KEY = "$OPENROUTER_API_KEY" }
+# Pack directories and/or SKILL.md files (paths only)
+skills = [
+  "packs/backend",
+  "/opt/svarm-packs/elixir"
+]
+```
+
+| Rule | Detail |
+|------|--------|
+| Layout | TOML array of strings under `skills` on the agent table |
+| Paths | Absolute, or **relative to the process working directory** when Svärm starts |
+| Omitted / empty | Loader sets `skills` to `[]` — same as today’s configs |
+| Malformed entries | Non-string or blank values are dropped; load still succeeds |
+| Settings overlay | `/setup` / Settings can replace `skills` for a known agent name (list replace, not append) |
+
+**Run Svärm where toolchains and packs live.** Relative pack paths resolve from the host CWD (or container workdir), not from the ticket workspace. Keep packs on the operator host; Svärm does not install or vendor them.
+
+**Not yet:** declaring `skills` is parsed and resolved into the agent config map only. Dispatch does **not** inject pack content into the workspace or prompt yet — that is a separate follow-up. Until then, configure paths early so agents are ready when inject ships.
 
 ## Pi RPC profile (Path B default)
 

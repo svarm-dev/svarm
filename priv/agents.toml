@@ -11,6 +11,10 @@
 #   model        — model ID, e.g. "openrouter/free" (free), "claude-sonnet-4-20250514" (paid)
 #   env          — extra environment variables (optional)
 #   args         — CLI arguments (only used by cli adapter)
+#   skills       — optional list of pack paths (directories or SKILL.md files).
+#                  Relative paths are relative to the process working directory
+#                  (start Svärm where your packs live). Omitted/empty = no packs.
+#                  Schema only until dispatch inject ships; see docs/agents.md.
 
 # v1 default: pi RPC via OpenRouter
 [agent.default]
@@ -22,6 +26,8 @@ provider = "openrouter"
 model = "openrouter/free"
 # Explicit keys only — empty env no longer inherits the full host environment.
 env = { GITHUB_TOKEN = "$GITHUB_TOKEN", OPENROUTER_API_KEY = "$OPENROUTER_API_KEY" }
+# Example skill packs (paths only — not injected into the run yet):
+# skills = ["packs/backend", "/opt/svarm-packs/elixir"]
 
 # CLI fallback (uncomment if pi RPC isn't available):
 # [agent.fallback]

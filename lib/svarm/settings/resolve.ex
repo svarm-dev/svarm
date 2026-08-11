@@ -15,6 +15,9 @@ defmodule Svarm.Settings.Resolve do
     "name" => :display_name
   }
 
+  # List fields merged only when present as a list in Settings (replace, not append).
+  @agent_list_fields %{"skills" => :skills}
+
   @doc """
   OpenRouter API key: Settings secret first, then `OPENROUTER_API_KEY` (or
   `auth_env` from providers.toml).
@@ -105,12 +108,34 @@ defmodule Svarm.Settings.Resolve do
   defp maybe_put_labels(map, _, _), do: map
 
   defp merge_agent_fields(existing, ov) do
+    existing
+    |> merge_agent_string_fields(ov)
+    |> merge_agent_list_fields(ov)
+  end
+
+  defp merge_agent_string_fields(existing, ov) do
     Enum.reduce(@agent_field_map, existing, fn {str_key, atom_key}, acc ->
       case ov[str_key] do
         val when is_binary(val) and val != "" -> Map.put(acc, atom_key, val)
         _ -> acc
       end
     end)
+  end
+
+  defp merge_agent_list_fields(existing, ov) do
+    Enum.reduce(@agent_list_fields, existing, fn {str_key, atom_key}, acc ->
+      case ov[str_key] do
+        list when is_list(list) -> Map.put(acc, atom_key, normalize_skills(list))
+        _ -> acc
+      end
+    end)
+  end
+
+  # Same rules as Runner.Cli.normalize_skills/1 — keep Settings free of runner deps.
+  defp normalize_skills(list) when is_list(list) do
+    list
+    |> Enum.filter(&(is_binary(&1) and String.trim(&1) != ""))
+    |> Enum.map(&String.trim/1)
   end
 
   defp maybe_put(map, _key, nil), do: map
