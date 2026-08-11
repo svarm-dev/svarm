@@ -19,6 +19,7 @@ Post-0.1.3 on `main` (not yet tagged): run console, optional CI resume, trust/pe
 
 ### Changed
 
+- Issue forms: **Ready to build** + **Epic** templates; Feature request clarified as ideas-only; CONTRIBUTING documents the forms
 - README Status lists post-0.1.3 capabilities on `main` (run console, optional CI resume) while **Current release** stays v0.1.3 until the next tag
 - README aligned with v0.1.3 governance floor: `/setup`, `APPROVALS_*` / budget env, agent env allowlist, estimated cost label, docs links ([#42](https://github.com/svarm-dev/svarm/pull/42))
 - Board card costs use SQL aggregates instead of per-card N+1 loads ([#66](https://github.com/svarm-dev/svarm/issues/66), [#93](https://github.com/svarm-dev/svarm/pull/93))

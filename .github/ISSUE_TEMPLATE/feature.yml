@@ -1,7 +1,11 @@
 name: Feature request
-description: Suggest an improvement or new capability
+description: Product idea or improvement — not yet a claimable build ticket
 labels: [enhancement]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        For ideas and external suggestions. Maintainers turn accepted work into **Ready to build** (or an **Epic**) before coding.
   - type: textarea
     id: problem
     attributes:

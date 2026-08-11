@@ -2,9 +2,22 @@
 
 Thanks for your interest in contributing. This document covers how to report bugs, suggest features, and submit pull requests.
 
+## Issue templates
+
+Use the GitHub issue forms under **New issue**:
+
+| Form | When |
+|------|------|
+| **Bug report** | Something broken — Expected / Actual / Steps / Environment |
+| **Feature request** | Product idea not yet ready to build |
+| **Ready to build** | Claimable work item (enhancement or bugfix) with AC |
+| **Epic** | Parent that must be sliced — do not claim; children deliver |
+
+**Ready to build** sections: Problem · Expected · Out of scope · Done when · Test plan (optional Why / References / Depends on). Epic children start with `Part of #N`. Add label `ai-task` only when AC is concrete and agent-safe.
+
 ## Reporting bugs
 
-Open a [GitHub Issue](https://github.com/svarm-dev/svarm/issues/new) with:
+Prefer the **Bug report** form. Include:
 
 - What you expected to happen
 - What actually happened
@@ -13,13 +26,17 @@ Open a [GitHub Issue](https://github.com/svarm-dev/svarm/issues/new) with:
 
 If the bug involves agent dispatch or cost tracking, include the output of `mix svarm.demo` or the relevant `/board` state.
 
+Maintainers turn accepted fixes into **Ready to build** when they need checkbox AC for agents.
+
 ## Suggesting features
 
-Open a [GitHub Issue](https://github.com/svarm-dev/svarm/issues/new) (label `enhancement` if you can). Describe:
+Prefer the **Feature request** form (label `enhancement`). Describe:
 
 - The problem you're trying to solve
 - Your proposed solution (if you have one)
 - Why it matters for the project's goals (see README for what Svärm is)
+
+Accepted work is rewritten as **Ready to build** (or an **Epic** + children) before coding.
 
 ## Submitting pull requests
 

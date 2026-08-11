@@ -1,0 +1,41 @@
+name: Epic
+description: Parent work that must be sliced — do not claim; children are the delivery units
+title: ""
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not claim this parent.** Implement one child PR at a time.
+        Children should use **Ready to build** and start with `Part of #this`.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Problem
+      description: Why this epic exists and what “done” means at the product level.
+    validations:
+      required: true
+  - type: textarea
+    id: children
+    attributes:
+      label: Children
+      description: Claimable slices. Mark the first child. Keep labels on children, not rank labels here.
+      placeholder: |
+        - [ ] #N `scope: first slice` (**claim first**) · `ai-task`
+        - [ ] #M `scope: next slice` · depends on #N · `ai-task`
+    validations:
+      required: true
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: What this epic deliberately does not cover.
+      placeholder: |
+        - …
+  - type: textarea
+    id: related
+    attributes:
+      label: Related
+      description: Shipped work, sibling epics, docs.
+      placeholder: |
+        - #N shipped
