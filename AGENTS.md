@@ -37,6 +37,7 @@ svarm/
 │   │   ├── approval.ex           # First-run human-in-the-loop gating
 │   │   ├── board.ex              # Read API for the dashboard
 │   │   ├── events.ex             # PubSub broadcasts to LiveView
+│   │   ├── stream_event.ex       # V1 typed stream event kinds (run console contract)
 │   │   ├── profile_router.ex     # Task → agent routing
 │   │   └── application.ex        # Supervision tree
 │   └── svarm_web/                # Phoenix web layer (mostly read-only; approvals mutate)
@@ -55,9 +56,11 @@ svarm/
 ├── test/                         # ExUnit tests (mirrors lib/ structure)
 │   └── support/                  # ConnCase, LiveCase
 ├── assets/                       # Tailwind CSS, JS hooks
-├── docs/                         # User-facing guides (GitHub App setup, …)
+├── docs/                         # User-facing guides (GitHub App setup, typed stream, …)
 └── WORKFLOW.md                   # Optional repo-owned workflow config
 ```
+
+**Contracts (coding agents):** v1 run-console stream event kinds live in `Svarm.StreamEvent` — human notes in [docs/typed-stream.md](docs/typed-stream.md). Use those names for Events/RunLog/BoardLive work; do not invent alternate kind strings.
 
 ## Architecture boundaries
 
