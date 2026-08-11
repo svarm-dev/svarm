@@ -147,11 +147,19 @@ GitHub App identity (bot comments): [docs/github-app.md](docs/github-app.md).
 
 ## Status
 
-**Current release: v0.1.3**
+**Current release: v0.1.3** (governance floor). **`main` is ahead** under [Unreleased](CHANGELOG.md) — next tag TBD.
 
-**Working now:** local board + GitHub Issues + pi/CLI agents + OpenRouter, with approvals (one-shot after human approve), per-ticket cost (estimated labeled), optional hard daily/per-ticket USD caps that block **new** spawns, allowlisted agent child env, usage ledger export (`mix svarm.export_usage`), board mutation auth when `APPROVALS_*` is set, optional **in-app `/setup`** (encrypted keys; file/env still work), and human-wait visibility on board/dashboard.
+**Working now (v0.1.3 + `main`):**
 
-**Not shipped yet:** Linear/Jira trackers, multi-provider/multi-agent registry UI, managed hosting, mid-run budget kill of in-flight workers. "Adapter-ready" means the behaviours exist; it does not mean every adapter is built.
+- Local board + GitHub Issues + pi/CLI agents + OpenRouter
+- Approvals (one-shot after human approve); board mutations require `APPROVALS_*` in Docker/prod (**fail closed** if unset)
+- Per-ticket cost (estimated labeled); optional hard daily/per-ticket USD caps that block **new** spawns
+- Allowlisted agent child env; usage ledger export (`mix svarm.export_usage`)
+- Optional **in-app `/setup`** (encrypted keys; file/env still work); human-wait visibility on board/dashboard
+- **Run console** on the ticket — jump in, late-join from durable log, deep link `/board?task=…&attach=1` (on `main`)
+- Optional **CI fail → fresh agent re-dispatch** with circuit breaker (default **off**; enable via WORKFLOW / `SVARM_CI_RESUME_*` — on `main`)
+
+**Not shipped yet:** Linear/Jira trackers, multi-provider/multi-agent registry UI, managed hosting, mid-run budget kill of in-flight workers, typed stream / steer / mid-run Q&A in the console, soft budget hold mode. "Adapter-ready" means the behaviours exist; it does not mean every adapter is built.
 
 Optional UI config after the demo: open `/setup` (same auth as `/approvals` in Docker). Details: [GETTING-STARTED.md](GETTING-STARTED.md).
 
