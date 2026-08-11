@@ -42,7 +42,6 @@ defmodule Svarm.Runner.PiRPC do
   alias Svarm.Runner.LogFormat
 
   alias Svarm.{Events, Tracker, Workspace}
-  alias Svarm.Workflow.Render
 
   # 45 min wall-clock — long enough for real coding agents; keep ≤ orchestrator stall.
   @default_timeout_ms 45 * 60_000
@@ -67,23 +66,22 @@ defmodule Svarm.Runner.PiRPC do
     attempt = (task.attempts || 0) + 1
     log_path = Path.join(workspace_path, "run.log")
 
-    case Render.render_prompt(task, attempt) do
-      {:ok, prompt} ->
-        do_run_pi(
-          task,
-          agent_config,
-          tracker,
-          tracker_config,
-          workspace_path,
-          prompt,
-          log_path,
-          opts
-        )
+    case Svarm.Runner.prepare_prompt(task, agent_config, workspace_path, attempt) do
+      {:ok, prompt, injected} ->
+        ctx = %{
+          tracker: tracker,
+          tracker_config: tracker_config,
+          workspace_path: workspace_path,
+          prompt: prompt,
+          log_path: log_path,
+          opts: opts,
+          injected: injected
+        }
+
+        do_run_pi(task, agent_config, ctx)
 
       {:error, reason} ->
-        Logger.error("prompt render failed for task #{task.id}: #{inspect(reason)}")
-        tracker.update_status(tracker_config, task.id, "failed")
-        {:error, {:prompt_render_error, reason}}
+        Svarm.Runner.fail_prepare(task, tracker, tracker_config, reason, "pi_rpc")
     end
   end
 
@@ -112,16 +110,17 @@ defmodule Svarm.Runner.PiRPC do
     end
   end
 
-  defp do_run_pi(
-         task,
-         agent_config,
-         tracker,
-         tracker_config,
-         workspace_path,
-         prompt,
-         log_path,
-         opts
-       ) do
+  defp do_run_pi(task, agent_config, ctx) do
+    %{
+      tracker: tracker,
+      tracker_config: tracker_config,
+      workspace_path: workspace_path,
+      prompt: prompt,
+      log_path: log_path,
+      opts: opts,
+      injected: injected
+    } = ctx
+
     meta =
       Svarm.AgentRegistry.run_started_meta(task, agent_config)
       |> Map.merge(%{
@@ -140,7 +139,7 @@ defmodule Svarm.Runner.PiRPC do
     settle_grace_ms = Keyword.get(opts, :settle_grace_ms, @default_settle_grace_ms)
     executable = resolve_executable(opts, agent_config)
 
-    case start_port(executable, build_args(agent_config), workspace_path, env) do
+    case start_port(executable, build_args(agent_config, injected), workspace_path, env) do
       {:ok, port} ->
         Logger.info("pi_rpc: started pi in #{workspace_path}")
 
@@ -606,13 +605,27 @@ defmodule Svarm.Runner.PiRPC do
     end
   end
 
-  defp build_args(agent_config) do
-    args = ["--mode", "rpc", "--no-session"]
-    args = if provider = agent_config[:provider], do: args ++ ["--provider", provider], else: args
-    args = if model = agent_config[:model], do: args ++ ["--model", model], else: args
+  defp build_args(agent_config, injected) do
+    base =
+      ["--mode", "rpc", "--no-session"]
+      |> maybe_flag("--provider", agent_config[:provider])
+      |> maybe_flag("--model", agent_config[:model])
+      |> maybe_flag("--name", agent_config[:display_name])
 
-    if name = agent_config[:display_name], do: args ++ ["--name", name], else: args
+    # Explicit --skill so packs load even when the fresh workspace is not yet trusted.
+    skill_flags =
+      injected
+      |> Enum.flat_map(fn
+        %{dest: dest} when is_binary(dest) -> ["--skill", dest]
+        _ -> []
+      end)
+
+    base ++ skill_flags
   end
+
+  defp maybe_flag(args, _flag, nil), do: args
+  defp maybe_flag(args, _flag, ""), do: args
+  defp maybe_flag(args, flag, value), do: args ++ [flag, value]
 
   defp send_json(port, map) do
     Port.command(port, Jason.encode!(map) <> "\n")
