@@ -11,6 +11,7 @@ Post-0.1.3 on `main` (not yet tagged): run console, optional CI resume, trust/pe
 
 ### Added
 
+- **Toolchain preflight contract** ([#108](https://github.com/svarm-dev/svarm/issues/108)): optional `tools` / `tools_mode` on agents (`fail` default, or `warn`); PATH-only check before spawn so missing host tools do not burn tokens; board `[toolchain: …]` note
 - **Agent skills dispatch inject** ([#107](https://github.com/svarm-dev/svarm/issues/107)): configured `skills` packs are copied into the ticket workspace (`.agents/skills/`) at run start, with a prompt note and Pi `--skill` flags; missing/invalid packs fail closed
 - **Agent `skills` schema** ([#106](https://github.com/svarm-dev/svarm/issues/106)): optional path list on `agents.toml` / Settings overlay
 - **CI resume + circuit breaker** ([#44](https://github.com/svarm-dev/svarm/issues/44), [#60](https://github.com/svarm-dev/svarm/pull/60)): when enabled, poll GitHub Checks for managed PRs in **review** and re-dispatch a **fresh** agent run with failure context until **N** attempts open a durable circuit; board chip **“CI retries exhausted”**; default **off** (`ci_resume` in WORKFLOW / `SVARM_CI_RESUME_*`); durable `task_coordination` (PR link, counts); GitHub `todo` strips status labels; PR owner/repo bound to tracker; resume skips re-approval after first human gate; Checks HTTP timeouts + max polls/tick

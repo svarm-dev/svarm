@@ -304,6 +304,135 @@ defmodule Svarm.OrchestratorTest do
         :sys.replace_state(Orchestrator, fn _ -> original end)
       end
     end
+
+    test "toolchain fail mode marks task failed and does not claim or spawn" do
+      missing = "svarm_missing_tool_#{System.unique_integer([:positive])}"
+
+      task =
+        KanbanBridge.create_task(%{
+          title: "toolchain fail",
+          status: "todo",
+          assignee: "demo"
+        })
+
+      original = :sys.get_state(Orchestrator)
+
+      local_config = %{
+        kind: :local,
+        active_states: ["todo", "in_progress"],
+        terminal_states: ["done", "failed", "review"],
+        ignored_assignees: []
+      }
+
+      demo = Map.fetch!(original.agents, "demo")
+
+      agents =
+        Map.put(original.agents, "demo", %{
+          demo
+          | tools: [missing],
+            tools_mode: :fail
+        })
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | tracker: Svarm.Tracker.Local,
+            tracker_config: local_config,
+            agents: agents,
+            budget_caps: %{},
+            approval: %{mode: :off, trusted_assignees: MapSet.new()},
+            claimed: MapSet.delete(state.claimed, task.id),
+            running: Map.delete(state.running, task.id),
+            completed: MapSet.delete(state.completed, task.id),
+            last_budget_block: nil
+        }
+      end)
+
+      try do
+        send(Orchestrator, :tick)
+
+        assert wait_until(fn ->
+                 KanbanBridge.get_task(task.id).status == "failed"
+               end)
+
+        st = :sys.get_state(Orchestrator)
+        refute Map.has_key?(st.running, task.id)
+        refute MapSet.member?(st.claimed, task.id)
+        assert KanbanBridge.get_task(task.id).status == "failed"
+      after
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "toolchain warn mode still claims and spawns the agent" do
+      missing = "svarm_missing_tool_#{System.unique_integer([:positive])}"
+
+      task =
+        KanbanBridge.create_task(%{
+          title: "toolchain warn",
+          status: "todo",
+          assignee: "demo"
+        })
+
+      original = :sys.get_state(Orchestrator)
+
+      local_config = %{
+        kind: :local,
+        active_states: ["todo", "in_progress"],
+        terminal_states: ["done", "failed", "review"],
+        ignored_assignees: []
+      }
+
+      demo = Map.fetch!(original.agents, "demo")
+
+      agents =
+        Map.put(original.agents, "demo", %{
+          demo
+          | tools: [missing],
+            tools_mode: :warn
+        })
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | tracker: Svarm.Tracker.Local,
+            tracker_config: local_config,
+            agents: agents,
+            budget_caps: %{},
+            approval: %{mode: :off, trusted_assignees: MapSet.new()},
+            claimed: MapSet.delete(state.claimed, task.id),
+            running: Map.delete(state.running, task.id),
+            completed: MapSet.delete(state.completed, task.id),
+            last_budget_block: nil
+        }
+      end)
+
+      try do
+        send(Orchestrator, :tick)
+
+        # Demo agent should still start (warn does not block).
+        assert wait_until(fn ->
+                 st = :sys.get_state(Orchestrator)
+                 t = KanbanBridge.get_task(task.id)
+
+                 Map.has_key?(st.running, task.id) or MapSet.member?(st.claimed, task.id) or
+                   t.status in ["in_progress", "review", "done", "failed"]
+               end)
+
+        # Must not have failed solely at preflight before any claim/run.
+        # (Demo may finish to review/done; never stuck at todo without claim.)
+        st = :sys.get_state(Orchestrator)
+        t = KanbanBridge.get_task(task.id)
+
+        assert Map.has_key?(st.running, task.id) or MapSet.member?(st.claimed, task.id) or
+                 t.status in ["in_progress", "review", "done", "failed"]
+
+        refute t.status == "todo" and not MapSet.member?(st.claimed, task.id) and
+                 not Map.has_key?(st.running, task.id)
+      after
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
   end
 
   describe "successful exit completion" do

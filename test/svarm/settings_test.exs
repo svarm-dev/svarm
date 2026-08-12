@@ -135,6 +135,42 @@ defmodule Svarm.SettingsTest do
     assert merged["default"].model == "only-model"
   end
 
+  test "merge_agents replaces tools list and tools_mode when Settings provides them" do
+    agents = %{
+      "default" => %{
+        command: "pi",
+        tools: ["mix"],
+        tools_mode: :fail
+      },
+      "demo" => %{command: "sh", tools: ["node"], tools_mode: :warn}
+    }
+
+    assert {:ok, _} =
+             Settings.put_section("agents", %{
+               "default" => %{"tools" => [" gh ", "", "mix"], "tools_mode" => "warn"}
+             })
+
+    merged = Resolve.merge_agents(agents)
+    assert merged["default"].tools == ["gh", "mix"]
+    assert merged["default"].tools_mode == :warn
+    assert merged["demo"].tools == ["node"]
+    assert merged["demo"].tools_mode == :warn
+  end
+
+  test "merge_agents leaves file tools when Settings omits tools fields" do
+    agents = %{
+      "default" => %{command: "pi", tools: ["mix"], tools_mode: :warn}
+    }
+
+    assert {:ok, _} =
+             Settings.put_section("agents", %{"default" => %{"model" => "only-model"}})
+
+    merged = Resolve.merge_agents(agents)
+    assert merged["default"].tools == ["mix"]
+    assert merged["default"].tools_mode == :warn
+    assert merged["default"].model == "only-model"
+  end
+
   test "status reports local tracker ready without Settings" do
     status = Settings.status()
     assert status.tracker_ready? == true

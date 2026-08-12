@@ -17,6 +17,11 @@
 #                  no packs. At dispatch, packs are copied into the ticket
 #                  workspace under .agents/skills/; missing paths fail the run.
 #                  See docs/agents.md.
+#   tools        — optional list of host executable names expected on PATH
+#                  (e.g. ["mix", "node", "gh"]). PATH-only contract — Svärm does
+#                  not install tools. Omitted/empty = no extra tools required.
+#   tools_mode   — "fail" (default) or "warn". fail blocks spawn when a tool is
+#                  missing; warn starts anyway and surfaces a board note.
 
 # v1 default: pi RPC via OpenRouter
 [agent.default]
@@ -30,6 +35,9 @@ model = "openrouter/free"
 env = { GITHUB_TOKEN = "$GITHUB_TOKEN", OPENROUTER_API_KEY = "$OPENROUTER_API_KEY" }
 # Example skill packs (injected into the workspace at dispatch):
 # skills = ["packs/backend", "/opt/svarm-packs/elixir"]
+# Example host-tool contract (checked on PATH before spawn; default mode fail):
+# tools = ["mix", "gh"]
+# tools_mode = "fail"
 
 # CLI fallback (uncomment if pi RPC isn't available):
 # [agent.fallback]
