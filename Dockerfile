@@ -47,6 +47,9 @@ COPY --from=builder /app/_build/prod/rel/svarm/ ./
 # Templates for first-boot config (entrypoint copies into mounted /app/config)
 COPY --from=builder /app/priv/workflow_template.md /app/templates/WORKFLOW.md
 COPY --from=builder /app/priv/agents.toml /app/templates/agents.toml
+
+# Sample skill pack at a stable path — reference as /app/packs/ai-task (docs/agents.md)
+COPY --from=builder /app/priv/packs /app/packs
 COPY docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 

@@ -13,7 +13,7 @@ Use the GitHub issue forms under **New issue**:
 | **Ready to build** | Claimable work item (enhancement or bugfix) with AC |
 | **Epic** | Parent that must be sliced — do not claim; children deliver |
 
-**Ready to build** sections: Problem · Expected · Out of scope · Done when · Test plan (optional Why / References / Depends on). Epic children start with `Part of #N`. Add label `ai-task` only when AC is concrete and agent-safe.
+**Ready to build** sections: Problem · Expected · Out of scope · Done when · Test plan (optional Why / References / Depends on). Epic children start with `Part of #N` and prefer titles `scope: short name` (e.g. `toolchain: preflight contract fail/warn`). Add label `ai-task` only when AC is concrete and agent-safe — no open “pick one” product forks. Label meanings: [docs/labels.md](docs/labels.md).
 
 ## Reporting bugs
 

@@ -33,8 +33,10 @@ provider = "openrouter"
 model = "openrouter/free"
 # Explicit keys only — empty env no longer inherits the full host environment.
 env = { GITHUB_TOKEN = "$GITHUB_TOKEN", OPENROUTER_API_KEY = "$OPENROUTER_API_KEY" }
-# Example skill packs (injected into the workspace at dispatch):
-# skills = ["packs/backend", "/opt/svarm-packs/elixir"]
+# Example: the sample pack shipped in this repo (injected into the ticket
+# workspace at dispatch). Works from a repo-root CWD; in Docker the same pack
+# is at /app/packs/ai-task. Prefer absolute paths when Svärm starts elsewhere.
+# skills = ["priv/packs/ai-task"]
 # Example host-tool contract (checked on PATH before spawn; default mode fail):
 # tools = ["mix", "gh"]
 # tools_mode = "fail"

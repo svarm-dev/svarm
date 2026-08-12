@@ -125,7 +125,7 @@ if config_env() == :prod do
     end
 
   # Session Secure flag: default on for HTTPS / reverse-proxy TLS termination.
-  # Local Docker over plain HTTP must set PHX_SECURE_COOKIES=false (compose does).
+  # Plain-HTTP local Docker: set PHX_SECURE_COOKIES=false in .env (demo compose does).
   # false / 0 / no / off → insecure cookies for HTTP-only local use only.
   session_secure? =
     System.get_env("PHX_SECURE_COOKIES", "true") not in ~w(0 false FALSE no NO off OFF)
@@ -151,8 +151,9 @@ if config_env() == :prod do
   # Secure by default so they are not sent over cleartext HTTP.
   #
   # Raw HTTP on a public port is unsupported. For loopback Docker demos only,
-  # compose sets PHX_SECURE_COOKIES=false so LiveView sessions work on
-  # http://localhost — do not use that on a shared/public host.
+  # the demo compose profile sets PHX_SECURE_COOKIES=false so LiveView sessions
+  # work on http://localhost — do not use that on a shared/public host. Plain-HTTP
+  # local `--profile app` should set PHX_SECURE_COOKIES=false in .env explicitly.
   #
   # App-level force_ssl may stay proxy-owned (see config/prod.exs). If the
   # proxy terminates TLS, forward Host and X-Forwarded-Proto.
