@@ -8,7 +8,7 @@ Captured from a running local board (Playwright, light theme).
 | `card-running.png` | Selected card + run panel cost breakdown |
 | `dashboard.png` | Agent roster, cost strip, task distribution, recent runs |
 
-A real GitHub bot cost-comment still is preferred for marketing when dogfooding (the real GitHub loop). Until then, `dashboard.png` is the in-app cost surface.
+A real GitHub bot cost-comment still is preferred for marketing when dogfooding (the real tracker loop). Until then, `dashboard.png` is the in-app cost surface.
 
 ## Recapture
 

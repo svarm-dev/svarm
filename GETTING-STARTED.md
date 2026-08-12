@@ -4,13 +4,13 @@ Three journeys. Pick one; do not interleave.
 
 | Journey | Time | Needs |
 |---------|------|-------|
-| **Feel the board** (demo) | ~1 min | Docker (`--profile demo` auto-seeds) or Elixir + Seed demo; no API keys |
-| **Real GitHub loop** | ~15 min | PAT, OpenRouter, pi (Docker installs pi) |
+| **Feel the board** — local board, no tracker | ~1 min | Docker (`--profile demo` auto-seeds) or Elixir + Seed demo; no API keys |
+| **Real tracker loop** — external issue tracker (GitHub today) | ~15 min | PAT, OpenRouter, pi (Docker installs pi) |
 | **Team hardening** | after the real loop | GitHub App auth + strong APPROVALS_*; optional hard budget caps |
 
 ---
 
-## Feel the board: 60-second demo (no API keys)
+## Feel the board: 60-second local demo (no API keys)
 
 ```bash
 git clone https://github.com/svarm-dev/svarm.git
@@ -29,13 +29,15 @@ docker compose --profile demo up --build
 **Local Elixir:** `mix setup && mix phx.server` → `/board` → **Seed demo**.  
 (`mix svarm.demo` is a separate CLI process with its own temp DB; use Seed demo for the UI board.)
 
-When you’re done watching cards move, go to the **real GitHub loop** for a real issue → PR loop.
+When you’re done watching cards move, go to the **real tracker loop** for a real issue → PR loop.
 
 **Optional UI setup:** after demo, open `/setup` to store OpenRouter + GitHub PAT + default model in the app DB (encrypted). File/env config still works when Settings is empty. In Docker, `/setup` uses the same Basic Auth as `/approvals`.
 
 ---
 
-## Real GitHub loop on a toy repo
+## Real tracker loop on a toy repo
+
+Connect an external issue tracker — GitHub today, more planned — and watch tickets become PRs.
 
 ### Prerequisites
 
@@ -109,7 +111,7 @@ Default **`approval.mode: untrusted`**: real agents will **not** run until you a
 
 Poll interval defaults to ~30s (see `polling.interval_ms` in WORKFLOW.md).
 
-Pi RPC runs default to a **45-minute wall-clock** timeout (streaming does not extend it); orchestrator stall is the same duration (WORKFLOW `agent.stall_timeout_ms`). Keep run timeout ≤ stall so abort→kill runs before stall. See [docs/agents.md](docs/agents.md#pi-rpc-profile-default-for-the-real-github-loop).
+Pi RPC runs default to a **45-minute wall-clock** timeout (streaming does not extend it); orchestrator stall is the same duration (WORKFLOW `agent.stall_timeout_ms`). Keep run timeout ≤ stall so abort→kill runs before stall. See [docs/agents.md](docs/agents.md#pi-rpc-profile-default-for-the-real-tracker-loop).
 
 Example receipt shape:
 
@@ -190,7 +192,7 @@ Env overrides:
 | No eligible issues | Issue has `ai-task`; `required_labels` matches |
 | pi not found (local) | `which pi`; Docker image includes pi |
 | OpenRouter errors | `OPENROUTER_API_KEY` set |
-| Empty board | Demo (`--profile demo`) or Seed demo; the real GitHub loop needs a labeled issue |
+| Empty board | Demo (`--profile demo`) or Seed demo; the real tracker loop needs a labeled issue |
 | `mix svarm.demo` ≠ `/board` | Expected: Mix task uses a temp DB. Use Seed demo on the running server |
 
 ### Quick reset
