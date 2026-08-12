@@ -41,7 +41,7 @@ defmodule Svarm.Runner.PiRPC do
 
   alias Svarm.Runner.LogFormat
 
-  alias Svarm.{Events, Tracker, Workspace}
+  alias Svarm.{Events, StreamEvent, Tracker, Workspace}
 
   # 45 min wall-clock — long enough for real coding agents; keep ≤ orchestrator stall.
   @default_timeout_ms 45 * 60_000
@@ -482,7 +482,12 @@ defmodule Svarm.Runner.PiRPC do
   defp handle_event(%{"type" => "tool_execution_start"} = event, task_id, log, usage, session) do
     name = event["toolName"] || "tool"
     args = event["args"] || event["input"] || event["arguments"]
-    Events.broadcast_agent_line(task_id, LogFormat.tool_start(name, args))
+
+    Events.broadcast_stream_event(
+      task_id,
+      StreamEvent.new(:tool_start, %{name: name, args: args})
+    )
+
     {log, usage, %{session | tool_stdout_streamed: false}}
   end
 
@@ -501,14 +506,25 @@ defmodule Svarm.Runner.PiRPC do
 
     cond do
       event["isError"] ->
-        Events.broadcast_agent_line(task_id, LogFormat.tool_fail(name, event["result"]))
+        Events.broadcast_stream_event(
+          task_id,
+          StreamEvent.new(:tool_end, %{name: name, status: :error, result: event["result"]})
+        )
 
       session[:tool_stdout_streamed] ->
-        :ok
+        Events.broadcast_stream_event(
+          task_id,
+          StreamEvent.new(:tool_end, %{name: name, status: :ok})
+        )
 
       true ->
         # Tools that only report on end (no partial updates).
         _ = broadcast_tool_text(task_id, event["result"] || event["partialResult"])
+
+        Events.broadcast_stream_event(
+          task_id,
+          StreamEvent.new(:tool_end, %{name: name, status: :ok})
+        )
     end
 
     {log, usage, %{session | tool_stdout_streamed: false}}

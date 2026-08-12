@@ -11,6 +11,7 @@ Post-0.1.3 on `main` (not yet tagged): run console, optional CI resume, trust/pe
 
 ### Added
 
+- **Typed stream Events/RunLog projection** ([#110](https://github.com/svarm-dev/svarm/issues/110)): live path broadcasts `{:stream_event, task_id, event}` for v1 kinds; RunLog keeps a text projection (no schema change); `{:agent_line, ...}` remains for BoardLive until #111
 - **Toolchain preflight contract** ([#108](https://github.com/svarm-dev/svarm/issues/108)): optional `tools` / `tools_mode` on agents (`fail` default, or `warn`); PATH-only check before spawn so missing host tools do not burn tokens; board `[toolchain: …]` note
 - **Sample skill pack `ai-task`** ([#52](https://github.com/svarm-dev/svarm/issues/52), [#124](https://github.com/svarm-dev/svarm/pull/124)): in-repo reference pack at `priv/packs/ai-task` (Docker `/app/packs/ai-task`); enable with `skills` on an agent — [docs/agents.md](docs/agents.md#sample-pack-ai-task)
 - **Agent skills dispatch inject** ([#107](https://github.com/svarm-dev/svarm/issues/107)): configured `skills` packs are copied into the ticket workspace (`.agents/skills/`) at run start, with a prompt note and Pi `--skill` flags; missing/invalid packs fail closed

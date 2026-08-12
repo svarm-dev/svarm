@@ -16,17 +16,18 @@ defmodule Svarm.StreamEvent do
   | `tool_end` | A tool call finished (success or fail via payload status) |
   | `run_marker` | Run lifecycle banner (started / finished / attempt) |
 
-  ## Transition (this slice)
-
-  Runners may still project tool activity through
-  `Svarm.Runner.LogFormat.tool_start/2` and `tool_fail/2` as **plain text lines**
-  (`Events.broadcast_agent_line/2`). Those text projections may remain until
-  Events/RunLog adopt typed emission (#110). This module does **not** change
-  BoardLive chrome, RunLog schema, or governance run-marks product.
+  Events persist a **text projection** in RunLog (no kind column) so late-join
+  stays compatible. Live path also broadcasts `{:stream_event, task_id, event}`.
+  BoardLive chrome is #111.
   """
+
+  alias Svarm.Runner.LogFormat
 
   @typedoc "Atom form of a v1 stream event kind."
   @type kind :: :text | :tool_start | :tool_end | :run_marker
+
+  @typedoc "Typed stream event. Payload keys are atoms from internal constructors."
+  @type event :: %{kind: kind(), payload: map()}
 
   @kinds [:text, :tool_start, :tool_end, :run_marker]
 
@@ -73,4 +74,59 @@ defmodule Svarm.StreamEvent do
   @spec kind_string(term()) :: String.t() | nil
   def kind_string(kind) when kind in @kinds, do: Atom.to_string(kind)
   def kind_string(_), do: nil
+
+  @doc "Build a v1 event map. `kind` must be a v1 atom; payload is an atom-key map."
+  @spec new(kind(), map()) :: event()
+  def new(kind, payload \\ %{}) when kind in @kinds and is_map(payload) do
+    %{kind: kind, payload: payload}
+  end
+
+  @doc """
+  Project a typed event to the RunLog / BoardLive text line.
+
+  Empty string means persist nothing (typed PubSub still fires). Tool lines
+  reuse `LogFormat` so existing console text stays stable during #111.
+  """
+  @spec to_text(event()) :: String.t()
+  def to_text(%{kind: :text, payload: payload}) do
+    case payload[:text] do
+      text when is_binary(text) -> text
+      _ -> ""
+    end
+  end
+
+  def to_text(%{kind: :tool_start, payload: payload}) do
+    LogFormat.tool_start(tool_name(payload), payload[:args])
+  end
+
+  def to_text(%{kind: :tool_end, payload: payload}) do
+    name = tool_name(payload)
+
+    case payload[:status] do
+      :error -> LogFormat.tool_fail(name, payload[:result])
+      _ -> ""
+    end
+  end
+
+  def to_text(%{kind: :run_marker, payload: payload}) do
+    case payload[:phase] do
+      :started ->
+        "--- #{payload[:label] || "Agent started"} ---\n"
+
+      :finished ->
+        "\n--- run finished (exit #{payload[:exit_code] || "?"}) ---\n"
+
+      _ ->
+        ""
+    end
+  end
+
+  def to_text(_), do: ""
+
+  defp tool_name(payload) do
+    case payload[:name] do
+      name when is_binary(name) and name != "" -> name
+      _ -> "tool"
+    end
+  end
 end

@@ -64,4 +64,41 @@ defmodule Svarm.StreamEventTest do
       assert StreamEvent.kind_string("text") == nil
     end
   end
+
+  describe "new/2" do
+    test "builds a v1 event map" do
+      assert StreamEvent.new(:text, %{text: "hi"}) == %{kind: :text, payload: %{text: "hi"}}
+      assert StreamEvent.new(:tool_end) == %{kind: :tool_end, payload: %{}}
+    end
+  end
+
+  describe "to_text/1" do
+    test "text kind returns the payload text" do
+      assert StreamEvent.to_text(StreamEvent.new(:text, %{text: "chunk\n"})) == "chunk\n"
+      assert StreamEvent.to_text(StreamEvent.new(:text, %{})) == ""
+    end
+
+    test "tool_start reuses LogFormat projection" do
+      event = StreamEvent.new(:tool_start, %{name: "bash", args: %{"command" => "ls"}})
+      assert StreamEvent.to_text(event) == "\n$ bash ls\n"
+    end
+
+    test "tool_end fail projects via LogFormat; success is empty" do
+      fail = StreamEvent.new(:tool_end, %{name: "bash", status: :error, result: "boom"})
+      assert StreamEvent.to_text(fail) == "\n[tool bash failed]\nboom\n"
+
+      ok = StreamEvent.new(:tool_end, %{name: "bash", status: :ok})
+      assert StreamEvent.to_text(ok) == ""
+    end
+
+    test "run_marker started and finished banners" do
+      started =
+        StreamEvent.new(:run_marker, %{phase: :started, label: "Demo started · attempt 1"})
+
+      assert StreamEvent.to_text(started) == "--- Demo started · attempt 1 ---\n"
+
+      finished = StreamEvent.new(:run_marker, %{phase: :finished, exit_code: 0})
+      assert StreamEvent.to_text(finished) == "\n--- run finished (exit 0) ---\n"
+    end
+  end
 end
