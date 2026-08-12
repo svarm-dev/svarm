@@ -101,4 +101,14 @@ defmodule Svarm.SkillsTest do
     refute File.exists?(stale)
     assert File.regular?(Path.join([ws, ".agents", "skills", "sample", "SKILL.md"]))
   end
+
+  test "shipped sample pack stays injectable", %{workspace: ws} do
+    shipped = Application.app_dir(:svarm, "priv/packs/ai-task")
+
+    assert {:ok, [info]} = Skills.inject([shipped], ws)
+    assert info.name == "ai-task"
+
+    body = File.read!(Path.join(info.dest, "SKILL.md"))
+    assert body =~ "name: ai-task"
+  end
 end

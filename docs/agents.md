@@ -3,7 +3,7 @@
 Copy a block into **`svarm-config/agents.toml`** (Docker) or **`priv/agents.toml`** (local defaults).  
 Secrets stay in `.env` — never in these files.
 
-See also path **B** in [GETTING-STARTED.md](../GETTING-STARTED.md).
+See also the real tracker loop in [GETTING-STARTED.md](../GETTING-STARTED.md).
 
 ## Default (pi + OpenRouter)
 
@@ -104,7 +104,25 @@ skills = [
 
 Each pack follows the [Agent Skills](https://agentskills.io/specification) layout (`SKILL.md` + optional scripts/references). Pi discovers project skills under `.agents/skills/`; the workspace copy is the shared contract for CLI runners too.
 
-## Pi RPC profile (Path B default)
+## Sample pack: ai-task
+
+The repo ships one reference pack, [`priv/packs/ai-task/`](../priv/packs/ai-task/SKILL.md): repo-citizenship conventions for working a board ticket (read the repo's AGENTS.md, keep scope to the ticket, run the project's own verify gate, `Closes #N`, never merge). The body is plain markdown and harness-agnostic — pi RPC receives it via `--skill`, CLI agents via the workspace copy plus the prompt note above.
+
+Enable it on an agent:
+
+| Install | `skills` entry |
+|---------|----------------|
+| Local, started from the repo root | `["priv/packs/ai-task"]` |
+| Docker image | `["/app/packs/ai-task"]` |
+| Any other layout | `cp -r priv/packs/ai-task "$HOME/.svarm/packs/"` once, then the absolute path, e.g. `["/home/you/.svarm/packs/ai-task"]` |
+
+Paths go through `Path.expand/1` — `~` is **not** expanded, so use the absolute path.
+
+Run a ticket: label an issue `ai-task`, approve the run, watch the board. The ticket workspace gets `.agents/skills/ai-task/SKILL.md` and the prompt lists the pack. Zero-key check: attach the pack to `agent.demo` and **Seed demo** — inject runs for demo agents too (and a wrong path fails the demo run closed, which is the cheapest way to see the failure line).
+
+Your own packs need no fork: put a directory with a `SKILL.md` anywhere on the host and list its path. Settings (`/setup`) replaces the list per known agent name.
+
+## Pi RPC profile (default for the real tracker loop)
 
 Default adapter `pi_rpc` spawns **`pi --mode rpc --no-session`** (+ provider/model/name).
 

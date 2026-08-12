@@ -1,5 +1,5 @@
 ---
-# tracker: GitHub Issues (path B — real loop)
+# tracker: GitHub Issues (real loop)
 # Copy over WORKFLOW.md or merge into svarm-config/WORKFLOW.md after first boot.
 tracker:
   kind: github
