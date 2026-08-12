@@ -133,6 +133,26 @@ defmodule Svarm.EventsTest do
     refute RunLog.get(task_id) =~ secret
   end
 
+  test "broadcast_stream_event redacts secrets inside MCP content lists" do
+    Events.subscribe()
+    task_id = "evt_list_secret_#{System.unique_integer([:positive])}"
+    secret = "sk-ant-abcdefghijklmnopqrstuvwxyz"
+
+    result = %{"content" => [%{"type" => "text", "text" => "token=#{secret}"}]}
+
+    assert :ok =
+             Events.broadcast_stream_event(
+               task_id,
+               StreamEvent.new(:tool_end, %{name: "bash", status: :error, result: result})
+             )
+
+    assert_receive {:stream_event, ^task_id, %{kind: :tool_end, payload: payload}}, 500
+    refute inspect(payload) =~ secret
+    assert_receive {:agent_line, ^task_id, line}, 500
+    refute line =~ secret
+    refute RunLog.get(task_id) =~ secret
+  end
+
   test "broadcast_agent_line also emits a :text stream event" do
     Events.subscribe()
     task_id = "evt_text_kind_#{System.unique_integer([:positive])}"

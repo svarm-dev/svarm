@@ -34,6 +34,7 @@ Post-0.1.3 on `main` (not yet tagged): run console, optional CI resume, trust/pe
 
 ### Fixed
 
+- **Redact.map walks lists** so MCP `content` arrays in typed `{:stream_event, ...}` payloads are scrubbed (PubSub must not carry secrets)
 - **Prod fail-closed board mutations** ([#64](https://github.com/svarm-dev/svarm/issues/64), [#91](https://github.com/svarm-dev/svarm/pull/91)): approve/reject/mark-done deny when `APPROVALS_*` is unset outside local Mix `dev_routes`
 - Production LiveView **origin checks** stay on (allow-list from `PHX_HOST` / `PHX_CHECK_ORIGIN`); session cookies default to **Secure** for HTTPS deploys ([#65](https://github.com/svarm-dev/svarm/issues/65), [#92](https://github.com/svarm-dev/svarm/pull/92))
 - Secrets redacted in on-disk workspace `run.log` ([#63](https://github.com/svarm-dev/svarm/issues/63), [#87](https://github.com/svarm-dev/svarm/pull/87)); broader Redact patterns for common secret shapes ([#78](https://github.com/svarm-dev/svarm/issues/78), [#86](https://github.com/svarm-dev/svarm/pull/86))
@@ -43,6 +44,7 @@ Post-0.1.3 on `main` (not yet tagged): run console, optional CI resume, trust/pe
 
 ### Security
 
+- `Redact.map/1` walks lists (MCP tool `args` / `result` content arrays) so typed stream PubSub payloads are scrubbed
 - Fail-closed board mutations without `APPROVALS_*` in production ([#64](https://github.com/svarm-dev/svarm/issues/64) / [#91](https://github.com/svarm-dev/svarm/pull/91))
 - Origin allow-list + Secure session cookies in prod ([#65](https://github.com/svarm-dev/svarm/issues/65) / [#92](https://github.com/svarm-dev/svarm/pull/92))
 - Redact expansions + on-disk run.log scrub ([#78](https://github.com/svarm-dev/svarm/issues/78), [#63](https://github.com/svarm-dev/svarm/issues/63))
