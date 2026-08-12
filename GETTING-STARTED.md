@@ -59,6 +59,7 @@ cp .env.example .env
 | `GITHUB_TOKEN` | For GitHub tracker | Classic PAT with `repo` scope |
 | `OPENROUTER_API_KEY` | For real agents | From [openrouter.ai/keys](https://openrouter.ai/keys) |
 | `SVARM_BASE_URL` | Recommended | `http://localhost:4000` so cost receipts link to the board |
+| `PHX_SECURE_COOKIES` | For plain-HTTP local `app` only | Prod/compose **app** defaults Secure (`true`). On `http://localhost` with `--profile app`, set `PHX_SECURE_COOKIES=false` in `.env` so sessions work. Demo profile sets this for you. |
 
 Optional **GitHub App** (comments as `{slug}[bot]`): [docs/github-app.md](docs/github-app.md).
 
@@ -144,7 +145,7 @@ Svärm tracks GitHub work with **labels**. Your eligibility label (e.g. `ai-task
 | CI resume | Optional: re-dispatch when a managed PR’s Checks fail (see below). **Off by default.** |
 | Smoke-only off | Never leave `approval.mode: off` on a shared repo; do not leave `SVARM_DEMO_ROUTES` / `SVARM_SEED_DEMO` on production |
 | Base URL | Point `SVARM_BASE_URL` at the deployed host |
-| HTTPS + host | Terminate TLS at a reverse proxy; set `PHX_HOST` to the public hostname (origin checks). For HTTPS deploys with compose, set `PHX_SECURE_COOKIES=true` (compose currently defaults false on app too — [#97](https://github.com/svarm-dev/svarm/issues/97)). See [SECURITY.md](SECURITY.md) |
+| HTTPS + host | Terminate TLS at a reverse proxy; set `PHX_HOST` to the public hostname (origin checks). Compose **app** leaves session cookies Secure by default; only set `PHX_SECURE_COOKIES=false` for plain-HTTP localhost. See [SECURITY.md](SECURITY.md) |
 
 ### CI resume (optional)
 
@@ -194,6 +195,7 @@ Env overrides:
 | OpenRouter errors | `OPENROUTER_API_KEY` set |
 | Empty board | Demo (`--profile demo`) or Seed demo; the real tracker loop needs a labeled issue |
 | `mix svarm.demo` ≠ `/board` | Expected: Mix task uses a temp DB. Use Seed demo on the running server |
+| Sessions / approvals sticky auth fail on local HTTP `app` | Set `PHX_SECURE_COOKIES=false` in `.env` (Secure cookies need HTTPS; demo profile sets this already) |
 
 ### Quick reset
 
