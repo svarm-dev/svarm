@@ -30,8 +30,8 @@ services:
       - SVARM_WORKFLOW_PATH=/app/config/WORKFLOW.md
       - SVARM_AGENTS_PATH=/app/config/agents.toml
       - PHX_HOST=${PHX_HOST:-localhost}
-      # Plain HTTP on localhost: allow non-Secure session cookies (prod defaults Secure).
-      - PHX_SECURE_COOKIES=${PHX_SECURE_COOKIES:-false}
+      # Session Secure defaults true in prod runtime. For plain-HTTP localhost
+      # with this profile, set PHX_SECURE_COOKIES=false in .env (demo sets false).
       - SVARM_BASE_URL=${SVARM_BASE_URL:-http://localhost:${SVARM_PORT:-4000}}
     volumes:
       - ./data:/app/data
