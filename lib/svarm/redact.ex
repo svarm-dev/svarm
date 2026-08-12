@@ -24,18 +24,19 @@ defmodule Svarm.Redact do
   # PEM private key blocks (RSA, EC, OPENSSH, PKCS#8, encrypted). Public keys are not matched.
   @pem_block ~r/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/
 
-  @doc "Deep-redact known secret keys in maps. Non-maps returned as-is."
+  @doc "Deep-redact maps and lists (nested MCP content arrays included). Other terms as-is."
   def map(data) when is_map(data) do
     Map.new(data, fn {k, v} ->
-      cond do
-        secret_key?(k) -> {k, redact_value(v)}
-        is_map(v) -> {k, map(v)}
-        is_binary(v) -> {k, text(v)}
-        true -> {k, v}
+      if secret_key?(k) do
+        {k, redact_value(v)}
+      else
+        {k, map(v)}
       end
     end)
   end
 
+  def map(data) when is_list(data), do: Enum.map(data, &map/1)
+  def map(data) when is_binary(data), do: text(data)
   def map(other), do: other
 
   @doc "Redact secrets in free-form log text (agent tool output, env dumps)."

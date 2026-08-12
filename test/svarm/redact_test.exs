@@ -19,6 +19,24 @@ defmodule Svarm.RedactTest do
     assert out.kind == :github
   end
 
+  test "map walks lists so MCP content arrays are redacted" do
+    secret = "sk-ant-abcdefghijklmnopqrstuvwxyz"
+
+    raw = %{
+      result: %{
+        "content" => [
+          %{"type" => "text", "text" => "token=#{secret}"}
+        ]
+      },
+      args: [%{"command" => "echo #{secret}"}]
+    }
+
+    out = Redact.map(raw)
+    refute inspect(out) =~ secret
+    assert hd(out.result["content"])["text"] =~ "[redacted]"
+    assert hd(out.args)["command"] =~ "[redacted]"
+  end
+
   test "orchestrator inspect never prints tracker api_key" do
     state = %Svarm.Orchestrator{
       tracker_config: %{
