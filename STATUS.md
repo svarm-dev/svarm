@@ -28,7 +28,7 @@ If nothing material changed, **do not** edit this file.
 | **Updated** | 2026-08-12 |
 | **`main`** | `149ab76` — feat(skills): agents.toml skills path schema + docs (#117) |
 | **Latest tag** | **v0.1.3** (2026-08-02) |
-| **Unreleased** | Run console, CI resume (default off), skills inject, trust/perf — see CHANGELOG |
+| **Unreleased** | Run console, CI resume (default off), skills inject, sample pack, trust/perf — see CHANGELOG |
 | **Focus** | **[#108](https://github.com/svarm-dev/svarm/issues/108)** — toolchain preflight contract fail/warn |
 | **Next** | Typed stream / review-resume children under later epics |
 
