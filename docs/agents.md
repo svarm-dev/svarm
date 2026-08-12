@@ -66,6 +66,37 @@ Trusted under default `approval.mode: untrusted`. Used by Seed demo / `SVARM_SEE
 | `args` | CLI only |
 | `env` | Extra env for the child Port; `$VAR` expands from the **host** process. Empty/absent `env` does **not** inherit the full host environment — only PATH/HOME/locale/temp/shell plus listed keys. Put API keys here explicitly (e.g. `OPENROUTER_API_KEY = "$OPENROUTER_API_KEY"`). |
 | `skills` | Optional list of **paths** to skill packs (see below). Omitted or empty means no packs. |
+| `tools` | Optional list of **host executable names** expected on PATH (e.g. `mix`, `node`, `gh`). Omitted or empty means no extra tools required. **Not an installer** — Svärm only checks PATH. |
+| `tools_mode` | `fail` (default) or `warn`. What to do when a declared tool is missing (see below). |
+
+## Host tools (`tools` / `tools_mode`)
+
+Declare a **PATH-only contract** for tools the agent (or its scripts) expects on the host. Svärm does **not** install runtimes, language toolchains, or packages.
+
+```toml
+[agent.default]
+name = "Pi"
+command = "pi"
+adapter = "pi_rpc"
+provider = "openrouter"
+model = "openrouter/free"
+# Cheap preflight before spawn — no model spend
+tools = ["mix", "gh", "node"]
+tools_mode = "fail"   # default if omitted; use "warn" to start anyway
+```
+
+| Rule | Detail |
+|------|--------|
+| Layout | TOML array of strings under `tools`; optional `tools_mode` string |
+| Check | Before spawn (alongside budget), each name is looked up with `System.find_executable/1` |
+| Cost | PATH lookup only — no LLM or API calls |
+| Omitted / empty | No extra tools required; preflight is a no-op |
+| Malformed entries | Non-string or blank values are dropped at load; load still succeeds |
+| `tools_mode = "fail"` (default) | Missing tools → task marked **failed**, clear board line (`[toolchain: …]`), agent process **not** started |
+| `tools_mode = "warn"` | Missing tools → board/log note that the agent expects them, then spawn continues |
+| Settings overlay | `/setup` / Settings can replace `tools` (list replace) and set `tools_mode` for a known agent name |
+
+**Install tools on the host (or container image) yourself**, then declare them so a missing `mix` fails closed instead of burning tokens mid-run.
 
 ## Skill packs (`skills`)
 

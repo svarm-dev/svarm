@@ -26,11 +26,11 @@ If nothing material changed, **do not** edit this file.
 | Field | Value |
 |-------|--------|
 | **Updated** | 2026-08-12 |
-| **`main`** | `fcbe5a0` — feat(packs): sample ai-task skill pack + docs (#124) |
+| **`main`** | (this PR) toolchain preflight fail/warn (#108) |
 | **Latest tag** | **v0.1.3** (2026-08-02) |
-| **Unreleased** | Run console, CI resume (default off), skills inject, sample pack, trust/perf — see CHANGELOG |
-| **Focus** | **[#108](https://github.com/svarm-dev/svarm/issues/108)** — toolchain preflight contract fail/warn |
-| **Next** | Typed stream / review-resume children under later epics |
+| **Unreleased** | Run console, CI resume, skills inject, sample pack, toolchain preflight — see CHANGELOG |
+| **Focus** | **[#110](https://github.com/svarm-dev/svarm/issues/110)** — typed stream: Events/RunLog projection |
+| **Next** | Review-resume / mid-run Q&A children under later epics |
 
 `main` STATUS **lags open PR branches** — always check `gh pr list` / `gh issue list` for live work.
 
@@ -45,6 +45,6 @@ Format: `YYYY-MM-DD · one sentence · issue/PR link`
 
 ## Session log (newest first, max 3)
 
+- 2026-08-12 · toolchain preflight tools/tools_mode (#108); Focus → #110
 - 2026-08-12 · sample ai-task pack (#52)
 - 2026-08-11 · skills dispatch inject (#107); Focus → #108
-- 2026-08-10 · slim STATUS after independent review (#105)

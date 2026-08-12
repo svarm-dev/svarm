@@ -16,7 +16,8 @@ defmodule Svarm.Settings.Resolve do
   }
 
   # List fields merged only when present as a list in Settings (replace, not append).
-  @agent_list_fields %{"skills" => :skills}
+  # skills → path strings; tools → PATH executable names (same trim/drop rules).
+  @agent_list_fields %{"skills" => :skills, "tools" => :tools}
 
   @doc """
   OpenRouter API key: Settings secret first, then `OPENROUTER_API_KEY` (or
@@ -111,6 +112,7 @@ defmodule Svarm.Settings.Resolve do
     existing
     |> merge_agent_string_fields(ov)
     |> merge_agent_list_fields(ov)
+    |> merge_agent_tools_mode(ov)
   end
 
   defp merge_agent_string_fields(existing, ov) do
@@ -125,14 +127,29 @@ defmodule Svarm.Settings.Resolve do
   defp merge_agent_list_fields(existing, ov) do
     Enum.reduce(@agent_list_fields, existing, fn {str_key, atom_key}, acc ->
       case ov[str_key] do
-        list when is_list(list) -> Map.put(acc, atom_key, normalize_skills(list))
+        list when is_list(list) -> Map.put(acc, atom_key, normalize_string_list(list))
         _ -> acc
       end
     end)
   end
 
-  # Same rules as Runner.Cli.normalize_skills/1 — keep Settings free of runner deps.
-  defp normalize_skills(list) when is_list(list) do
+  defp merge_agent_tools_mode(existing, ov) do
+    # nil is an atom in Elixir — only apply when the key is present with a real value.
+    case Map.fetch(ov, "tools_mode") do
+      {:ok, mode} when is_binary(mode) ->
+        Map.put(existing, :tools_mode, Svarm.Toolchain.normalize_mode(mode))
+
+      {:ok, mode} when is_atom(mode) and not is_nil(mode) ->
+        Map.put(existing, :tools_mode, Svarm.Toolchain.normalize_mode(mode))
+
+      _ ->
+        existing
+    end
+  end
+
+  # Same rules as Runner.Cli.normalize_skills/1 and Toolchain.normalize_tools/1 —
+  # keep Settings free of runner deps for the common trim/drop path.
+  defp normalize_string_list(list) when is_list(list) do
     list
     |> Enum.filter(&(is_binary(&1) and String.trim(&1) != ""))
     |> Enum.map(&String.trim/1)

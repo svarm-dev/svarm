@@ -7,7 +7,7 @@ defmodule Svarm.Runner.Cli do
 
   require Logger
 
-  alias Svarm.{Events, ProfileRouter, Tracker, Workspace}
+  alias Svarm.{Events, ProfileRouter, Toolchain, Tracker, Workspace}
 
   @agents_file Path.join(:code.priv_dir(:svarm), "agents.toml")
 
@@ -107,6 +107,10 @@ defmodule Svarm.Runner.Cli do
   Optional `skills` is a list of path strings (pack directories or `SKILL.md`
   files). Omitted, empty, or malformed values become `[]` so existing configs
   without skills keep loading.
+
+  Optional `tools` is a list of host executable names expected on PATH
+  (preflight contract). Optional `tools_mode` is `"fail"` (default) or
+  `"warn"`. See `Svarm.Toolchain` and docs/agents.md.
   """
   def load_agents(path \\ @agents_file) do
     with {:ok, contents} <- File.read(path),
@@ -125,7 +129,9 @@ defmodule Svarm.Runner.Cli do
            adapter: Map.get(cfg, "adapter", "cli"),
            provider: Map.get(cfg, "provider"),
            model: Map.get(cfg, "model"),
-           skills: normalize_skills(Map.get(cfg, "skills"))
+           skills: normalize_skills(Map.get(cfg, "skills")),
+           tools: Toolchain.normalize_tools(Map.get(cfg, "tools")),
+           tools_mode: Toolchain.normalize_mode(Map.get(cfg, "tools_mode"))
          }}
       end)
     else

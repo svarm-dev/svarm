@@ -140,7 +140,7 @@ Svärm tracks GitHub work with **labels**. Your eligibility label (e.g. `ai-task
 |------|---------|
 | Bot identity | [docs/github-app.md](docs/github-app.md); comments as `svarm[bot]` |
 | Approvals | **Required in production/Docker:** strong `APPROVALS_USER` / `APPROVALS_PASSWORD` before exposing the port. Gates `/approvals`, `/setup`, and board approve/reject/mark-done. Missing credentials → board mutations fail closed (local Mix `dev_routes` may stay open). Keep `approval.mode: untrusted`. Board **reads** stay open — still firewall the UI (see [SECURITY.md](SECURITY.md)) |
-| Agents | Edit `svarm-config/agents.toml` models; list required API keys in each agent’s `env` (no full host inheritance). Optional `skills` paths attach packs — start Svärm from a CWD where those packs live ([docs/agents.md](docs/agents.md)) |
+| Agents | Edit `svarm-config/agents.toml` models; list required API keys in each agent’s `env` (no full host inheritance). Optional `skills` paths attach packs — start Svärm from a CWD where those packs live. Optional `tools` / `tools_mode` declare PATH executables (fail or warn before spawn; Svärm does not install them) ([docs/agents.md](docs/agents.md)) |
 | Budgets | Optional: `SVARM_BUDGET_MAX_USD_PER_TICKET` / `SVARM_BUDGET_MAX_USD_PER_DAY` or WORKFLOW `budget.*` — hard-stop **new** spawns when spent ≥ cap |
 | CI resume | Optional: re-dispatch when a managed PR’s Checks fail (see below). **Off by default.** |
 | Smoke-only off | Never leave `approval.mode: off` on a shared repo; do not leave `SVARM_DEMO_ROUTES` / `SVARM_SEED_DEMO` on production |

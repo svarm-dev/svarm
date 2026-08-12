@@ -33,6 +33,7 @@ defmodule Svarm.Orchestrator do
     Demo,
     Events,
     Settings,
+    Toolchain,
     Tracker,
     Usage,
     Workflow,
@@ -600,7 +601,7 @@ defmodule Svarm.Orchestrator do
   defp maybe_budget_or_spawn(state, task) do
     case Budget.check(task.id, state.budget_caps || %{}) do
       :ok ->
-        spawn_worker(state, task)
+        maybe_toolchain_or_spawn(state, task)
 
       {:error, :budget_exceeded, meta} ->
         Logger.warning(
@@ -610,6 +611,29 @@ defmodule Svarm.Orchestrator do
         block = Map.merge(meta, %{task_id: task.id, at: System.system_time(:second)})
         state = %{state | last_budget_block: block}
         broadcast_status(state)
+        state
+    end
+  end
+
+  # PATH-only host-tool contract (agents.toml `tools` / `tools_mode`).
+  # Fail: mark failed + board line, never spawn (no Port / model spend).
+  # Warn: board/log note then continue to spawn.
+  defp maybe_toolchain_or_spawn(state, task) do
+    agent_config = AgentRunner.resolve!(task.assignee, state.agents)
+
+    case Toolchain.check(agent_config) do
+      :ok ->
+        spawn_worker(state, task)
+
+      {:warn, _missing, msg} ->
+        Logger.warning("toolchain_warn task=#{task.id} #{msg}")
+        Events.broadcast_agent_line(task.id, "\n[toolchain: #{msg}]\n")
+        spawn_worker(state, task)
+
+      {:error, :toolchain_missing, _missing, msg} ->
+        Logger.error("toolchain_missing task=#{task.id} #{msg}")
+        Events.broadcast_agent_line(task.id, "\n[toolchain: #{msg}]\n")
+        state.tracker.update_status(state.tracker_config, task.id, "failed")
         state
     end
   end

@@ -52,6 +52,15 @@ defmodule Svarm.AgentRunnerTest do
       end
     end
 
+    test "omitted tools default to empty list and fail mode" do
+      agents = AgentRunner.load_agents(@agents_path)
+
+      for {_name, cfg} <- agents do
+        assert cfg.tools == []
+        assert cfg.tools_mode == :fail
+      end
+    end
+
     test "declared skills parse; blanks and non-strings dropped" do
       path =
         write_agents_toml("""
@@ -74,6 +83,35 @@ defmodule Svarm.AgentRunnerTest do
       assert agents["with_skills"].skills == ["packs/backend", "/abs/elixir"]
       assert agents["bad_skills"].skills == []
       assert agents["no_skills"].skills == []
+    end
+
+    test "declared tools and tools_mode parse; bad mode fails closed to fail" do
+      path =
+        write_agents_toml("""
+        [agent.with_tools]
+        command = "echo"
+        tools = [" mix ", "gh", ""]
+        tools_mode = "warn"
+
+        [agent.bad_tools]
+        command = "echo"
+        tools = "not-a-list"
+        tools_mode = "skip"
+
+        [agent.no_tools]
+        command = "echo"
+        """)
+
+      on_exit(fn -> File.rm(path) end)
+
+      agents = AgentRunner.load_agents(path)
+
+      assert agents["with_tools"].tools == ["mix", "gh"]
+      assert agents["with_tools"].tools_mode == :warn
+      assert agents["bad_tools"].tools == []
+      assert agents["bad_tools"].tools_mode == :fail
+      assert agents["no_tools"].tools == []
+      assert agents["no_tools"].tools_mode == :fail
     end
   end
 
