@@ -211,6 +211,7 @@ rm -rf ~/svarm_workspaces/ && mix phx.server
 |--------------|---------|
 | Zero-key aha again | Path **A** / Seed demo |
 | Use Claude Code | [docs/agents.md](docs/agents.md) copy-paste blocks, or edit **agents.toml** |
+| Attach the sample skill pack | Enable `priv/packs/ai-task` on an agent — [docs/agents.md](docs/agents.md#sample-pack-ai-task) |
 | Bot identity on comments | [docs/github-app.md](docs/github-app.md) |
 | Other trackers (Linear/Jira) | Not in OSS yet. GitHub + local only today |
 | Export costs to CSV/JSON | `mix svarm.export_usage --format csv` (or `json`; optional `--out path`). Costs also on the board and in GitHub comments |
