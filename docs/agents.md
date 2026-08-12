@@ -3,7 +3,7 @@
 Copy a block into **`svarm-config/agents.toml`** (Docker) or **`priv/agents.toml`** (local defaults).  
 Secrets stay in `.env` — never in these files.
 
-See also path **B** in [GETTING-STARTED.md](../GETTING-STARTED.md).
+See also the real GitHub loop in [GETTING-STARTED.md](../GETTING-STARTED.md).
 
 ## Default (pi + OpenRouter)
 
@@ -122,7 +122,7 @@ Run a ticket: label an issue `ai-task`, approve the run, watch the board. The ti
 
 Your own packs need no fork: put a directory with a `SKILL.md` anywhere on the host and list its path. Settings (`/setup`) replaces the list per known agent name.
 
-## Pi RPC profile (Path B default)
+## Pi RPC profile (default for the real GitHub loop)
 
 Default adapter `pi_rpc` spawns **`pi --mode rpc --no-session`** (+ provider/model/name).
 

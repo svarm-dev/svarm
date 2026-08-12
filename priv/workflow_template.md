@@ -9,7 +9,7 @@ tracker:
 
   # ═══════════════════════════════════════════════════════════════════
   # UNCOMMENT FOR GITHUB — set kind: github above, fill owner/repo,
-  # and put GITHUB_TOKEN in .env. Leave kind: local for path A demo.
+  # and put GITHUB_TOKEN in .env. Leave kind: local for the zero-key demo.
   # ═══════════════════════════════════════════════════════════════════
   # owner: my-org
   # repo: my-project

@@ -2,15 +2,15 @@
 
 Three journeys. Pick one; do not interleave.
 
-| Path | Time | Needs |
-|------|------|--------|
-| **A** · feel the board | ~1 min | Docker (`--profile demo` auto-seeds) or Elixir + Seed demo; no API keys |
-| **B** · real GitHub loop | ~15 min | PAT, OpenRouter, pi (Docker installs pi) |
-| **C** · team hardening | after B | GitHub App auth + strong APPROVALS_*; optional hard budget caps |
+| Journey | Time | Needs |
+|---------|------|-------|
+| **Feel the board** (demo) | ~1 min | Docker (`--profile demo` auto-seeds) or Elixir + Seed demo; no API keys |
+| **Real GitHub loop** | ~15 min | PAT, OpenRouter, pi (Docker installs pi) |
+| **Team hardening** | after the real loop | GitHub App auth + strong APPROVALS_*; optional hard budget caps |
 
 ---
 
-## A) 60-second local feel (no API keys)
+## Feel the board: 60-second demo (no API keys)
 
 ```bash
 git clone https://github.com/svarm-dev/svarm.git
@@ -19,7 +19,7 @@ docker compose --profile demo up --build
 # → http://localhost:4000/board  (auto-seeded demo tasks)
 ```
 
-`.env` is optional for Path A. Entrypoint generates `SECRET_KEY_BASE` if unset; put one in `.env` if you want it stable across restarts.
+`.env` is optional for the demo. Entrypoint generates `SECRET_KEY_BASE` if unset; put one in `.env` if you want it stable across restarts.
 
 
 - Mock agents (`demo_*`) run without OpenRouter or GitHub.
@@ -29,13 +29,13 @@ docker compose --profile demo up --build
 **Local Elixir:** `mix setup && mix phx.server` → `/board` → **Seed demo**.  
 (`mix svarm.demo` is a separate CLI process with its own temp DB; use Seed demo for the UI board.)
 
-When you’re done watching cards move, go to **B** for a real issue → PR loop.
+When you’re done watching cards move, go to the **real GitHub loop** for a real issue → PR loop.
 
 **Optional UI setup:** after demo, open `/setup` to store OpenRouter + GitHub PAT + default model in the app DB (encrypted). File/env config still works when Settings is empty. In Docker, `/setup` uses the same Basic Auth as `/approvals`.
 
 ---
 
-## B) Real loop on a toy repo
+## Real GitHub loop on a toy repo
 
 ### Prerequisites
 
@@ -53,7 +53,7 @@ cp .env.example .env
 | Variable | Required | Notes |
 |----------|----------|--------|
 | `SECRET_KEY_BASE` | **Yes** | `openssl rand -base64 48` |
-| `APPROVALS_USER` / `APPROVALS_PASSWORD` | **Yes** for Docker/prod (UI + board mutations) | Strong unique pair in `.env` (`.env.example` leaves them empty). **Demo** compose profile still defaults to `svarm`/`svarm` for Path A only. Without credentials, production board approve/reject/mark-done fail closed |
+| `APPROVALS_USER` / `APPROVALS_PASSWORD` | **Yes** for Docker/prod (UI + board mutations) | Strong unique pair in `.env` (`.env.example` leaves them empty). **Demo** compose profile still defaults to `svarm`/`svarm` for the zero-key demo only. Without credentials, production board approve/reject/mark-done fail closed |
 | `GITHUB_TOKEN` | For GitHub tracker | Classic PAT with `repo` scope |
 | `OPENROUTER_API_KEY` | For real agents | From [openrouter.ai/keys](https://openrouter.ai/keys) |
 | `SVARM_BASE_URL` | Recommended | `http://localhost:4000` so cost receipts link to the board |
@@ -109,7 +109,7 @@ Default **`approval.mode: untrusted`**: real agents will **not** run until you a
 
 Poll interval defaults to ~30s (see `polling.interval_ms` in WORKFLOW.md).
 
-Pi RPC runs default to a **45-minute wall-clock** timeout (streaming does not extend it); orchestrator stall is the same duration (WORKFLOW `agent.stall_timeout_ms`). Keep run timeout ≤ stall so abort→kill runs before stall. See [docs/agents.md](docs/agents.md#pi-rpc-profile-path-b-default).
+Pi RPC runs default to a **45-minute wall-clock** timeout (streaming does not extend it); orchestrator stall is the same duration (WORKFLOW `agent.stall_timeout_ms`). Keep run timeout ≤ stall so abort→kill runs before stall. See [docs/agents.md](docs/agents.md#pi-rpc-profile-default-for-the-real-github-loop).
 
 Example receipt shape:
 
@@ -131,7 +131,7 @@ Svärm tracks GitHub work with **labels**. Your eligibility label (e.g. `ai-task
 
 ---
 
-## C) Harden for a team repo
+## Team hardening
 
 | Step | Do this |
 |------|---------|
@@ -190,7 +190,7 @@ Env overrides:
 | No eligible issues | Issue has `ai-task`; `required_labels` matches |
 | pi not found (local) | `which pi`; Docker image includes pi |
 | OpenRouter errors | `OPENROUTER_API_KEY` set |
-| Empty board | Path **A** (`--profile demo`) or Seed demo; path **B** needs a labeled issue |
+| Empty board | Demo (`--profile demo`) or Seed demo; the real GitHub loop needs a labeled issue |
 | `mix svarm.demo` ≠ `/board` | Expected: Mix task uses a temp DB. Use Seed demo on the running server |
 
 ### Quick reset
@@ -209,7 +209,7 @@ rm -rf ~/svarm_workspaces/ && mix phx.server
 
 | You want to… | Do this |
 |--------------|---------|
-| Zero-key aha again | Path **A** / Seed demo |
+| Zero-key aha again | Demo profile / Seed demo |
 | Use Claude Code | [docs/agents.md](docs/agents.md) copy-paste blocks, or edit **agents.toml** |
 | Attach the sample skill pack | Enable `priv/packs/ai-task` on an agent — [docs/agents.md](docs/agents.md#sample-pack-ai-task) |
 | Bot identity on comments | [docs/github-app.md](docs/github-app.md) |
