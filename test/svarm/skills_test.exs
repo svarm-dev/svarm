@@ -103,7 +103,7 @@ defmodule Svarm.SkillsTest do
   end
 
   test "shipped sample pack stays injectable", %{workspace: ws} do
-    shipped = Path.expand("../../priv/packs/ai-task", __DIR__)
+    shipped = Application.app_dir(:svarm, "priv/packs/ai-task")
 
     assert {:ok, [info]} = Skills.inject([shipped], ws)
     assert info.name == "ai-task"
