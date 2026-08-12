@@ -1,7 +1,7 @@
 defmodule SvarmWeb.BoardLiveTest do
   use SvarmWeb.LiveCase, async: false
 
-  alias Svarm.{Approval, Events, KanbanBridge}
+  alias Svarm.{Approval, Events, KanbanBridge, StreamEvent}
 
   test "empty board shows first-value onboarding without column strip", %{conn: conn} do
     KanbanBridge.delete_all_tasks()
@@ -639,6 +639,27 @@ defmodule SvarmWeb.BoardLiveTest do
     html = render(view)
     assert html =~ "[history] prior line"
     assert html =~ "[live] new line"
+  end
+
+  test "late join restores typed tool_start as text projection", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Typed restore",
+        status: "in_progress",
+        assignee: "demo"
+      })
+
+    Events.broadcast_stream_event(
+      task.id,
+      StreamEvent.new(:tool_start, %{name: "bash", args: %{"command" => "ls"}})
+    )
+
+    {:ok, view, _html} = live(conn, ~p"/board")
+    render_click(view, "select_task", %{"id" => task.id})
+
+    assert render(view) =~ "$ bash ls"
   end
 
   test "stream append after select appears in console", %{conn: conn} do

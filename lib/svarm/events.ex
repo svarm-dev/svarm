@@ -5,8 +5,14 @@ defmodule Svarm.Events do
   Agent output and run markers are persisted once here (`RunLog.append`) then
   broadcast so late join works with zero open boards and N boards never
   double-write.
+
+  Live path emits `{:stream_event, task_id, event}` (`Svarm.StreamEvent`).
+  RunLog stores the text projection only (no kind column). `{:agent_line, ...}`
+  remains for BoardLive until typed chrome (#111).
   """
   @topic "board"
+
+  alias Svarm.{Redact, StreamEvent}
 
   def topic, do: @topic
 
@@ -34,41 +40,74 @@ defmodule Svarm.Events do
   end
 
   @doc """
+  Redact, persist a text projection, then broadcast `{:stream_event, task_id, event}`.
+
+  When the projection is non-empty, also broadcasts `{:agent_line, task_id, text}`
+  so the current BoardLive console keeps working. Pass `agent_line: false` for
+  run markers that already have `{:run_started, ...}` / `{:run_finished, ...}`.
+  """
+  def broadcast_stream_event(task_id, event, opts \\ [])
+
+  def broadcast_stream_event(task_id, %{kind: kind, payload: payload}, opts)
+      when is_binary(task_id) and is_map(payload) do
+    case StreamEvent.parse_kind(kind) do
+      {:ok, kind} ->
+        event = StreamEvent.new(kind, Redact.map(payload))
+        text = StreamEvent.to_text(event)
+        text = if text != "", do: persist_agent_line(task_id, text), else: ""
+        broadcast({:stream_event, task_id, event})
+
+        if text != "" and Keyword.get(opts, :agent_line, true) do
+          broadcast({:agent_line, task_id, text})
+        end
+
+        :ok
+
+      :error ->
+        :ok
+    end
+  end
+
+  @doc """
   Redact, persist to `RunLog`, then broadcast `{:agent_line, task_id, line}`.
 
-  Single writer for run transcript lines — callers must not also call `RunLog.append/2`.
+  Implemented as a `:text` stream event. Single writer — callers must not also
+  call `RunLog.append/2`.
   """
   def broadcast_agent_line(task_id, line) when is_binary(task_id) and is_binary(line) do
-    line = persist_agent_line(task_id, line)
-    broadcast({:agent_line, task_id, line})
+    broadcast_stream_event(task_id, StreamEvent.new(:text, %{text: line}))
   end
 
   @doc """
   Persist a transcript chunk once (redacted). Used by broadcast helpers.
 
-  Prefer `broadcast_agent_line/2` / `broadcast_run_started/2` / `broadcast_run_finished/2`
-  so PubSub and RunLog stay in lockstep.
+  Prefer `broadcast_stream_event/2` / `broadcast_agent_line/2` /
+  `broadcast_run_started/2` / `broadcast_run_finished/2` so PubSub and RunLog
+  stay in lockstep.
   """
   def persist_agent_line(task_id, line) when is_binary(task_id) and is_binary(line) do
-    line = Svarm.Redact.text(line)
+    line = Redact.text(line)
     Svarm.RunLog.append(task_id, line)
     line
   end
 
   @doc """
-  Persist the run-started banner once, then broadcast `{:run_started, task_id, meta}`.
+  Persist the run-started banner once, then broadcast `{:run_started, task_id, meta}`
+  and a `:run_marker` stream event.
   """
   def broadcast_run_started(task_id, meta) when is_map(meta) do
-    persist_agent_line(task_id, "--- #{run_started_label(meta)} ---\n")
+    event = StreamEvent.new(:run_marker, %{phase: :started, label: run_started_label(meta)})
+    broadcast_stream_event(task_id, event, agent_line: false)
     broadcast({:run_started, task_id, meta})
   end
 
   @doc """
   Persist the run-finished banner once, flush the run log, then broadcast
-  `{:run_finished, task_id, exit_code}`.
+  `{:run_finished, task_id, exit_code}` and a `:run_marker` stream event.
   """
   def broadcast_run_finished(task_id, exit_code) when is_integer(exit_code) do
-    persist_agent_line(task_id, "\n--- run finished (exit #{exit_code}) ---\n")
+    event = StreamEvent.new(:run_marker, %{phase: :finished, exit_code: exit_code})
+    broadcast_stream_event(task_id, event, agent_line: false)
     # Durable store should hold the full transcript once the run ends.
     Svarm.RunLog.flush(task_id)
     broadcast({:run_finished, task_id, exit_code})
