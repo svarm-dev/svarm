@@ -496,7 +496,7 @@ defmodule SvarmWeb.BoardLiveTest do
 
     html = render(view)
     assert html =~ "hello once"
-    assert length(Regex.scan(~r/hello once/, html)) == 1
+    assert [_] = Regex.scan(~r/hello once/, html)
   end
 
   test "auto-selects task on run_started when nothing selected", %{conn: conn} do
@@ -698,7 +698,7 @@ defmodule SvarmWeb.BoardLiveTest do
     assert has_element?(view, ~s(#run-log [data-stream-kind="run_marker"]), "Demo started")
 
     html = render(view)
-    assert length(Regex.scan(~r/\$ bash mix test/, html)) == 1
+    assert [_] = Regex.scan(~r/\$ bash mix test/, html)
   end
 
   test "late join and re-select restore typed text projections", %{conn: conn} do

@@ -1638,47 +1638,56 @@ defmodule SvarmWeb.BoardLive do
     # ponytail: stable projection prefixes are the restore boundary while RunLog is text-only.
     log
     |> String.split("\n")
-    |> Enum.map(fn
-      "" ->
-        {"", "text", nil, "h-1"}
-
-      line ->
-        {kind, status, cls} =
-          cond do
-            String.starts_with?(line, "--- ") ->
-              {"run_marker", nil,
-               "my-1 flex items-center gap-2 border-y border-base-content/10 py-1 opacity-60 italic"}
-
-            String.starts_with?(line, "$ ") ->
-              {"tool_start", nil,
-               "my-1 flex items-start gap-2 rounded-md border border-info/30 bg-info/5 px-2 py-1.5 text-info"}
-
-            String.starts_with?(line, "[tool ") and String.ends_with?(line, " failed]") ->
-              {"tool_end", "error",
-               "my-1 flex items-start gap-2 rounded-md border border-error/30 bg-error/5 px-2 py-1.5 text-error font-medium"}
-
-            String.starts_with?(line, "[tool ") and String.ends_with?(line, " complete]") ->
-              {"tool_end", "ok",
-               "my-1 flex items-start gap-2 rounded-md border border-success/30 bg-success/5 px-2 py-1.5 text-success"}
-
-            String.starts_with?(line, "[board]") ->
-              {"text", "board", "px-1 opacity-40 text-[10px]"}
-
-            String.contains?(line, "error") or String.contains?(line, "Error") ->
-              {"text", "error", "px-1 text-error font-medium"}
-
-            String.contains?(line, "warning") or String.contains?(line, "Warning") ->
-              {"text", "warning", "px-1 text-warning"}
-
-            true ->
-              {"text", nil, "min-h-[1em] px-1"}
-          end
-
-        {line, kind, status, cls}
-    end)
+    |> Enum.map(&classify_log_line/1)
   end
 
   defp classify_log(_), do: []
+
+  defp classify_log_line(""), do: {"", "text", nil, "h-1"}
+
+  defp classify_log_line("--- " <> _ = line) do
+    {line, "run_marker", nil,
+     "my-1 flex items-center gap-2 border-y border-base-content/10 py-1 opacity-60 italic"}
+  end
+
+  defp classify_log_line("$ " <> _ = line) do
+    {line, "tool_start", nil,
+     "my-1 flex items-start gap-2 rounded-md border border-info/30 bg-info/5 px-2 py-1.5 text-info"}
+  end
+
+  defp classify_log_line("[tool " <> _ = line), do: classify_tool_line(line)
+
+  defp classify_log_line("[board]" <> _ = line) do
+    {line, "text", "board", "px-1 opacity-40 text-[10px]"}
+  end
+
+  defp classify_log_line(line) do
+    cond do
+      String.contains?(line, ["error", "Error"]) ->
+        {line, "text", "error", "px-1 text-error font-medium"}
+
+      String.contains?(line, ["warning", "Warning"]) ->
+        {line, "text", "warning", "px-1 text-warning"}
+
+      true ->
+        {line, "text", nil, "min-h-[1em] px-1"}
+    end
+  end
+
+  defp classify_tool_line(line) do
+    cond do
+      String.ends_with?(line, " failed]") ->
+        {line, "tool_end", "error",
+         "my-1 flex items-start gap-2 rounded-md border border-error/30 bg-error/5 px-2 py-1.5 text-error font-medium"}
+
+      String.ends_with?(line, " complete]") ->
+        {line, "tool_end", "ok",
+         "my-1 flex items-start gap-2 rounded-md border border-success/30 bg-success/5 px-2 py-1.5 text-success"}
+
+      true ->
+        {line, "text", nil, "min-h-[1em] px-1"}
+    end
+  end
 
   defp stream_entry_label("tool_start", _), do: "tool"
   defp stream_entry_label("tool_end", "error"), do: "failed"
