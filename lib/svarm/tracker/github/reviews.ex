@@ -12,15 +12,7 @@ defmodule Svarm.Tracker.GitHub.Reviews do
   Uses Req only. Requires `pull_requests:read` on the token/App.
   """
 
-  require Logger
-
-  alias Svarm.GitHub.AppAuth
-
-  @base_url "https://api.github.com"
-  @api_version "2026-03-10"
-  @page_size 100
-  @default_receive_timeout_ms 5_000
-  @default_connect_timeout_ms 3_000
+  alias Svarm.Tracker.GitHub.HTTP
 
   @type decision :: :changes_requested | :none
 
@@ -45,10 +37,10 @@ defmodule Svarm.Tracker.GitHub.Reviews do
   def summarize_pr_reviews(owner, repo, pr_number, config, opts \\ [])
       when is_binary(owner) and is_binary(repo) and is_integer(pr_number) do
     req = Keyword.get(opts, :req, Req)
-    headers = headers(config)
-    req_opts = req_opts(opts)
+    headers = HTTP.headers(config)
+    req_opts = HTTP.req_opts(opts)
 
-    with {:ok, pr} <- fetch_pr(req, owner, repo, pr_number, headers, req_opts),
+    with {:ok, pr} <- HTTP.fetch_pr(req, owner, repo, pr_number, headers, req_opts),
          {:ok, head_sha, draft?} <- pr_head(pr),
          {:ok, reviews} <- fetch_all_reviews(req, owner, repo, pr_number, headers, req_opts) do
       {:ok, classify(reviews, head_sha, draft?)}
@@ -85,8 +77,8 @@ defmodule Svarm.Tracker.GitHub.Reviews do
   end
 
   defp normalize_review(review) when is_map(review) do
-    review = stringify_top_keys(review)
-    user = stringify_top_keys(review["user"] || %{})
+    review = HTTP.stringify_top_keys(review)
+    user = HTTP.stringify_top_keys(review["user"] || %{})
 
     %{
       login: bin_field(user, "login"),
@@ -105,8 +97,8 @@ defmodule Svarm.Tracker.GitHub.Reviews do
   defp summary_text(:none, _logins), do: "no changes requested"
 
   defp pr_head(pr) when is_map(pr) do
-    pr = stringify_top_keys(pr)
-    head = stringify_top_keys(pr["head"] || %{})
+    pr = HTTP.stringify_top_keys(pr)
+    head = HTTP.stringify_top_keys(pr["head"] || %{})
     head_sha = bin_field(head, "sha")
     draft? = pr["draft"] == true
 
@@ -115,21 +107,6 @@ defmodule Svarm.Tracker.GitHub.Reviews do
     else
       {:error, :missing_head_sha}
     end
-  end
-
-  defp req_opts(opts) do
-    receive_timeout = Keyword.get(opts, :receive_timeout, @default_receive_timeout_ms)
-    connect_timeout = Keyword.get(opts, :connect_timeout, @default_connect_timeout_ms)
-
-    [
-      receive_timeout: receive_timeout,
-      connect_options: [timeout: connect_timeout]
-    ]
-  end
-
-  defp fetch_pr(req, owner, repo, pr_number, headers, req_opts) do
-    url = "#{@base_url}/repos/#{owner}/#{repo}/pulls/#{pr_number}"
-    http_map(req.get(url, [headers: headers] ++ req_opts), "PR")
   end
 
   defp fetch_all_reviews(req, owner, repo, pr_number, headers, req_opts) do
@@ -146,8 +123,8 @@ defmodule Svarm.Tracker.GitHub.Reviews do
   end
 
   defp fetch_reviews_page(ctx, page, acc) do
-    url = "#{@base_url}/repos/#{ctx.owner}/#{ctx.repo}/pulls/#{ctx.pr_number}/reviews"
-    params = %{per_page: @page_size, page: page}
+    url = "#{HTTP.base_url()}/repos/#{ctx.owner}/#{ctx.repo}/pulls/#{ctx.pr_number}/reviews"
+    params = %{per_page: HTTP.page_size(), page: page}
 
     case ctx.req.get(url, [params: params, headers: ctx.headers] ++ ctx.req_opts) do
       {:ok, %{status: 200, body: body}} ->
@@ -157,7 +134,7 @@ defmodule Svarm.Tracker.GitHub.Reviews do
         {:ok, []}
 
       other ->
-        map_http_error(other, "reviews")
+        HTTP.map_http_error(other, "reviews")
     end
   end
 
@@ -165,7 +142,7 @@ defmodule Svarm.Tracker.GitHub.Reviews do
     reviews = reviews_from_body(body)
     acc = acc ++ reviews
 
-    if full_page?(reviews) do
+    if HTTP.full_page?(reviews) do
       fetch_reviews_page(ctx, page + 1, acc)
     else
       {:ok, acc}
@@ -175,57 +152,10 @@ defmodule Svarm.Tracker.GitHub.Reviews do
   defp reviews_from_body(body) when is_list(body), do: body
   defp reviews_from_body(_), do: []
 
-  defp stringify_top_keys(map) when is_map(map) do
-    Map.new(map, fn
-      {k, v} when is_atom(k) -> {Atom.to_string(k), v}
-      {k, v} -> {k, v}
-    end)
-  end
-
-  defp stringify_top_keys(_), do: %{}
-
   defp bin_field(map, key) when is_map(map) and is_binary(key) do
     case Map.get(map, key) do
       v when is_binary(v) and v != "" -> v
       _ -> nil
-    end
-  end
-
-  defp full_page?(reviews) do
-    Enum.count_until(reviews, @page_size + 1) == @page_size
-  end
-
-  defp http_map({:ok, %{status: 200, body: body}}, _label) when is_map(body), do: {:ok, body}
-  defp http_map({:ok, %{status: 404}}, _label), do: {:error, :not_found}
-  defp http_map(other, label), do: map_http_error(other, label)
-
-  defp map_http_error({:ok, %{status: 401}}, _label), do: {:error, :auth_failure}
-  defp map_http_error({:ok, %{status: 403}}, _label), do: {:error, :forbidden}
-  defp map_http_error({:ok, %{status: code}}, _label), do: {:error, {:http_error, code}}
-
-  defp map_http_error({:error, reason}, label) do
-    Logger.warning("github reviews: #{label} fetch failed: #{inspect(reason)}")
-    {:error, :network_error}
-  end
-
-  defp headers(config) when is_map(config) do
-    base = [
-      accept: "application/vnd.github+json",
-      "x-github-api-version": @api_version
-    ]
-
-    case AppAuth.token_for_repo(config) do
-      {:ok, token} ->
-        Keyword.put(base, :authorization, "Bearer #{token}")
-
-      {:error, _} ->
-        case Map.get(config, :api_key) do
-          token when is_binary(token) and token != "" ->
-            Keyword.put(base, :authorization, "Bearer #{token}")
-
-          _ ->
-            base
-        end
     end
   end
 end

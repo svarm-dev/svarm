@@ -1383,6 +1383,14 @@ defmodule SvarmWeb.BoardLive do
   defp wait_chip_class(:changes_requested), do: "badge-warning"
   defp wait_chip_class(_), do: "badge-outline badge-warning"
 
+  defp review_badge(task) do
+    if Map.get(task, :review_decision) in ["changes_requested", :changes_requested] do
+      {"Changes requested", "badge-warning"}
+    else
+      {"Needs review", "badge-warning"}
+    end
+  end
+
   defp human_column?(status) when status in ["pending_approval", "review"], do: true
   defp human_column?(_), do: false
 
@@ -1607,27 +1615,12 @@ defmodule SvarmWeb.BoardLive do
 
     {label, cls} =
       cond do
-        running? ->
-          {"Running", "badge-primary gap-1"}
-
-        status == "failed" ->
-          {"Failed", "badge-error"}
-
-        status == "done" ->
-          {"Done", "badge-success"}
-
-        status == Approval.pending_status() ->
-          {"Needs approval", "badge-warning"}
-
-        status == "review" and
-            Map.get(task, :review_decision) in ["changes_requested", :changes_requested] ->
-          {"Changes requested", "badge-warning"}
-
-        status == "review" ->
-          {"Needs review", "badge-warning"}
-
-        true ->
-          {String.capitalize(status), "badge-ghost"}
+        running? -> {"Running", "badge-primary gap-1"}
+        status == "failed" -> {"Failed", "badge-error"}
+        status == "done" -> {"Done", "badge-success"}
+        status == Approval.pending_status() -> {"Needs approval", "badge-warning"}
+        status == "review" -> review_badge(task)
+        true -> {String.capitalize(status), "badge-ghost"}
       end
 
     duration =
