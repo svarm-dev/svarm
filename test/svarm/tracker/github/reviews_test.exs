@@ -55,6 +55,42 @@ defmodule Svarm.Tracker.GitHub.ReviewsTest do
                Reviews.classify(reviews, "s")
     end
 
+    test "later comment does not supersede changes requested from same user" do
+      reviews = [
+        %{
+          "user" => %{"login" => "alice"},
+          "state" => "CHANGES_REQUESTED",
+          "submitted_at" => "2026-08-01T10:00:00Z"
+        },
+        %{
+          "user" => %{"login" => "alice"},
+          "state" => "COMMENTED",
+          "submitted_at" => "2026-08-01T12:00:00Z"
+        }
+      ]
+
+      assert %{decision: :changes_requested, reviewer_logins: ["alice"]} =
+               Reviews.classify(reviews, "s")
+    end
+
+    test "comment from another reviewer does not hide changes requested" do
+      reviews = [
+        %{
+          "user" => %{"login" => "alice"},
+          "state" => "CHANGES_REQUESTED",
+          "submitted_at" => "2026-08-01T10:00:00Z"
+        },
+        %{
+          "user" => %{"login" => "bob"},
+          "state" => "COMMENTED",
+          "submitted_at" => "2026-08-01T12:00:00Z"
+        }
+      ]
+
+      assert %{decision: :changes_requested, reviewer_logins: ["alice"]} =
+               Reviews.classify(reviews, "s")
+    end
+
     test "ignores PENDING and DISMISSED" do
       reviews = [
         %{"user" => %{"login" => "alice"}, "state" => "PENDING", "submitted_at" => nil},

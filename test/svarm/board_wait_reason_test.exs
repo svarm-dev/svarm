@@ -30,6 +30,7 @@ defmodule Svarm.BoardWaitReasonTest do
              :changes_requested
 
     assert Board.wait_reason(%{status: "review", id: "x", review_decision: "none"}) == :review
+    assert Board.wait_reason(%{status: "review", id: "x", review_decision: nil}) == :review
   end
 
   test "ci_circuit wins over changes_requested" do

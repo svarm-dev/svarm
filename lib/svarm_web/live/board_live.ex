@@ -1090,8 +1090,8 @@ defmodule SvarmWeb.BoardLive do
           </p>
 
           <%= if @task.status == "review" do %>
-            <% changes_requested? =
-              Map.get(@task, :review_decision) in ["changes_requested", :changes_requested] %>
+            <% wait = Board.wait_reason(@task) %>
+            <% changes_requested? = wait == :changes_requested %>
             <div class={[
               "rounded-md px-3 py-2 text-sm border",
               if(changes_requested?,
@@ -1384,10 +1384,10 @@ defmodule SvarmWeb.BoardLive do
   defp wait_chip_class(_), do: "badge-outline badge-warning"
 
   defp review_badge(task) do
-    if Map.get(task, :review_decision) in ["changes_requested", :changes_requested] do
-      {"Changes requested", "badge-warning"}
-    else
-      {"Needs review", "badge-warning"}
+    case Board.wait_reason(task) do
+      :changes_requested -> {"Changes requested", "badge-warning"}
+      :ci_circuit -> {"CI retries exhausted", "badge-error"}
+      _ -> {"Needs review", "badge-warning"}
     end
   end
 

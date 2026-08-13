@@ -221,16 +221,11 @@ defmodule Svarm.Board do
   end
 
   defp changes_requested_for?(task) do
-    case map_get(task, :review_decision) do
-      v when v in ["changes_requested", :changes_requested] ->
-        true
-
-      v when v in ["none", :none, false] ->
-        false
-
-      _ ->
-        id = map_get(task, :id)
-        match?(%{review_decision: "changes_requested"}, id && Svarm.Coordination.get(id))
+    if Map.has_key?(task, :review_decision) or Map.has_key?(task, "review_decision") do
+      map_get(task, :review_decision) in ["changes_requested", :changes_requested]
+    else
+      id = map_get(task, :id)
+      match?(%{review_decision: "changes_requested"}, id && Svarm.Coordination.get(id))
     end
   end
 

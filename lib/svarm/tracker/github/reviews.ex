@@ -50,7 +50,7 @@ defmodule Svarm.Tracker.GitHub.Reviews do
   @doc "Classify a list of review maps (GitHub API shape)."
   @spec classify([map()], String.t() | nil, boolean()) :: summary()
   def classify(reviews, head_sha, draft? \\ false) when is_list(reviews) do
-    latest = latest_submitted_by_user(reviews)
+    latest = latest_decision_by_user(reviews)
     requested = Enum.filter(latest, &(&1.state == "CHANGES_REQUESTED"))
     logins = Enum.map(requested, & &1.login)
     decision = if logins == [], do: :none, else: :changes_requested
@@ -65,16 +65,21 @@ defmodule Svarm.Tracker.GitHub.Reviews do
     }
   end
 
-  defp latest_submitted_by_user(reviews) do
+  defp latest_decision_by_user(reviews) do
     reviews
     |> Enum.map(&normalize_review/1)
-    |> Enum.reject(&(&1.state in ["PENDING", "DISMISSED"] or is_nil(&1.login)))
+    |> Enum.filter(&decision_state?/1)
     |> Enum.group_by(& &1.login)
     |> Enum.map(fn {_login, user_reviews} ->
       Enum.max_by(user_reviews, & &1.submitted_at)
     end)
-    |> Enum.reject(&is_nil/1)
   end
+
+  defp decision_state?(%{login: login, state: state})
+       when is_binary(login) and state in ["APPROVED", "CHANGES_REQUESTED"],
+       do: true
+
+  defp decision_state?(_), do: false
 
   defp normalize_review(review) when is_map(review) do
     review = HTTP.stringify_top_keys(review)

@@ -248,4 +248,52 @@ defmodule Svarm.ReviewResumeOrchestratorTest do
     assert Coordination.get(task_id).review_decision == nil
     assert get_issue(task_id).status == "todo"
   end
+
+  test "stale PR rows do not starve an in-review ticket" do
+    for i <- 1..4 do
+      id = "stale_pr_#{i}"
+      put_issue(id, "done")
+
+      {:ok, _} =
+        Coordination.upsert(id, %{
+          pr_url: "https://github.com/o/r/pull/#{i}",
+          pr_owner: "o",
+          pr_repo: "r",
+          pr_number: i
+        })
+    end
+
+    live_id = "review_resume_live"
+    put_issue(live_id)
+
+    {:ok, _} =
+      Coordination.upsert(live_id, %{
+        pr_url: "https://github.com/o/r/pull/99",
+        pr_owner: "o",
+        pr_repo: "r",
+        pr_number: 99
+      })
+
+    Application.put_env(
+      :svarm,
+      :review_resume_test_result,
+      {:ok,
+       %{
+         decision: :changes_requested,
+         head_sha: "sha_live",
+         reviewer_logins: ["alice"],
+         summary: "Changes requested by alice",
+         draft: false,
+         review_count: 1
+       }}
+    )
+
+    send(Orchestrator, :tick)
+
+    assert wait_until(fn ->
+             match?(%{review_decision: "changes_requested"}, Coordination.get(live_id))
+           end)
+
+    assert get_issue(live_id).status == "review"
+  end
 end

@@ -849,13 +849,25 @@ defmodule Svarm.Orchestrator do
     if state.tracker == Tracker.Local do
       state
     else
-      Coordination.list_with_pr(
-        limit: @review_resume_max_per_tick * 2,
-        include_circuit_open: true
-      )
-      |> Enum.take(@review_resume_max_per_tick)
-      |> Enum.reduce(state, &maybe_review_resume_one(&2, &1))
+      poll_review_resume(state)
     end
+  end
+
+  defp poll_review_resume(state) do
+    {next, _polled} =
+      Coordination.list_with_pr(limit: 50, include_circuit_open: true)
+      |> Enum.reduce_while({state, 0}, &poll_review_resume_step/2)
+
+    next
+  end
+
+  defp poll_review_resume_step(_coord, {acc, n}) when n >= @review_resume_max_per_tick do
+    {:halt, {acc, n}}
+  end
+
+  defp poll_review_resume_step(coord, {acc, n}) do
+    {next, polled?} = maybe_review_resume_one(acc, coord)
+    {:cont, {next, if(polled?, do: n + 1, else: n)}}
   end
 
   defp maybe_review_resume_one(state, coord) do
@@ -863,17 +875,17 @@ defmodule Svarm.Orchestrator do
 
     cond do
       Map.has_key?(state.running, task_id) or MapSet.member?(state.claimed, task_id) ->
-        state
+        {state, false}
 
       not pr_matches_tracker?(coord, state.tracker_config) ->
         Logger.debug("review_resume: skip #{task_id} — PR repo does not match tracker")
-        state
+        {state, false}
 
       not review_status?(state, task_id) ->
-        state
+        {state, false}
 
       true ->
-        evaluate_reviews_for_task(state, coord)
+        {evaluate_reviews_for_task(state, coord), true}
     end
   end
 
