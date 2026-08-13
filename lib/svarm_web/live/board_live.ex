@@ -1177,7 +1177,7 @@ defmodule SvarmWeb.BoardLive do
               aria-live="polite"
               aria-relevant="additions"
               data-terminal="true"
-              class="max-h-[min(28rem,50vh)] overflow-y-auto p-3 font-mono text-[11px] leading-5"
+              class="max-h-[min(28rem,50vh)] overflow-y-auto p-3 font-mono text-[11px] leading-4"
             >
               <%= for {line, kind, status, cls} <- classify_log(@log) do %>
                 <% label = stream_entry_label(kind, status) %>
@@ -1196,9 +1196,7 @@ defmodule SvarmWeb.BoardLive do
                   >
                     {label}
                   </span>
-                  <span class="min-w-0 whitespace-pre-wrap break-words pl-2 [overflow-wrap:anywhere]">
-                    {line}
-                  </span>
+                  <span class="min-w-0 whitespace-pre-wrap break-words pl-2 [overflow-wrap:anywhere]">{line}</span>
                 </div>
               <% end %>
             </div>
@@ -1694,7 +1692,7 @@ defmodule SvarmWeb.BoardLive do
   defp typed_projection_line?("[tool " <> _), do: true
   defp typed_projection_line?(_), do: false
 
-  defp classify_log_line(""), do: {"", nil, nil, "h-2 overflow-hidden"}
+  defp classify_log_line(""), do: {"", nil, nil, "h-1 overflow-hidden"}
 
   defp classify_log_line("--- " <> _ = line) do
     {line, "run_marker", nil, "text-neutral-content/50"}

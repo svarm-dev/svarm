@@ -699,6 +699,7 @@ defmodule SvarmWeb.BoardLiveTest do
 
     html = render(view)
     assert [_] = Regex.scan(~r/\$ bash mix test/, html)
+    refute html =~ ~s(data-stream-spacer="true")
   end
 
   test "terminal collapses blank runs live and after re-select", %{conn: conn} do
@@ -718,7 +719,10 @@ defmodule SvarmWeb.BoardLiveTest do
     :sys.get_state(view.pid)
 
     assert has_element?(view, ~s(#run-log[data-terminal="true"]))
-    assert [_] = Regex.scan(~r/data-stream-spacer="true"/, render(view))
+    html = render(view)
+    assert [_] = Regex.scan(~r/data-stream-spacer="true"/, html)
+    assert html =~ ">first line</span>"
+    assert html =~ ">second line</span>"
 
     render_click(view, "clear_selection", %{})
     render_click(view, "select_task", %{"id" => task.id})
