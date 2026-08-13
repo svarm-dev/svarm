@@ -19,9 +19,26 @@ defmodule Svarm.BoardWaitReasonTest do
     assert Board.wait_reason_label(:ci_circuit) == "CI retries exhausted"
   end
 
-  test "wait_reason uses preloaded ci_circuit_open without extra query semantics" do
-    assert Board.wait_reason(%{status: "review", id: "x", ci_circuit_open: true}) == :ci_circuit
-    assert Board.wait_reason(%{status: "review", id: "x", ci_circuit_open: false}) == :review
+  test "wait_reason review becomes :changes_requested when decision recorded" do
+    {:ok, _} = Coordination.upsert("t_changes", %{review_decision: "changes_requested"})
+    assert Board.wait_reason(%{status: "review", id: "t_changes"}) == :changes_requested
+    assert Board.wait_reason_label(:changes_requested) == "Changes requested"
+  end
+
+  test "wait_reason uses preloaded review_decision without extra query" do
+    assert Board.wait_reason(%{status: "review", id: "x", review_decision: "changes_requested"}) ==
+             :changes_requested
+
+    assert Board.wait_reason(%{status: "review", id: "x", review_decision: "none"}) == :review
+  end
+
+  test "ci_circuit wins over changes_requested" do
+    assert Board.wait_reason(%{
+             status: "review",
+             id: "x",
+             ci_circuit_open: true,
+             review_decision: "changes_requested"
+           }) == :ci_circuit
   end
 
   test "pr_url prefers coordination row" do

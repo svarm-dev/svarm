@@ -954,7 +954,7 @@ defmodule SvarmWeb.BoardLive do
               "border-transparent bg-base-100/80 hover:border-base-300",
             card.running && "ring-2 ring-primary/50 bg-primary/5",
             card.retrying && "ring-2 ring-warning/40",
-            card.wait_reason in [:approval, :review, :ci_circuit] &&
+            card.wait_reason in [:approval, :review, :ci_circuit, :changes_requested] &&
               "border-dashed border-warning/60"
           ]}>
             <button
@@ -1090,13 +1090,27 @@ defmodule SvarmWeb.BoardLive do
           </p>
 
           <%= if @task.status == "review" do %>
-            <div class="rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-sm">
-              <p class="font-medium">Awaiting human review</p>
+            <% changes_requested? =
+              Map.get(@task, :review_decision) in ["changes_requested", :changes_requested] %>
+            <div class={[
+              "rounded-md px-3 py-2 text-sm border",
+              if(changes_requested?,
+                do: "border-warning/50 bg-warning/10",
+                else: "border-warning/30 bg-warning/5"
+              )
+            ]}>
+              <p class="font-medium">
+                {if changes_requested?, do: "Changes requested", else: "Awaiting human review"}
+              </p>
               <p class="mt-0.5 opacity-80">
-                <%= if Board.pr_url(@task, @meta) do %>
-                  Agent finished. Review the PR before merge, then mark done here.
+                <%= if changes_requested? do %>
+                  A reviewer asked for changes on the PR. Detection only — no auto re-dispatch yet.
                 <% else %>
-                  Agent finished. No PR on the local board — check the log/cost, then mark done.
+                  <%= if Board.pr_url(@task, @meta) do %>
+                    Agent finished. Review the PR before merge, then mark done here.
+                  <% else %>
+                    Agent finished. No PR on the local board — check the log/cost, then mark done.
+                  <% end %>
                 <% end %>
               </p>
               <%= if Board.reviewer(@task) do %>
@@ -1282,14 +1296,11 @@ defmodule SvarmWeb.BoardLive do
       <%= if @card.retrying do %>
         <span class="badge badge-warning badge-xs shrink-0">retry</span>
       <% else %>
-        <%= if @card.wait_reason in [:approval, :review, :ci_circuit] do %>
+        <%= if @card.wait_reason in [:approval, :review, :ci_circuit, :changes_requested] do %>
           <span
             class={[
-              "badge badge-outline badge-xs shrink-0",
-              if(@card.wait_reason == :ci_circuit,
-                do: "badge-error",
-                else: "badge-warning"
-              )
+              "badge badge-xs shrink-0",
+              wait_chip_class(@card.wait_reason)
             ]}
             title={Board.wait_reason_label(@card.wait_reason)}
           >
@@ -1367,6 +1378,10 @@ defmodule SvarmWeb.BoardLive do
       pending_approval: wait == :approval
     }
   end
+
+  defp wait_chip_class(:ci_circuit), do: "badge-outline badge-error"
+  defp wait_chip_class(:changes_requested), do: "badge-warning"
+  defp wait_chip_class(_), do: "badge-outline badge-warning"
 
   defp human_column?(status) when status in ["pending_approval", "review"], do: true
   defp human_column?(_), do: false
@@ -1592,12 +1607,27 @@ defmodule SvarmWeb.BoardLive do
 
     {label, cls} =
       cond do
-        running? -> {"Running", "badge-primary gap-1"}
-        status == "failed" -> {"Failed", "badge-error"}
-        status == "done" -> {"Done", "badge-success"}
-        status == Approval.pending_status() -> {"Needs approval", "badge-warning"}
-        status == "review" -> {"Needs review", "badge-warning"}
-        true -> {String.capitalize(status), "badge-ghost"}
+        running? ->
+          {"Running", "badge-primary gap-1"}
+
+        status == "failed" ->
+          {"Failed", "badge-error"}
+
+        status == "done" ->
+          {"Done", "badge-success"}
+
+        status == Approval.pending_status() ->
+          {"Needs approval", "badge-warning"}
+
+        status == "review" and
+            Map.get(task, :review_decision) in ["changes_requested", :changes_requested] ->
+          {"Changes requested", "badge-warning"}
+
+        status == "review" ->
+          {"Needs review", "badge-warning"}
+
+        true ->
+          {String.capitalize(status), "badge-ghost"}
       end
 
     duration =

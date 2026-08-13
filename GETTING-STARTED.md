@@ -143,6 +143,7 @@ Svärm tracks GitHub work with **labels**. Your eligibility label (e.g. `ai-task
 | Agents | Edit `svarm-config/agents.toml` models; list required API keys in each agent’s `env` (no full host inheritance). Optional `skills` paths attach packs — start Svärm from a CWD where those packs live. Optional `tools` / `tools_mode` declare PATH executables (fail or warn before spawn; Svärm does not install them) ([docs/agents.md](docs/agents.md)) |
 | Budgets | Optional: `SVARM_BUDGET_MAX_USD_PER_TICKET` / `SVARM_BUDGET_MAX_USD_PER_DAY` or WORKFLOW `budget.*` — hard-stop **new** spawns when spent ≥ cap |
 | CI resume | Optional: re-dispatch when a managed PR’s Checks fail (see below). **Off by default.** |
+| Review signal | GitHub **changes requested** is detected on poll (board chip). **No auto re-dispatch yet** (that is a follow-up). |
 | Smoke-only off | Never leave `approval.mode: off` on a shared repo; do not leave `SVARM_DEMO_ROUTES` / `SVARM_SEED_DEMO` on production |
 | Base URL | Point `SVARM_BASE_URL` at the deployed host |
 | HTTPS + host | Terminate TLS at a reverse proxy; set `PHX_HOST` to the public hostname (origin checks). Compose **app** leaves session cookies Secure by default; only set `PHX_SECURE_COOKIES=false` for plain-HTTP localhost. See [SECURITY.md](SECURITY.md) |
@@ -175,6 +176,14 @@ Env overrides:
 - PR URL captured from agent output (best-effort regex on the run log). Without a durable PR link, resume cannot poll.
 
 **Costs:** each resume is a new spawn — usage ledger and budget caps still apply. In-flight runs are not killed when CI fails.
+
+### Review changes-requested (detect only)
+
+When a managed ticket is in **review** with a PR, Svärm **polls GitHub pull-request reviews** on the orchestrator tick (same poll loop as CI Checks — **no webhook**). If a reviewer’s **latest submitted** review is `CHANGES_REQUESTED`, the board card shows **“Changes requested”** and durable coordination records the signal + a short review context.
+
+This slice **does not re-dispatch**. Re-open/spawn with review context is a follow-up (`review-resume` re-dispatch). Local tracker has no Reviews API.
+
+**Requirements:** GitHub tracker; App/PAT **Pull requests: Read** (already required for PRs). Detection is on whenever the GitHub tracker is active; polls are capped per tick like CI resume.
 
 ---
 

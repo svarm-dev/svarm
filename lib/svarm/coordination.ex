@@ -1,6 +1,7 @@
 defmodule Svarm.Coordination do
   @moduledoc """
-  Durable per-task coordination state (PR link, CI resume counters, circuit).
+  Durable per-task coordination state (PR link, CI resume counters, circuit,
+  review-resume detection).
 
   Lives in SQLite so it works for both Local and GitHub trackers without
   stuffing GitHub issue bodies. Owned by this context — not KanbanBridge.
@@ -24,6 +25,9 @@ defmodule Svarm.Coordination do
     field(:ci_last_conclusion, :string)
     field(:ci_circuit_open, :boolean, default: false)
     field(:ci_context_summary, :string)
+    field(:review_decision, :string)
+    field(:review_last_head_sha, :string)
+    field(:review_context_summary, :string)
 
     timestamps(type: :utc_datetime)
   end
@@ -39,7 +43,10 @@ defmodule Svarm.Coordination do
     :ci_last_head_sha,
     :ci_last_conclusion,
     :ci_circuit_open,
-    :ci_context_summary
+    :ci_context_summary,
+    :review_decision,
+    :review_last_head_sha,
+    :review_context_summary
   ]
 
   @pr_url_re ~r{https://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)}i

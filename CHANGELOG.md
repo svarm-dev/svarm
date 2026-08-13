@@ -11,7 +11,7 @@ Post-0.1.3 on `main` (not yet tagged): run console, optional CI resume, trust/pe
 
 ### Added
 
-- **Typed stream run console** ([#110](https://github.com/svarm-dev/svarm/issues/110), [#111](https://github.com/svarm-dev/svarm/issues/111)): live path broadcasts v1 narrative, tool, and run events; BoardLive renders distinct chrome without duplicate compatibility lines; RunLog keeps a text projection and rehydrates compatible chrome on late join/re-selection (no schema change)
+- **Review-resume detection** ([#112](https://github.com/svarm-dev/svarm/issues/112)): poll GitHub PR reviews for managed tickets in **review**; record changes-requested state and show a board chip. **No auto re-dispatch** (follow-up #113). Same poll-on-tick path as CI Checks — no webhooks.
 - **Toolchain preflight contract** ([#108](https://github.com/svarm-dev/svarm/issues/108)): optional `tools` / `tools_mode` on agents (`fail` default, or `warn`); PATH-only check before spawn so missing host tools do not burn tokens; board `[toolchain: …]` note
 - **Sample skill pack `ai-task`** ([#52](https://github.com/svarm-dev/svarm/issues/52), [#124](https://github.com/svarm-dev/svarm/pull/124)): in-repo reference pack at `priv/packs/ai-task` (Docker `/app/packs/ai-task`); enable with `skills` on an agent — [docs/agents.md](docs/agents.md#sample-pack-ai-task)
 - **Agent skills dispatch inject** ([#107](https://github.com/svarm-dev/svarm/issues/107)): configured `skills` packs are copied into the ticket workspace (`.agents/skills/`) at run start, with a prompt note and Pi `--skill` flags; missing/invalid packs fail closed

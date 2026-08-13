@@ -54,10 +54,10 @@ Never put PEM contents in WORKFLOW.md, git, logs, or PubSub.
 | Issues | Read & write | List, labels, comments |
 | Metadata | Read | Required |
 | Contents | Read & write | Clone/push when agent uses App token |
-| Pull requests | Read & write | Open PR |
+| Pull requests | Read & write | Open PR; poll submitted reviews for changes-requested detection |
 | **Checks** | **Read** | CI resume: poll check-runs on managed PRs (optional feature) |
 
-Webhook: disabled for v1 (poll loop). CI resume also uses poll-on-tick, not webhooks.
+Webhook: disabled for v1 (poll loop). CI resume and review-resume detection also use poll-on-tick, not webhooks.
 
 ## Operator setup checklist
 
