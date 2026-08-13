@@ -191,14 +191,15 @@ defmodule Svarm.RedactTest do
 
   test "text redacts quoted KEY=\"value\" and KEY='value' assignments" do
     raw = """
-    PASSWORD="s3cret-quoted-pass"
+    PASSWORD="s3cret quoted pass"
     API_KEY='sk-quoted-key-value-here'
     DATABASE_PASSWORD="also-quoted"
     TOKEN=unquoted-still-works
+    PATH="/usr/local/bin:/usr/bin"
     """
 
     out = Redact.text(raw)
-    refute out =~ "s3cret-quoted-pass"
+    refute out =~ "s3cret quoted pass"
     refute out =~ "sk-quoted-key-value-here"
     refute out =~ "also-quoted"
     refute out =~ "unquoted-still-works"
@@ -206,6 +207,8 @@ defmodule Svarm.RedactTest do
     assert out =~ "API_KEY=[redacted]"
     assert out =~ "DATABASE_PASSWORD=[redacted]"
     assert out =~ "TOKEN=[redacted]"
+    # PATH stays on the skip list even when quoted (same as unquoted PATH).
+    assert out =~ ~s(PATH="/usr/local/bin:/usr/bin")
   end
 
   test "text redacts bare JWTs without a Bearer prefix" do
