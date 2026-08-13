@@ -479,7 +479,7 @@ defmodule SvarmWeb.BoardLiveTest do
     assert html =~ "No work waiting for human review"
   end
 
-  test "handles agent_line PubSub without crashing", %{conn: conn} do
+  test "appends text stream events once", %{conn: conn} do
     task =
       KanbanBridge.create_task(%{
         title: "stream test",
@@ -491,10 +491,12 @@ defmodule SvarmWeb.BoardLiveTest do
 
     render_click(view, "select_task", %{"id" => task.id})
 
-    Phoenix.PubSub.broadcast(Svarm.PubSub, Events.topic(), {:agent_line, task.id, "hello\n"})
+    Events.broadcast_agent_line(task.id, "hello once\n")
     :sys.get_state(view.pid)
 
-    assert render(view) =~ "hello"
+    html = render(view)
+    assert html =~ "hello once"
+    assert length(Regex.scan(~r/hello once/, html)) == 1
   end
 
   test "auto-selects task on run_started when nothing selected", %{conn: conn} do
@@ -641,7 +643,65 @@ defmodule SvarmWeb.BoardLiveTest do
     assert html =~ "[live] new line"
   end
 
-  test "late join restores typed tool_start as text projection", %{conn: conn} do
+  test "typed events render distinct live chrome", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Typed live",
+        status: "in_progress",
+        assignee: "demo"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/board")
+    render_click(view, "select_task", %{"id" => task.id})
+
+    Events.broadcast_agent_line(task.id, "agent narrative\n")
+
+    Events.broadcast_stream_event(
+      task.id,
+      StreamEvent.new(:tool_start, %{name: "bash", args: %{"command" => "mix test"}})
+    )
+
+    Events.broadcast_stream_event(
+      task.id,
+      StreamEvent.new(:tool_end, %{name: "bash", status: :ok})
+    )
+
+    Events.broadcast_stream_event(
+      task.id,
+      StreamEvent.new(:tool_end, %{name: "write", status: :error, result: "disk full"})
+    )
+
+    Events.broadcast_stream_event(
+      task.id,
+      StreamEvent.new(:run_marker, %{phase: :started, label: "Demo started"})
+    )
+
+    :sys.get_state(view.pid)
+
+    assert has_element?(view, ~s(#run-log [data-stream-kind="text"]), "agent narrative")
+    assert has_element?(view, ~s(#run-log [data-stream-kind="tool_start"]), "$ bash mix test")
+
+    assert has_element?(
+             view,
+             ~s(#run-log [data-stream-kind="tool_end"][data-stream-status="ok"]),
+             "done"
+           )
+
+    assert has_element?(
+             view,
+             ~s(#run-log [data-stream-kind="tool_end"][data-stream-status="error"]),
+             "failed"
+           )
+
+    assert has_element?(view, ~s(#run-log [data-stream-kind="run_marker"]), "Demo started")
+
+    html = render(view)
+    assert length(Regex.scan(~r/\$ bash mix test/, html)) == 1
+  end
+
+  test "late join and re-select restore typed text projections", %{conn: conn} do
     KanbanBridge.delete_all_tasks()
 
     task =
@@ -656,10 +716,32 @@ defmodule SvarmWeb.BoardLiveTest do
       StreamEvent.new(:tool_start, %{name: "bash", args: %{"command" => "ls"}})
     )
 
+    Events.broadcast_stream_event(
+      task.id,
+      StreamEvent.new(:tool_end, %{name: "bash", status: :error, result: "not found"})
+    )
+
     {:ok, view, _html} = live(conn, ~p"/board")
     render_click(view, "select_task", %{"id" => task.id})
 
-    assert render(view) =~ "$ bash ls"
+    assert has_element?(view, ~s(#run-log [data-stream-kind="tool_start"]), "$ bash ls")
+
+    assert has_element?(
+             view,
+             ~s(#run-log [data-stream-kind="tool_end"][data-stream-status="error"]),
+             "failed"
+           )
+
+    render_click(view, "clear_selection", %{})
+    render_click(view, "select_task", %{"id" => task.id})
+
+    assert has_element?(view, ~s(#run-log [data-stream-kind="tool_start"]), "$ bash ls")
+
+    assert has_element?(
+             view,
+             ~s(#run-log [data-stream-kind="tool_end"][data-stream-status="error"]),
+             "failed"
+           )
   end
 
   test "stream append after select appears in console", %{conn: conn} do
