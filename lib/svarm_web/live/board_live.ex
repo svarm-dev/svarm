@@ -293,7 +293,7 @@ defmodule SvarmWeb.BoardLive do
   def handle_info({:agent_line, _task_id, _line}, socket), do: {:noreply, socket}
 
   @impl true
-  def handle_info({:run_finished, task_id, exit_code}, socket) do
+  def handle_info({:run_finished, task_id, _exit_code}, socket) do
     # Fetch detailed cost + update card summary + session total
     costs = fetch_task_cost(task_id, socket.assigns.task_costs)
 
