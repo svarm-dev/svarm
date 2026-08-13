@@ -82,6 +82,51 @@ defmodule SvarmWeb.DashboardLiveTest do
     html = render_click(view, "set_window", %{"window" => "24h"})
     assert html =~ "Spend"
     assert html =~ "1.5K"
+    assert html =~ "Wall-clock last 24 hours"
+  end
+
+  test "24h chip excludes ledger rows older than a day on the wall clock", %{conn: conn} do
+    now = DateTime.utc_now()
+
+    Repo.insert!(%Svarm.Usage.Record{
+      id: "use_dash_old",
+      run_id: "run_old",
+      task_id: "task_old",
+      source: "worker",
+      provider: "openrouter",
+      model_id: "unknown-model",
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      estimated: false,
+      provider_cost_usd: 9.0,
+      recorded_at: 0,
+      inserted_at: DateTime.add(now, -8 * 86_400, :second)
+    })
+
+    Repo.insert!(%Svarm.Usage.Record{
+      id: "use_dash_new",
+      run_id: "run_new",
+      task_id: "task_new",
+      source: "worker",
+      provider: "openrouter",
+      model_id: "unknown-model",
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      estimated: false,
+      provider_cost_usd: 1.25,
+      recorded_at: 0,
+      inserted_at: now
+    })
+
+    {:ok, view, html} = live(conn, ~p"/dashboard")
+    assert html =~ "$10.25"
+    assert html =~ "All ledger rows in this database"
+
+    html = render_click(view, "set_window", %{"window" => "24h"})
+    assert html =~ "Wall-clock last 24 hours"
+    assert html =~ "$1.25"
+    refute html =~ "$10.25"
+    refute html =~ "$9.00"
   end
 
   test "orchestrator_status bursts coalesce into one dashboard reload", %{conn: conn} do

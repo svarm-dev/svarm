@@ -132,6 +132,18 @@ defmodule Svarm.Usage.Ledger do
   end
 
   @doc """
+  SQL cost groups for records with wall-clock `inserted_at >= since`.
+  Rows with nil `inserted_at` are excluded.
+  """
+  def cost_groups_since_inserted_at(%DateTime{} = since) do
+    from(r in Record,
+      where: not is_nil(r.inserted_at) and r.inserted_at >= ^since
+    )
+    |> cost_groups_query()
+    |> Repo.all()
+  end
+
+  @doc """
   SQL cost groups for wall-clock UTC calendar day (excludes nil `inserted_at`).
   """
   def cost_groups_for_utc_day(%Date{} = day) do

@@ -126,6 +126,14 @@ defmodule Svarm.Usage.Query do
   end
 
   @doc """
+  Spend summary for records whose wall-clock `inserted_at` is on or after `since`.
+  Rows with nil `inserted_at` are excluded.
+  """
+  def cost_since_inserted_at(%DateTime{} = since) do
+    Ledger.cost_groups_since_inserted_at(since) |> summarize_session_groups()
+  end
+
+  @doc """
   Returns aggregate spend grouped by model for a given time period.
   """
   def by_model(since_unix) when is_integer(since_unix) do
