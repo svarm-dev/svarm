@@ -147,6 +147,10 @@ defmodule SvarmWeb.DashboardLiveTest do
     assert html =~ "Wall-clock last 7 days"
     assert html =~ "$3.25"
     refute html =~ "$12.25"
+
+    html = render_click(view, "set_window", %{"window" => "session"})
+    assert html =~ "All ledger rows in this database"
+    assert html =~ "$12.25"
   end
 
   test "orchestrator_status bursts coalesce into one dashboard reload", %{conn: conn} do
