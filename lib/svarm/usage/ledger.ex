@@ -123,15 +123,6 @@ defmodule Svarm.Usage.Ledger do
   end
 
   @doc """
-  SQL cost groups for records with `recorded_at >= since_mono`.
-  """
-  def cost_groups_since(since_mono) when is_integer(since_mono) do
-    from(r in Record, where: r.recorded_at >= ^since_mono)
-    |> cost_groups_query()
-    |> Repo.all()
-  end
-
-  @doc """
   SQL cost groups for records with wall-clock `inserted_at >= since`.
   Rows with nil `inserted_at` are excluded.
   """
