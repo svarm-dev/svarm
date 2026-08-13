@@ -26,7 +26,7 @@ If nothing material changed, **do not** edit this file.
 | Field | Value |
 |-------|--------|
 | **Updated** | 2026-08-13 |
-| **`main`** | (this PR) typed stream BoardLive chrome + restore tests (#111) |
+| **`main`** | (this PR) compact terminal run console (#130) |
 | **Latest tag** | **v0.1.3** (2026-08-02) |
 | **Unreleased** | Run console, CI resume, skills inject, sample pack, toolchain preflight, typed stream console — see CHANGELOG |
 | **Focus** | **[#112](https://github.com/svarm-dev/svarm/issues/112)** — review-resume: GitHub changes-requested signal |
@@ -45,6 +45,6 @@ Format: `YYYY-MM-DD · one sentence · issue/PR link`
 
 ## Session log (newest first, max 3)
 
+- 2026-08-13 · compact terminal run console (#130); Focus unchanged
 - 2026-08-13 · typed stream BoardLive chrome + restore tests (#111); Focus → #112
 - 2026-08-13 · typed stream Events/RunLog projection (#110); Focus → #111
-- 2026-08-12 · toolchain preflight tools/tools_mode (#108); Focus → #110
