@@ -2,9 +2,9 @@
 
 > **Audience:** maintainers and coding agents implementing Events / RunLog / BoardLive.  
 > **Code contract:** [`Svarm.StreamEvent`](../lib/svarm/stream_event.ex) — kind names and pure helpers.  
-> **Epic:** [#49](https://github.com/svarm-dev/svarm/issues/49) · kinds locked in [#109](https://github.com/svarm-dev/svarm/issues/109) · Events/RunLog projection [#110](https://github.com/svarm-dev/svarm/issues/110).
+> **Epic:** [#49](https://github.com/svarm-dev/svarm/issues/49) · kinds locked in [#109](https://github.com/svarm-dev/svarm/issues/109) · Events/RunLog projection [#110](https://github.com/svarm-dev/svarm/issues/110) · Board chrome [#111](https://github.com/svarm-dev/svarm/issues/111).
 
-Run console output is still largely **line-soup** in the UI (#111). Events now emit typed v1 events on the live path; RunLog stores a **text projection** (no kind column) so late-join stays compatible.
+Events emit typed v1 events on the live path, and BoardLive gives narrative, tool lifecycle, failure, and run-marker entries distinct chrome. RunLog stores a **text projection** (no kind column); late join and re-selection classify stable projected forms into the same chrome.
 
 ## V1 kinds
 
@@ -28,9 +28,9 @@ Do **not** invent alternate spellings (`tool_fail` as a separate kind, `stdout`,
 
 ## Transition note
 
-`Svarm.Runner.LogFormat.tool_start/2` and `tool_fail/2` remain the **text projection** for tool events (RunLog + `{:agent_line, ...}`). Live path also broadcasts `{:stream_event, task_id, event}` from `Events.broadcast_stream_event/2`. `broadcast_agent_line/2` is a `:text` stream event. Run start/finish emit `:run_marker` plus the existing `{:run_started, ...}` / `{:run_finished, ...}` tuples.
+`Svarm.Runner.LogFormat.tool_start/2` and `tool_fail/2` remain the **text projection** for tool events. Live path broadcasts `{:stream_event, task_id, event}` from `Events.broadcast_stream_event/2`; BoardLive ignores the paired compatibility `{:agent_line, ...}` tuple so entries append once. `broadcast_agent_line/2` is a `:text` stream event. Run start/finish emit `:run_marker` plus the existing `{:run_started, ...}` / `{:run_finished, ...}` tuples.
 
-BoardLive visual redesign is **#111**. This slice does **not** add a RunLog kind column or governance run-marks product.
+Successful `tool_end` events have no durable text projection, so their completion chip is live-only. Tool starts, failures, narrative text, and run markers restore from RunLog. There is no RunLog kind column or separate log product.
 
 ## Related modules (today)
 
@@ -40,3 +40,4 @@ BoardLive visual redesign is **#111**. This slice does **not** add a RunLog kind
 | `Svarm.Events` | PubSub + single-writer RunLog append (`stream_event`, `agent_line`, run started/finished) |
 | `Svarm.RunLog` | Durable transcript **text** (no kind column) |
 | `Svarm.Runner.LogFormat` | Pure text projections for tool start/fail |
+| `SvarmWeb.BoardLive` | Typed live chrome + compatible text-projection restore |

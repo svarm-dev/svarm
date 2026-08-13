@@ -18,7 +18,8 @@ defmodule Svarm.StreamEvent do
 
   Events persist a **text projection** in RunLog (no kind column) so late-join
   stays compatible. Live path also broadcasts `{:stream_event, task_id, event}`.
-  BoardLive chrome is #111.
+  BoardLive renders the typed live event and rehydrates compatible chrome from
+  the text projection.
   """
 
   alias Svarm.Runner.LogFormat
@@ -85,7 +86,7 @@ defmodule Svarm.StreamEvent do
   Project a typed event to the RunLog / BoardLive text line.
 
   Empty string means persist nothing (typed PubSub still fires). Tool lines
-  reuse `LogFormat` so existing console text stays stable during #111.
+  reuse `LogFormat` so console text stays stable across live and restore paths.
   """
   @spec to_text(event()) :: String.t()
   def to_text(%{kind: :text, payload: payload}) do

@@ -2,7 +2,7 @@ defmodule SvarmWeb.BoardLive do
   @moduledoc "Real-time board and agent run log (agent work · human judgment)."
   use SvarmWeb, :live_view
 
-  alias Svarm.{AgentRegistry, Approval, Board, Events, Usage}
+  alias Svarm.{AgentRegistry, Approval, Board, Events, StreamEvent, Usage}
   alias SvarmWeb.Plugs.ApprovalsAuth
 
   @max_log_lines 400
@@ -258,10 +258,6 @@ defmodule SvarmWeb.BoardLive do
 
   @impl true
   def handle_info({:run_started, task_id, meta}, socket) do
-    identity = identity_from_meta(meta)
-    label = run_started_label(identity, meta)
-    banner = "--- #{label} ---\n"
-
     started_mono = meta[:started_mono_ms] || System.monotonic_time(:millisecond)
 
     socket =
@@ -269,17 +265,15 @@ defmodule SvarmWeb.BoardLive do
       |> assign(:run_meta, Map.put(socket.assigns.run_meta, task_id, meta))
       |> assign(:running_started, Map.put(socket.assigns.running_started, task_id, started_mono))
 
-    # Marker already persisted once in Events.broadcast_run_started/2.
-    # Auto-select hydrates from RunLog; already-selected only updates display.
+    # The preceding :run_marker stream event owns display. Auto-select hydrates
+    # that persisted marker from RunLog.
     socket =
       cond do
         is_nil(socket.assigns.selected_task_id) ->
           select_task(socket, task_id, patch: false, attach: true)
 
         socket.assigns.selected_task_id == task_id ->
-          socket
-          |> append_display_log(task_id, banner)
-          |> maybe_focus_running(task_id)
+          maybe_focus_running(socket, task_id)
 
         true ->
           socket
@@ -289,12 +283,17 @@ defmodule SvarmWeb.BoardLive do
   end
 
   @impl true
-  def handle_info({:agent_line, task_id, line}, socket) do
-    {:noreply, append_display_log(socket, task_id, line)}
+  def handle_info({:stream_event, task_id, event}, socket) do
+    {:noreply, append_stream_event(socket, task_id, event)}
   end
 
+  # Events still emits this compatibility tuple after :stream_event. Typed
+  # display owns the append so each chunk appears once.
   @impl true
-  def handle_info({:run_finished, task_id, exit_code}, socket) do
+  def handle_info({:agent_line, _task_id, _line}, socket), do: {:noreply, socket}
+
+  @impl true
+  def handle_info({:run_finished, task_id, _exit_code}, socket) do
     # Fetch detailed cost + update card summary + session total
     costs = fetch_task_cost(task_id, socket.assigns.task_costs)
 
@@ -302,7 +301,6 @@ defmodule SvarmWeb.BoardLive do
     orchestrator = Map.put(socket.assigns.orchestrator, :session_cost, session_cost)
 
     running_started = Map.delete(socket.assigns.running_started, task_id)
-    banner = "\n--- run finished (exit #{exit_code}) ---\n"
 
     socket =
       socket
@@ -312,8 +310,6 @@ defmodule SvarmWeb.BoardLive do
       |> update_costs_for_task(task_id)
       # Stream items freeze card DOM; re-insert so cost badges pick up new @costs.
       |> restream_task(task_id)
-      # Marker already persisted once in Events.broadcast_run_finished/2.
-      |> append_display_log(task_id, banner)
 
     {:noreply, socket}
   end
@@ -558,6 +554,30 @@ defmodule SvarmWeb.BoardLive do
   # Marker already persisted once in Events.broadcast_task_updated/1.
   defp maybe_append_status_marker(socket, %{id: id, status: status}) do
     append_display_log(socket, id, "[board] status → #{status}\n")
+  end
+
+  defp append_stream_event(socket, task_id, %{kind: :tool_end, payload: payload} = event) do
+    case StreamEvent.to_text(event) do
+      "" ->
+        # ponytail: successful tool ends are live-only while RunLog stays text-only.
+        name =
+          case payload[:name] do
+            name when is_binary(name) and name != "" -> String.replace(name, "\n", " ")
+            _ -> "tool"
+          end
+
+        append_display_log(socket, task_id, "\n[tool #{name} complete]\n")
+
+      text ->
+        append_display_log(socket, task_id, text)
+    end
+  end
+
+  defp append_stream_event(socket, task_id, event) do
+    case StreamEvent.to_text(event) do
+      "" -> socket
+      text -> append_display_log(socket, task_id, text)
+    end
   end
 
   defp append_display_log(socket, task_id, chunk) when is_binary(task_id) do
@@ -1158,8 +1178,21 @@ defmodule SvarmWeb.BoardLive do
               aria-relevant="additions"
               class="p-2.5 text-[11px] leading-relaxed font-mono max-h-[min(28rem,50vh)] overflow-y-auto whitespace-pre-wrap break-all space-y-0.5"
             >
-              <%= for {line, cls} <- classify_log(@log) do %>
-                <div class={cls}>{line}</div>
+              <%= for {line, kind, status, cls} <- classify_log(@log) do %>
+                <% label = stream_entry_label(kind, status) %>
+                <div
+                  data-stream-kind={kind}
+                  data-stream-status={status}
+                  class={cls}
+                >
+                  <span
+                    :if={label}
+                    class="badge badge-xs badge-outline shrink-0 font-sans uppercase tracking-wide"
+                  >
+                    {label}
+                  </span>
+                  <span>{line}</span>
+                </div>
               <% end %>
             </div>
           </div>
@@ -1288,12 +1321,6 @@ defmodule SvarmWeb.BoardLive do
       adapter: meta[:adapter],
       model: meta[:model]
     }
-  end
-
-  defp run_started_label(identity, meta) do
-    attempt = meta[:attempt] || "?"
-    role = if identity.role, do: " (#{identity.role})", else: ""
-    "#{identity.display_name}#{role} started · attempt #{attempt}"
   end
 
   defp column_empty_hint("todo"), do: "Task queue: dispatch or seed"
@@ -1608,36 +1635,65 @@ defmodule SvarmWeb.BoardLive do
   defp duration_label(_, _, _), do: nil
 
   defp classify_log(log) when is_binary(log) do
+    # ponytail: stable projection prefixes are the restore boundary while RunLog is text-only.
     log
     |> String.split("\n")
-    |> Enum.map(fn
-      "" ->
-        {"", ""}
-
-      line ->
-        cls =
-          cond do
-            String.starts_with?(line, "--- ") ->
-              "opacity-40 italic"
-
-            String.starts_with?(line, "[board]") ->
-              "opacity-40 text-[10px]"
-
-            String.contains?(line, "error") or String.contains?(line, "Error") ->
-              "text-error font-medium"
-
-            String.contains?(line, "warning") or String.contains?(line, "Warning") ->
-              "text-warning"
-
-            true ->
-              ""
-          end
-
-        {line, cls}
-    end)
+    |> Enum.map(&classify_log_line/1)
   end
 
   defp classify_log(_), do: []
+
+  defp classify_log_line(""), do: {"", "text", nil, "h-1"}
+
+  defp classify_log_line("--- " <> _ = line) do
+    {line, "run_marker", nil,
+     "my-1 flex items-center gap-2 border-y border-base-content/10 py-1 opacity-60 italic"}
+  end
+
+  defp classify_log_line("$ " <> _ = line) do
+    {line, "tool_start", nil,
+     "my-1 flex items-start gap-2 rounded-md border border-info/30 bg-info/5 px-2 py-1.5 text-info"}
+  end
+
+  defp classify_log_line("[tool " <> _ = line), do: classify_tool_line(line)
+
+  defp classify_log_line("[board]" <> _ = line) do
+    {line, "text", "board", "px-1 opacity-40 text-[10px]"}
+  end
+
+  defp classify_log_line(line) do
+    cond do
+      String.contains?(line, ["error", "Error"]) ->
+        {line, "text", "error", "px-1 text-error font-medium"}
+
+      String.contains?(line, ["warning", "Warning"]) ->
+        {line, "text", "warning", "px-1 text-warning"}
+
+      true ->
+        {line, "text", nil, "min-h-[1em] px-1"}
+    end
+  end
+
+  defp classify_tool_line(line) do
+    cond do
+      String.ends_with?(line, " failed]") ->
+        {line, "tool_end", "error",
+         "my-1 flex items-start gap-2 rounded-md border border-error/30 bg-error/5 px-2 py-1.5 text-error font-medium"}
+
+      String.ends_with?(line, " complete]") ->
+        {line, "tool_end", "ok",
+         "my-1 flex items-start gap-2 rounded-md border border-success/30 bg-success/5 px-2 py-1.5 text-success"}
+
+      true ->
+        {line, "text", nil, "min-h-[1em] px-1"}
+    end
+  end
+
+  defp stream_entry_label("tool_start", _), do: "tool"
+  defp stream_entry_label("tool_end", "error"), do: "failed"
+  defp stream_entry_label("tool_end", _), do: "done"
+  defp stream_entry_label("run_marker", _), do: "run"
+  defp stream_entry_label(_, _), do: nil
 
   defp monogram(%{display_name: name}) when is_binary(name) and name != "" do
     name

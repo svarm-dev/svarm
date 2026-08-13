@@ -8,7 +8,7 @@ defmodule Svarm.Events do
 
   Live path emits `{:stream_event, task_id, event}` (`Svarm.StreamEvent`).
   RunLog stores the text projection only (no kind column). `{:agent_line, ...}`
-  remains for BoardLive until typed chrome (#111).
+  remains as a compatibility broadcast; BoardLive renders `:stream_event`.
   """
   @topic "board"
 
@@ -42,9 +42,9 @@ defmodule Svarm.Events do
   @doc """
   Redact, persist a text projection, then broadcast `{:stream_event, task_id, event}`.
 
-  When the projection is non-empty, also broadcasts `{:agent_line, task_id, text}`
-  so the current BoardLive console keeps working. Pass `agent_line: false` for
-  run markers that already have `{:run_started, ...}` / `{:run_finished, ...}`.
+  When the projection is non-empty, also broadcasts the compatibility tuple
+  `{:agent_line, task_id, text}`. Pass `agent_line: false` for run markers that
+  already have `{:run_started, ...}` / `{:run_finished, ...}`.
   """
   def broadcast_stream_event(task_id, event, opts \\ [])
 
