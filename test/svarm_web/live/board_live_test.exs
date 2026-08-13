@@ -759,6 +759,8 @@ defmodule SvarmWeb.BoardLiveTest do
              "failed"
            )
 
+    refute render(view) =~ ~s(data-stream-spacer="true")
+
     render_click(view, "clear_selection", %{})
     render_click(view, "select_task", %{"id" => task.id})
 
@@ -769,6 +771,8 @@ defmodule SvarmWeb.BoardLiveTest do
              ~s(#run-log [data-stream-kind="tool_end"][data-stream-status="error"]),
              "failed"
            )
+
+    refute render(view) =~ ~s(data-stream-spacer="true")
   end
 
   test "stream append after select appears in console", %{conn: conn} do

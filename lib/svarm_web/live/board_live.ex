@@ -1645,11 +1645,26 @@ defmodule SvarmWeb.BoardLive do
     # ponytail: stable projection prefixes are the restore boundary while RunLog is text-only.
     log
     |> String.split("\n")
-    |> collapse_blank_lines()
+    |> compact_log_spacing()
     |> Enum.map(&classify_log_line/1)
   end
 
   defp classify_log(_), do: []
+
+  defp compact_log_spacing(lines) do
+    lines
+    |> collapse_blank_lines()
+    |> trim_blank_lines()
+    |> drop_projection_spacers()
+  end
+
+  defp drop_projection_spacers([]), do: []
+
+  defp drop_projection_spacers(lines) do
+    [nil | lines]
+    |> Enum.chunk_every(3, 1, [nil])
+    |> Enum.flat_map(&keep_log_line/1)
+  end
 
   defp collapse_blank_lines(lines) do
     lines
@@ -1659,6 +1674,25 @@ defmodule SvarmWeb.BoardLive do
       run -> run
     end)
   end
+
+  defp trim_blank_lines(lines) do
+    lines
+    |> Enum.drop_while(&(&1 == ""))
+    |> Enum.reverse()
+    |> Enum.drop_while(&(&1 == ""))
+    |> Enum.reverse()
+  end
+
+  defp keep_log_line([previous, "", next]) do
+    if typed_projection_line?(previous) or typed_projection_line?(next), do: [], else: [""]
+  end
+
+  defp keep_log_line([_previous, line, _next]), do: [line]
+
+  defp typed_projection_line?("--- " <> _), do: true
+  defp typed_projection_line?("$ " <> _), do: true
+  defp typed_projection_line?("[tool " <> _), do: true
+  defp typed_projection_line?(_), do: false
 
   defp classify_log_line(""), do: {"", nil, nil, "h-2 overflow-hidden"}
 
