@@ -332,7 +332,7 @@ defmodule SvarmWeb.DashboardLive do
           type="button"
           phx-click="set_window"
           phx-value-window={value}
-          aria-pressed={@window == value}
+          aria-pressed={to_string(@window == value)}
           class={[
             "btn btn-xs",
             @window == value && "btn-primary",

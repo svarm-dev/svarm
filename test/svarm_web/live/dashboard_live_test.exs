@@ -153,6 +153,19 @@ defmodule SvarmWeb.DashboardLiveTest do
     assert html =~ "$12.25"
   end
 
+  test "spend window chips emit aria-pressed true and false", %{conn: conn} do
+    {:ok, view, html} = live(conn, ~p"/dashboard")
+
+    assert html =~ ~r/phx-value-window="session"[^>]*aria-pressed="true"/
+    assert html =~ ~r/phx-value-window="24h"[^>]*aria-pressed="false"/
+    assert html =~ ~r/phx-value-window="7d"[^>]*aria-pressed="false"/
+
+    html = render_click(view, "set_window", %{"window" => "24h"})
+    assert html =~ ~r/phx-value-window="session"[^>]*aria-pressed="false"/
+    assert html =~ ~r/phx-value-window="24h"[^>]*aria-pressed="true"/
+    assert html =~ ~r/phx-value-window="7d"[^>]*aria-pressed="false"/
+  end
+
   test "orchestrator_status bursts coalesce into one dashboard reload", %{conn: conn} do
     KanbanBridge.create_task(%{
       title: "Dash coalesce",
