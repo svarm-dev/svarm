@@ -1,7 +1,7 @@
 defmodule Svarm.Coordination do
   @moduledoc """
-  Durable per-task coordination state (PR link, CI resume counters, circuit,
-  review-resume detection).
+  Durable per-task coordination state (PR link, CI/review resume counters,
+  shared circuit, review-resume detection).
 
   Lives in SQLite so it works for both Local and GitHub trackers without
   stuffing GitHub issue bodies. Owned by this context — not KanbanBridge.

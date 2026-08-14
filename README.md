@@ -158,9 +158,9 @@ GitHub App identity (bot comments): [docs/github-app.md](docs/github-app.md).
 - Optional **in-app `/setup`** (encrypted keys; file/env still work); human-wait visibility on board/dashboard
 - **Run console** on the ticket — typed narrative/tool/run chrome, late-join from durable log, deep link `/board?task=…&attach=1`
 - Optional **CI fail → fresh agent re-dispatch** with circuit breaker (default **off**; enable via WORKFLOW / `SVARM_CI_RESUME_*`)
-- **Review-resume detection** — Changes requested chip when GitHub reviews ask for changes; **no auto re-dispatch** yet
+- **Review-resume** — Changes requested chip when GitHub reviews ask for changes; optional re-dispatch on first request (default **off**; `review_resume` / `SVARM_REVIEW_RESUME_ENABLED`; shares the CI resume circuit)
 
-**Not shipped yet:** review-resume spawn (#113), Linear/Jira trackers, multi-provider/multi-agent registry UI, managed hosting, mid-run budget kill of in-flight workers, steer / mid-run Q&A in the console, soft budget hold mode. "Adapter-ready" means the behaviours exist; it does not mean every adapter is built.
+**Not shipped yet:** Linear/Jira trackers, multi-provider/multi-agent registry UI, managed hosting, mid-run budget kill of in-flight workers, steer / mid-run Q&A in the console, soft budget hold mode. "Adapter-ready" means the behaviours exist; it does not mean every adapter is built.
 
 Optional UI config after the demo: open `/setup` (same auth as `/approvals` in Docker). Details: [GETTING-STARTED.md](GETTING-STARTED.md).
 

@@ -50,6 +50,7 @@ defmodule Svarm.Workflow.Render do
     allowed = [
       "attempt",
       "ci_feedback",
+      "review_feedback",
       "issue.id",
       "issue.source_id",
       "issue.title",
@@ -115,18 +116,27 @@ defmodule Svarm.Workflow.Render do
   Resolve the prompt template (from WORKFLOW.md or default) and render it
   for the given task + attempt. Shared by runners.
 
-  When `Svarm.Coordination` has a `ci_context_summary` for the task (CI resume),
-  that block is appended after the template so the agent sees failure context.
-  Optional template placeholder `{{ci_feedback}}` is also substituted when present.
+  When `Svarm.Coordination` has a `ci_context_summary` or
+  `review_context_summary` for the task, those blocks are appended after the
+  template so the agent sees resume context. Optional placeholders
+  `{{ci_feedback}}` and `{{review_feedback}}` are substituted when present.
   """
   def render_prompt(task, attempt) do
     template = resolve_template()
     ci = ci_feedback_for(task)
-    {template, inject_mode} = place_ci_feedback(template, ci)
+    review = review_feedback_for(task)
+    {template, ci_mode} = place_ci_feedback(template, ci)
+    {template, review_mode} = place_review_feedback(template, review)
 
     case render(template, task, attempt) do
-      {:ok, rendered} -> {:ok, maybe_append_ci(rendered, ci, inject_mode)}
-      err -> err
+      {:ok, rendered} ->
+        {:ok,
+         rendered
+         |> maybe_append_block(ci, ci_mode)
+         |> maybe_append_block(review, review_mode)}
+
+      err ->
+        err
     end
   end
 
@@ -145,19 +155,38 @@ defmodule Svarm.Workflow.Render do
     end
   end
 
-  defp maybe_append_ci(rendered, ci, :append) when is_binary(ci) and ci != "" do
-    rendered <> "\n\n" <> ci
+  defp place_review_feedback(template, review) do
+    if String.contains?(template, "{{review_feedback}}") do
+      {String.replace(template, "{{review_feedback}}", review || ""), :placeholder}
+    else
+      {template, :append}
+    end
   end
 
-  defp maybe_append_ci(rendered, _ci, _mode), do: rendered
+  defp maybe_append_block(rendered, block, :append) when is_binary(block) and block != "" do
+    rendered <> "\n\n" <> block
+  end
 
-  defp ci_feedback_for(%{id: id}) when is_binary(id), do: coord_ci_summary(id)
+  defp maybe_append_block(rendered, _block, _mode), do: rendered
+
+  defp ci_feedback_for(%{id: id}) when is_binary(id), do: coord_summary(id, :ci_context_summary)
   defp ci_feedback_for(_), do: nil
 
-  defp coord_ci_summary(id) do
+  defp review_feedback_for(%{id: id}) when is_binary(id),
+    do: coord_summary(id, :review_context_summary)
+
+  defp review_feedback_for(_), do: nil
+
+  defp coord_summary(id, field) do
     case Svarm.Coordination.get(id) do
-      %{ci_context_summary: s} when is_binary(s) and s != "" -> s
-      _ -> nil
+      %{__struct__: _} = row ->
+        case Map.get(row, field) do
+          s when is_binary(s) and s != "" -> s
+          _ -> nil
+        end
+
+      _ ->
+        nil
     end
   end
 end

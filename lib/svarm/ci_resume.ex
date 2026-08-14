@@ -6,6 +6,8 @@ defmodule Svarm.CiResume do
   returns what the orchestrator should do. Default **disabled**.
   """
 
+  alias Svarm.Workflow.Env
+
   @type caps :: %{
           enabled: boolean(),
           max_attempts: pos_integer(),
@@ -38,9 +40,12 @@ defmodule Svarm.CiResume do
     wf = workflow_ci(workflow_config)
 
     %{
-      enabled: env_bool("SVARM_CI_RESUME_ENABLED", Map.get(wf, :enabled, false)),
+      enabled: Env.env_bool("SVARM_CI_RESUME_ENABLED", Map.get(wf, :enabled, false)),
       max_attempts:
-        env_int("SVARM_CI_RESUME_MAX_ATTEMPTS", Map.get(wf, :max_attempts, @default_max_attempts)),
+        Env.env_int(
+          "SVARM_CI_RESUME_MAX_ATTEMPTS",
+          Map.get(wf, :max_attempts, @default_max_attempts)
+        ),
       skip_draft: Map.get(wf, :skip_draft, true)
     }
   end
@@ -136,57 +141,10 @@ defmodule Svarm.CiResume do
 
   defp parse_workflow_ci(m) do
     %{
-      enabled: truthy?(Map.get(m, "enabled")),
-      max_attempts: parse_int(Map.get(m, "max_attempts")),
+      enabled: Env.truthy?(Map.get(m, "enabled")),
+      max_attempts: Env.parse_int(Map.get(m, "max_attempts")),
       skip_draft: Map.get(m, "skip_draft", true) != false
     }
-    |> reject_nil()
-  end
-
-  defp env_bool(key, default) do
-    case System.get_env(key) do
-      nil -> default
-      "" -> default
-      v -> String.downcase(v) in ~w(1 true yes on)
-    end
-  end
-
-  defp env_int(key, default) do
-    case System.get_env(key) do
-      nil ->
-        default
-
-      "" ->
-        default
-
-      v ->
-        case Integer.parse(v) do
-          {n, ""} when n > 0 -> n
-          _ -> default
-        end
-    end
-  end
-
-  defp parse_int(nil), do: nil
-  defp parse_int(n) when is_integer(n) and n > 0, do: n
-
-  defp parse_int(s) when is_binary(s) do
-    case Integer.parse(s) do
-      {n, ""} when n > 0 -> n
-      _ -> nil
-    end
-  end
-
-  defp parse_int(_), do: nil
-
-  defp truthy?(true), do: true
-  defp truthy?(false), do: false
-  defp truthy?("true"), do: true
-  defp truthy?("yes"), do: true
-  defp truthy?("1"), do: true
-  defp truthy?(_), do: false
-
-  defp reject_nil(map) do
-    Map.reject(map, fn {_k, v} -> is_nil(v) end)
+    |> Env.reject_nil()
   end
 end
