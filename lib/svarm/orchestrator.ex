@@ -862,20 +862,28 @@ defmodule Svarm.Orchestrator do
     next
   end
 
-  # Only in-review tickets — done/todo PR rows must not occupy the 50-row window.
+  # Prefer tracker review ids so done rows cannot fill a bounded window.
+  # Empty/failed list_issues must not mean "poll nothing": GitHub maps HTTP
+  # errors to `{:ok, []}`, and `status: "review"` may miss configured labels.
   defp review_resume_pr_rows(state) do
-    Coordination.list_with_pr(
-      limit: 50,
-      include_circuit_open: true,
-      task_ids: review_task_ids(state)
-    )
+    case review_task_ids(state) do
+      [_ | _] = ids ->
+        Coordination.list_with_pr(
+          limit: 50,
+          include_circuit_open: true,
+          task_ids: ids
+        )
+
+      _ ->
+        Coordination.list_with_pr(include_circuit_open: true, limit: nil)
+    end
   end
 
   defp review_task_ids(state) do
     if function_exported?(state.tracker, :list_issues, 2) do
       case state.tracker.list_issues(state.tracker_config, status: "review") do
-        {:ok, issues} when is_list(issues) -> Enum.map(issues, & &1.id)
-        _ -> []
+        {:ok, [_ | _] = issues} -> Enum.map(issues, & &1.id)
+        _ -> nil
       end
     else
       nil

@@ -206,30 +206,39 @@ defmodule Svarm.Coordination do
   Skips circuit-open tasks unless `include_circuit_open: true`.
   Pass `task_ids:` to restrict to a known set (e.g. tickets currently in
   `review`) so historical done rows cannot fill the window.
+  `task_ids: []` is an explicit empty set (no rows). Omit `task_ids` or
+  pass `nil` to leave the query unfiltered.
+  `limit: nil` drops the SQL LIMIT (unfiltered fallback scan).
   Bound by caller (orchestrator max/tick).
   """
   @spec list_with_pr(keyword()) :: [t()]
   def list_with_pr(opts \\ []) do
-    limit = Keyword.get(opts, :limit, 50)
-    include_circuit = Keyword.get(opts, :include_circuit_open, false)
-    task_ids = Keyword.get(opts, :task_ids)
-
-    if task_ids == [] do
-      []
-    else
-      __MODULE__
-      |> where([c], not is_nil(c.pr_number) and not is_nil(c.pr_owner) and not is_nil(c.pr_repo))
-      |> then(fn q ->
-        if include_circuit, do: q, else: where(q, [c], c.ci_circuit_open == false)
-      end)
-      |> then(fn q ->
-        if is_list(task_ids), do: where(q, [c], c.task_id in ^task_ids), else: q
-      end)
-      |> order_by([c], asc: c.updated_at)
-      |> limit(^limit)
-      |> Repo.all()
+    case Keyword.get(opts, :task_ids) do
+      [] -> []
+      task_ids -> opts |> pr_poll_query(task_ids) |> Repo.all()
     end
   end
+
+  defp pr_poll_query(opts, task_ids) do
+    include_circuit = Keyword.get(opts, :include_circuit_open, false)
+    limit = Keyword.get(opts, :limit, 50)
+
+    __MODULE__
+    |> where([c], not is_nil(c.pr_number) and not is_nil(c.pr_owner) and not is_nil(c.pr_repo))
+    |> exclude_open_circuit(include_circuit)
+    |> restrict_task_ids(task_ids)
+    |> order_by([c], asc: c.updated_at)
+    |> maybe_limit_rows(limit)
+  end
+
+  defp exclude_open_circuit(query, true), do: query
+  defp exclude_open_circuit(query, false), do: where(query, [c], c.ci_circuit_open == false)
+
+  defp restrict_task_ids(query, ids) when is_list(ids), do: where(query, [c], c.task_id in ^ids)
+  defp restrict_task_ids(query, _), do: query
+
+  defp maybe_limit_rows(query, nil), do: query
+  defp maybe_limit_rows(query, limit) when is_integer(limit), do: limit(query, ^limit)
 
   @doc "True when circuit is open for this task."
   @spec circuit_open?(String.t()) :: boolean()

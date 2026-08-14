@@ -32,10 +32,14 @@ defmodule Svarm.ReviewResumeOrchestratorTest do
     def list_eligible(_config), do: {:ok, []}
 
     def list_issues(_config, filters \\ []) do
-      issues = Application.get_env(:svarm, :review_resume_test_issues, %{}) |> Map.values()
-      status = Keyword.get(filters, :status)
-      issues = if status, do: Enum.filter(issues, &(&1.status == status)), else: issues
-      {:ok, issues}
+      if Application.get_env(:svarm, :review_resume_list_issues_empty, false) do
+        {:ok, []}
+      else
+        issues = Application.get_env(:svarm, :review_resume_test_issues, %{}) |> Map.values()
+        status = Keyword.get(filters, :status)
+        issues = if status, do: Enum.filter(issues, &(&1.status == status)), else: issues
+        {:ok, issues}
+      end
     end
 
     def get_issue(_config, id) do
@@ -78,6 +82,7 @@ defmodule Svarm.ReviewResumeOrchestratorTest do
     Application.put_env(:svarm, :github_reviews_module, StubReviews)
     Application.put_env(:svarm, :review_resume_test_issues, %{})
     Application.put_env(:svarm, :review_resume_test_result, nil)
+    Application.put_env(:svarm, :review_resume_list_issues_empty, false)
 
     :sys.replace_state(Orchestrator, fn state ->
       %{
@@ -111,6 +116,7 @@ defmodule Svarm.ReviewResumeOrchestratorTest do
 
       Application.delete_env(:svarm, :review_resume_test_issues)
       Application.delete_env(:svarm, :review_resume_test_result)
+      Application.delete_env(:svarm, :review_resume_list_issues_empty)
 
       if Process.whereis(Orchestrator) do
         :sys.replace_state(Orchestrator, fn _ -> original end)
@@ -289,6 +295,56 @@ defmodule Svarm.ReviewResumeOrchestratorTest do
        %{
          decision: :changes_requested,
          head_sha: "sha_live",
+         reviewer_logins: ["alice"],
+         summary: "Changes requested by alice",
+         draft: false,
+         review_count: 1
+       }}
+    )
+
+    send(Orchestrator, :tick)
+
+    assert wait_until(fn ->
+             match?(%{review_decision: "changes_requested"}, Coordination.get(live_id))
+           end)
+
+    assert get_issue(live_id).status == "review"
+  end
+
+  test "empty list_issues still polls in-review tickets behind stale PR rows" do
+    Application.put_env(:svarm, :review_resume_list_issues_empty, true)
+
+    for i <- 1..51 do
+      id = "hidden_stale_pr_#{i}"
+      put_issue(id, "done")
+
+      {:ok, _} =
+        Coordination.upsert(id, %{
+          pr_url: "https://github.com/o/r/pull/#{i}",
+          pr_owner: "o",
+          pr_repo: "r",
+          pr_number: i
+        })
+    end
+
+    live_id = "review_resume_hidden"
+    put_issue(live_id)
+
+    {:ok, _} =
+      Coordination.upsert(live_id, %{
+        pr_url: "https://github.com/o/r/pull/199",
+        pr_owner: "o",
+        pr_repo: "r",
+        pr_number: 199
+      })
+
+    Application.put_env(
+      :svarm,
+      :review_resume_test_result,
+      {:ok,
+       %{
+         decision: :changes_requested,
+         head_sha: "sha_hidden",
          reviewer_logins: ["alice"],
          summary: "Changes requested by alice",
          draft: false,
