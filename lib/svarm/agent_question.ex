@@ -308,7 +308,7 @@ defmodule Svarm.AgentQuestion do
   defp flatten_ui_event(event), do: event
 
   defp request_timeout_ms(event) do
-    case Map.get(event, "timeout") || Map.get(event, :timeout) do
+    case map_get(event, :timeout) do
       n when is_integer(n) and n > 1000 -> n
       n when is_integer(n) and n > 0 -> n * 1000
       _ -> nil

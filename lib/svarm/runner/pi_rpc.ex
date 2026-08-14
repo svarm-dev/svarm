@@ -352,47 +352,45 @@ defmodule Svarm.Runner.PiRPC do
         now = System.monotonic_time(:millisecond)
         waiting = session[:waiting_ui]
 
-        cond do
-          is_map(waiting) and now >= waiting.deadline_ms ->
-            send_json(port, %{
-              type: "extension_ui_response",
-              id: waiting.request_id,
-              cancelled: true
-            })
+        if is_map(waiting) and now >= waiting.deadline_ms do
+          send_json(port, %{
+            type: "extension_ui_response",
+            id: waiting.request_id,
+            cancelled: true
+          })
 
-            AgentQuestion.clear(task_id)
-            Events.broadcast_agent_line(task_id, "\n[pi_rpc: question timed out, continuing]\n")
+          AgentQuestion.clear(task_id)
+          Events.broadcast_agent_line(task_id, "\n[pi_rpc: question timed out, continuing]\n")
 
-            drain_events(
-              port,
-              task_id,
-              log,
-              usage,
-              %{session | waiting_ui: nil},
-              buffer,
-              deadline,
-              grace
-            )
+          drain_events(
+            port,
+            task_id,
+            log,
+            usage,
+            %{session | waiting_ui: nil},
+            buffer,
+            deadline,
+            grace
+          )
+        else
+          maybe_cancel_waiting(port, session)
+          AgentQuestion.clear(task_id)
+          send_json(port, %{id: "abort-1", type: "abort"})
+          Events.broadcast_agent_line(task_id, "\n[pi_rpc: timeout, aborting]\n")
 
-          true ->
-            maybe_cancel_waiting(port, session)
-            AgentQuestion.clear(task_id)
-            send_json(port, %{id: "abort-1", type: "abort"})
-            Events.broadcast_agent_line(task_id, "\n[pi_rpc: timeout, aborting]\n")
+          session = %{
+            session
+            | error: true,
+              reason: session.reason || :timeout,
+              waiting_ui: nil
+          }
 
-            session = %{
-              session
-              | error: true,
-                reason: session.reason || :timeout,
-                waiting_ui: nil
-            }
+          abort_deadline = System.monotonic_time(:millisecond) + grace.abort_grace_ms
 
-            abort_deadline = System.monotonic_time(:millisecond) + grace.abort_grace_ms
+          {log, usage, session, _buffer} =
+            wait_abort(port, task_id, log, usage, session, buffer, abort_deadline)
 
-            {log, usage, session, _buffer} =
-              wait_abort(port, task_id, log, usage, session, buffer, abort_deadline)
-
-            {log, usage, %{session | settled: true}}
+          {log, usage, %{session | settled: true}}
         end
     end
   end
@@ -529,13 +527,11 @@ defmodule Svarm.Runner.PiRPC do
   defp handle_event(%{"type" => "extension_ui_request"} = event, task_id, log, usage, session) do
     method = ui_method(event)
 
-    cond do
-      AgentQuestion.dialog_method?(method) ->
-        park_dialog(event, method, task_id, log, usage, session)
-
-      true ->
-        Events.broadcast_agent_line(task_id, "\n[pi_rpc: UI #{method} (no response)]\n")
-        {log, usage, session}
+    if AgentQuestion.dialog_method?(method) do
+      park_dialog(event, method, task_id, log, usage, session)
+    else
+      Events.broadcast_agent_line(task_id, "\n[pi_rpc: UI #{method} (no response)]\n")
+      {log, usage, session}
     end
   end
 
