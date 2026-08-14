@@ -26,9 +26,9 @@ If nothing material changed, **do not** edit this file.
 | Field | Value |
 |-------|--------|
 | **Updated** | 2026-08-14 |
-| **`main`** | (this PR) v0.1.4 tag prep + README screenshots (#135, #136) |
+| **`main`** | (this PR) compact terminal run console (#130) |
 | **Latest tag** | **v0.1.4** (2026-08-14) |
-| **Unreleased** | — |
+| **Unreleased** | Compact terminal run console — see CHANGELOG |
 | **Focus** | **[#113](https://github.com/svarm-dev/svarm/issues/113)** — review-resume: re-dispatch + shared circuit |
 | **Next** | mid-run Q&A children (#114–#116) |
 
@@ -45,6 +45,6 @@ Format: `YYYY-MM-DD · one sentence · issue/PR link`
 
 ## Session log (newest first, max 3)
 
+- 2026-08-14 · compact terminal run console (#130); Focus unchanged
 - 2026-08-14 · v0.1.4 cut + README screenshots (#135, #136); Focus stays #113
 - 2026-08-13 · review-resume GitHub changes-requested signal (#112); Focus → #113
-- 2026-08-13 · typed stream BoardLive chrome + restore tests (#111); Focus → #112

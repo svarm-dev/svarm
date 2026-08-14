@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Compact terminal run console** ([#130](https://github.com/svarm-dev/svarm/issues/130)): collapse repeated projection whitespace and render typed output as dense terminal rows instead of separate padded cards
+
 ## [0.1.4] - 2026-08-14
 
 Run console & CI resume. Optional CI-fail re-dispatch (default **off**). Review-resume is **detect-only** — no auto spawn (#113). No breaking env-inheritance change (that was 0.1.3).
