@@ -36,9 +36,9 @@ defmodule Svarm.Issue do
     # IDs of tasks that must complete before this one
     depends_on: [],
     # Mid-run Q&A wait (`"agent_question"` or nil)
-    :wait_reason,
+    wait_reason: nil,
     # Pending agent question payload (string-key map) or nil
-    :pending_question
+    pending_question: nil
   ]
 
   @type t :: %__MODULE__{
