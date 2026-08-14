@@ -7,10 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Post-0.1.3 on `main` (not yet tagged): run console, optional CI resume, trust/perf hardening. Tagged release remains **v0.1.3**.
+## [0.1.4] - 2026-08-14
+
+Run console & CI resume. Optional CI-fail re-dispatch (default **off**). Review-resume is **detect-only** — no auto spawn (#113). No breaking env-inheritance change (that was 0.1.3).
 
 ### Added
 
+- **Typed stream run console** ([#110](https://github.com/svarm-dev/svarm/issues/110), [#111](https://github.com/svarm-dev/svarm/issues/111)): live path broadcasts v1 narrative, tool, and run events; BoardLive renders distinct chrome without duplicate compatibility lines; RunLog keeps a text projection and rehydrates compatible chrome on late join/re-selection (no schema change)
 - **Review-resume detection** ([#112](https://github.com/svarm-dev/svarm/issues/112)): poll GitHub PR reviews for managed tickets in **review**; record changes-requested state and show a board chip. **No auto re-dispatch** (follow-up #113). Same poll-on-tick path as CI Checks — no webhooks.
 - **Toolchain preflight contract** ([#108](https://github.com/svarm-dev/svarm/issues/108)): optional `tools` / `tools_mode` on agents (`fail` default, or `warn`); PATH-only check before spawn so missing host tools do not burn tokens; board `[toolchain: …]` note
 - **Sample skill pack `ai-task`** ([#52](https://github.com/svarm-dev/svarm/issues/52), [#124](https://github.com/svarm-dev/svarm/pull/124)): in-repo reference pack at `priv/packs/ai-task` (Docker `/app/packs/ai-task`); enable with `skills` on an agent — [docs/agents.md](docs/agents.md#sample-pack-ai-task)
@@ -24,7 +27,7 @@ Post-0.1.3 on `main` (not yet tagged): run console, optional CI resume, trust/pe
 
 - GETTING-STARTED journeys named by tracker topology, not lettered paths: **Feel the board** (local board, no tracker), **Real tracker loop** (external issue tracker — GitHub today), **Team hardening** ([#124](https://github.com/svarm-dev/svarm/pull/124))
 - Issue forms: **Ready to build** + **Epic** templates; Feature request clarified as ideas-only; CONTRIBUTING documents the forms
-- README Status lists post-0.1.3 capabilities on `main` (run console, optional CI resume) while **Current release** stays v0.1.3 until the next tag
+- README Status is **Current release: v0.1.4**; screenshots recaptured for current nav, run console, and dashboard spend chips ([#135](https://github.com/svarm-dev/svarm/issues/135), [#136](https://github.com/svarm-dev/svarm/issues/136))
 - README aligned with v0.1.3 governance floor: `/setup`, `APPROVALS_*` / budget env, agent env allowlist, estimated cost label, docs links ([#42](https://github.com/svarm-dev/svarm/pull/42))
 - Board card costs use SQL aggregates instead of per-card N+1 loads ([#66](https://github.com/svarm-dev/svarm/issues/66), [#93](https://github.com/svarm-dev/svarm/pull/93))
 - RunLog stream chunks coalesce in a buffer and append with SQL `content || ?` instead of full-row rewrite per delta ([#67](https://github.com/svarm-dev/svarm/issues/67), [#95](https://github.com/svarm-dev/svarm/pull/95))
@@ -185,7 +188,8 @@ Shipped surface in this cut: **local board + GitHub Issues + pi/CLI + OpenRouter
 
 - Agent credentials and API keys must come from the environment; never written into task metadata, PubSub events, or tracked config files
 
-[Unreleased]: https://github.com/svarm-dev/svarm/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/svarm-dev/svarm/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/svarm-dev/svarm/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/svarm-dev/svarm/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/svarm-dev/svarm/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/svarm-dev/svarm/compare/v0.1.0...v0.1.1
