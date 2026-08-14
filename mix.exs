@@ -4,7 +4,7 @@ defmodule Svarm.MixProject do
   def project do
     [
       app: :svarm,
-      version: "0.1.3",
+      version: "0.1.4",
       elixir: "~> 1.17",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,

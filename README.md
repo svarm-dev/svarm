@@ -147,19 +147,20 @@ GitHub App identity (bot comments): [docs/github-app.md](docs/github-app.md).
 
 ## Status
 
-**Current release: v0.1.3** (governance floor). **`main` is ahead** under [Unreleased](CHANGELOG.md) — next tag TBD.
+**Current release: v0.1.4** (run console & CI resume).
 
-**Working now (v0.1.3 + `main`):**
+**Working now:**
 
 - Local board + GitHub Issues + pi/CLI agents + OpenRouter
 - Approvals (one-shot after human approve); board mutations require `APPROVALS_*` in Docker/prod (**fail closed** if unset)
 - Per-ticket cost (estimated labeled); optional hard daily/per-ticket USD caps that block **new** spawns
 - Allowlisted agent child env; usage ledger export (`mix svarm.export_usage`)
 - Optional **in-app `/setup`** (encrypted keys; file/env still work); human-wait visibility on board/dashboard
-- **Run console** on the ticket — typed narrative/tool/run chrome, late-join from durable log, deep link `/board?task=…&attach=1` (on `main`)
-- Optional **CI fail → fresh agent re-dispatch** with circuit breaker (default **off**; enable via WORKFLOW / `SVARM_CI_RESUME_*` — on `main`)
+- **Run console** on the ticket — typed narrative/tool/run chrome, late-join from durable log, deep link `/board?task=…&attach=1`
+- Optional **CI fail → fresh agent re-dispatch** with circuit breaker (default **off**; enable via WORKFLOW / `SVARM_CI_RESUME_*`)
+- **Review-resume detection** — Changes requested chip when GitHub reviews ask for changes; **no auto re-dispatch** yet
 
-**Not shipped yet:** Linear/Jira trackers, multi-provider/multi-agent registry UI, managed hosting, mid-run budget kill of in-flight workers, steer / mid-run Q&A in the console, soft budget hold mode. "Adapter-ready" means the behaviours exist; it does not mean every adapter is built.
+**Not shipped yet:** review-resume spawn (#113), Linear/Jira trackers, multi-provider/multi-agent registry UI, managed hosting, mid-run budget kill of in-flight workers, steer / mid-run Q&A in the console, soft budget hold mode. "Adapter-ready" means the behaviours exist; it does not mean every adapter is built.
 
 Optional UI config after the demo: open `/setup` (same auth as `/approvals` in Docker). Details: [GETTING-STARTED.md](GETTING-STARTED.md).
 
