@@ -7,8 +7,10 @@ defmodule Svarm.Redact do
 
   # Env-style KEY=value dumps (printenv / export / agent tool output).
   # Matches bare secret names and common suffixes (*_PASSWORD, *_API_KEY, …).
+  # Quoted values (`PASSWORD="secret"` / `API_KEY='…'`) are included; the value
+  # class used to stop at the first quote so the assignment never matched.
   # Does not match PATH, HOME, NODE_ENV, and other non-secret env vars.
-  @env_names ~r/\b((?:[A-Z][A-Z0-9_]*_)?(?:API_KEY|SECRET_ACCESS_KEY|ACCESS_KEY|PRIVATE_KEY|PASSWORD|SECRET|TOKEN)|SECRET_KEY_BASE)=([^\s\n"']+)/
+  @env_names ~r/\b((?:[A-Z][A-Z0-9_]*_)?(?:API_KEY|SECRET_ACCESS_KEY|ACCESS_KEY|PRIVATE_KEY|PASSWORD|SECRET|TOKEN)|SECRET_KEY_BASE)=(?:"[^"\n]*"|'[^'\n]*'|[^\s\n"']+)/
 
   # Provider / PAT token shapes (OpenAI, Anthropic, OpenRouter, GitHub, GitLab, Slack, npm, PyPI, Stripe).
   # Longer / more specific prefixes first; generic `sk-` requires 20+ body chars to limit false positives.
@@ -23,6 +25,11 @@ defmodule Svarm.Redact do
 
   # PEM private key blocks (RSA, EC, OPENSSH, PKCS#8, encrypted). Public keys are not matched.
   @pem_block ~r/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/
+
+  # Bare JWTs (three base64url segments). Min length per segment keeps
+  # `eyJ` labels and short examples out. Prefixed Bearer JWTs are already
+  # covered by @authorization / @bearer.
+  @jwt ~r/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/
 
   @doc "Deep-redact maps and lists (nested MCP content arrays included). Other terms as-is."
   def map(data) when is_map(data) do
@@ -47,6 +54,7 @@ defmodule Svarm.Redact do
     |> then(&Regex.replace(@authorization, &1, "\\1[redacted]"))
     |> then(&Regex.replace(@bearer, &1, "Bearer [redacted]"))
     |> then(&Regex.replace(@token_shapes, &1, "[redacted]"))
+    |> then(&Regex.replace(@jwt, &1, "[redacted]"))
   end
 
   def text(other), do: other

@@ -188,4 +188,47 @@ defmodule Svarm.RedactTest do
     assert out =~ "MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBAN+example"
     assert out =~ "word Bearer alone is fine"
   end
+
+  test "text redacts quoted KEY=\"value\" and KEY='value' assignments" do
+    raw = """
+    PASSWORD="s3cret quoted pass"
+    API_KEY='sk-quoted-key-value-here'
+    DATABASE_PASSWORD="also-quoted"
+    TOKEN=unquoted-still-works
+    PATH="/usr/local/bin:/usr/bin"
+    """
+
+    out = Redact.text(raw)
+    refute out =~ "s3cret quoted pass"
+    refute out =~ "sk-quoted-key-value-here"
+    refute out =~ "also-quoted"
+    refute out =~ "unquoted-still-works"
+    assert out =~ "PASSWORD=[redacted]"
+    assert out =~ "API_KEY=[redacted]"
+    assert out =~ "DATABASE_PASSWORD=[redacted]"
+    assert out =~ "TOKEN=[redacted]"
+    # PATH stays on the skip list even when quoted (same as unquoted PATH).
+    assert out =~ ~s(PATH="/usr/local/bin:/usr/bin")
+  end
+
+  test "text redacts bare JWTs without a Bearer prefix" do
+    jwt =
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+
+    out = Redact.text("auth=#{jwt} in agent output")
+    refute out =~ "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+    refute out =~ "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+    assert out =~ "[redacted]"
+  end
+
+  test "text leaves short eyJ labels and public-looking fragments alone" do
+    raw = """
+    id = "eyJshort"
+    header eyJhbGciOi only
+    """
+
+    out = Redact.text(raw)
+    assert out =~ ~s(id = "eyJshort")
+    assert out =~ "header eyJhbGciOi only"
+  end
 end
