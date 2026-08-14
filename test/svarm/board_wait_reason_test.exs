@@ -42,6 +42,21 @@ defmodule Svarm.BoardWaitReasonTest do
            }) == :ci_circuit
   end
 
+  test "wait_reason in_progress becomes :agent_question when a question is pending" do
+    assert Board.wait_reason(%{status: "in_progress"}) == :running
+
+    assert Board.wait_reason(%{
+             status: "in_progress",
+             wait_reason: "agent_question",
+             pending_question: %{"prompt" => "Which file?"}
+           }) == :agent_question
+
+    assert Board.wait_reason_label(:agent_question) == "Waiting for answer"
+
+    assert Board.pending_question(%{pending_question: %{"prompt" => "Which file?"}}) ==
+             %{"prompt" => "Which file?"}
+  end
+
   test "pr_url prefers coordination row" do
     {:ok, _} =
       Coordination.record_pr("t_pr", "https://github.com/o/r/pull/42")

@@ -184,12 +184,15 @@ defmodule Svarm.Board do
   @doc """
   Why this task is waiting — human gates first, then agent activity.
 
-  Returns `:approval | :ci_circuit | :changes_requested | :review | :running | :failed | nil`.
+  Returns `:approval | :ci_circuit | :changes_requested | :review |
+  :agent_question | :running | :failed | nil`.
 
   `:ci_circuit` wins over `:changes_requested` and plain `:review` when the CI
   resume circuit is open (ticket stays in `review` so humans can still merge).
   `:changes_requested` wins over plain `:review` when GitHub review polling
-  recorded a latest submitted CHANGES_REQUESTED (detector only; no auto-spawn).
+  recorded a latest submitted CHANGES_REQUESTED.
+  `:agent_question` is a mid-run wait on `in_progress` (durable pending
+  question). Distinct from approval/review/ci_circuit.
   """
   def wait_reason(%{status: "pending_approval"}), do: :approval
 
@@ -201,7 +204,10 @@ defmodule Svarm.Board do
     end
   end
 
-  def wait_reason(%{status: "in_progress"}), do: :running
+  def wait_reason(%{status: "in_progress"} = task) do
+    if agent_question_for?(task), do: :agent_question, else: :running
+  end
+
   def wait_reason(%{status: "failed"}), do: :failed
   def wait_reason(_), do: nil
 
@@ -220,6 +226,20 @@ defmodule Svarm.Board do
     end
   end
 
+  defp agent_question_for?(task) do
+    reason = map_get(task, :wait_reason)
+    question = map_get(task, :pending_question)
+
+    reason in ["agent_question", :agent_question] or pending_question?(question)
+  end
+
+  defp pending_question?(question) when is_map(question) do
+    prompt = Map.get(question, "prompt") || Map.get(question, :prompt)
+    is_binary(prompt) and String.trim(prompt) != ""
+  end
+
+  defp pending_question?(_), do: false
+
   defp changes_requested_for?(task) do
     if Map.has_key?(task, :review_decision) or Map.has_key?(task, "review_decision") do
       map_get(task, :review_decision) in ["changes_requested", :changes_requested]
@@ -234,9 +254,18 @@ defmodule Svarm.Board do
   def wait_reason_label(:ci_circuit), do: "CI retries exhausted"
   def wait_reason_label(:changes_requested), do: "Changes requested"
   def wait_reason_label(:review), do: "Needs review"
+  def wait_reason_label(:agent_question), do: "Waiting for answer"
   def wait_reason_label(:running), do: "Running"
   def wait_reason_label(:failed), do: "Failed"
   def wait_reason_label(_), do: nil
+
+  @doc "Pending mid-run question payload from the task map, or nil."
+  def pending_question(task) when is_map(task) do
+    case map_get(task, :pending_question) do
+      q when is_map(q) -> q
+      _ -> nil
+    end
+  end
 
   @doc """
   Counts of tickets blocked on humans.
@@ -336,7 +365,9 @@ defmodule Svarm.Board do
       priority: i.priority,
       attempts: i.attempts,
       created_at: i.created_at,
-      tenant: i.tenant
+      tenant: i.tenant,
+      wait_reason: i.wait_reason,
+      pending_question: i.pending_question
     }
   end
 
@@ -351,7 +382,9 @@ defmodule Svarm.Board do
       priority: i.priority,
       attempts: i.attempts,
       created_at: i.created_at,
-      tenant: i.tenant
+      tenant: i.tenant,
+      wait_reason: i.wait_reason,
+      pending_question: i.pending_question
     }
   end
 

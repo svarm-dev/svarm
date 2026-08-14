@@ -26,7 +26,9 @@ defmodule Svarm.KanbanBridge do
     :depends_on,
     :created_by,
     :created_at,
-    :tenant
+    :tenant,
+    :wait_reason,
+    :pending_question
   ]
 
   def create_task(attrs), do: GenServer.call(__MODULE__, {:create, attrs})
@@ -56,6 +58,24 @@ defmodule Svarm.KanbanBridge do
 
   def update_depends_on(id, depends_on),
     do: GenServer.call(__MODULE__, {:update_depends_on, id, depends_on})
+
+  @doc """
+  Persist a mid-run agent question on the task.
+
+  Sets `wait_reason` to `"agent_question"` and stores `pending_question`.
+  `attrs` must include a non-empty `prompt` (atom or string key). Optional
+  `request_id` and `asked_at` are kept. Survives board refresh and restart.
+  """
+  @spec put_pending_question(String.t(), map()) :: {:ok, map()} | {:error, :not_found | :invalid}
+  def put_pending_question(id, attrs) when is_binary(id) and is_map(attrs) do
+    GenServer.call(__MODULE__, {:put_pending_question, id, attrs})
+  end
+
+  @doc "Clear mid-run wait reason and pending question payload."
+  @spec clear_pending_question(String.t()) :: {:ok, map()} | {:error, :not_found}
+  def clear_pending_question(id) when is_binary(id) do
+    GenServer.call(__MODULE__, {:clear_pending_question, id})
+  end
 
   @impl true
   def init(_opts) do
@@ -148,6 +168,43 @@ defmodule Svarm.KanbanBridge do
     {:reply, :ok, state}
   end
 
+  def handle_call({:put_pending_question, id, attrs}, _from, state) do
+    case {Repo.get(Task, id), normalize_pending_question(attrs)} do
+      {nil, _} ->
+        {:reply, {:error, :not_found}, state}
+
+      {_task, {:error, :invalid}} ->
+        {:reply, {:error, :invalid}, state}
+
+      {task, {:ok, payload}} ->
+        {:ok, saved} =
+          task
+          |> Task.changeset(%{wait_reason: "agent_question", pending_question: payload})
+          |> Repo.update()
+
+        map = task_to_map(saved)
+        Events.broadcast_task_updated(map)
+        {:reply, {:ok, map}, state}
+    end
+  end
+
+  def handle_call({:clear_pending_question, id}, _from, state) do
+    case Repo.get(Task, id) do
+      nil ->
+        {:reply, {:error, :not_found}, state}
+
+      task ->
+        {:ok, saved} =
+          task
+          |> Task.changeset(%{wait_reason: nil, pending_question: nil})
+          |> Repo.update()
+
+        map = task_to_map(saved)
+        Events.broadcast_task_updated(map)
+        {:reply, {:ok, map}, state}
+    end
+  end
+
   def handle_call({:update_depends_on, id, depends_on}, _from, state) do
     {1, _} =
       from(t in Task, where: t.id == ^id)
@@ -175,7 +232,32 @@ defmodule Svarm.KanbanBridge do
       attempts: t.attempts,
       depends_on: t.depends_on || [],
       created_at: t.created_at,
-      tenant: t.tenant
+      tenant: t.tenant,
+      wait_reason: t.wait_reason,
+      pending_question: t.pending_question
     }
+  end
+
+  defp normalize_pending_question(attrs) when is_map(attrs) do
+    prompt = map_get(attrs, :prompt)
+
+    if is_binary(prompt) and String.trim(prompt) != "" do
+      payload =
+        %{
+          "reason" => "agent_question",
+          "prompt" => prompt,
+          "request_id" => map_get(attrs, :request_id),
+          "asked_at" => map_get(attrs, :asked_at) || System.system_time(:second)
+        }
+        |> Map.reject(fn {_k, v} -> is_nil(v) or v == "" end)
+
+      {:ok, payload}
+    else
+      {:error, :invalid}
+    end
+  end
+
+  defp map_get(map, key) when is_map(map) do
+    Map.get(map, key) || Map.get(map, Atom.to_string(key))
   end
 end
