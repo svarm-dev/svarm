@@ -9,12 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mid-run Q&A board chip + answer UI** ([#116](https://github.com/svarm-dev/svarm/issues/116)): **Waiting for answer** chip on running cards; selected-task confirm/select/input form; same `board_auth_at` gate as approve/reject. Operator notes in GETTING-STARTED. Completes epic #51.
 - **Mid-run Q&A answer API + PiRPC inject** ([#115](https://github.com/svarm-dev/svarm/issues/115)): `Svarm.AgentQuestion` parks PiRPC `extension_ui_request` dialogs, injects `extension_ui_response`, and persists wait on kanban + `task_coordination` (GitHub cards). Deadline (default 15 min) or cancel continues the run; CLI inject is unsupported. Board answer UI is #116.
 - **Mid-run Q&A wait fields** ([#114](https://github.com/svarm-dev/svarm/issues/114)): durable `wait_reason` + `pending_question` on the kanban task (SQLite); `KanbanBridge.put_pending_question/2` / `clear_pending_question/1`; `Board.wait_reason/1` returns `:agent_question` on `in_progress` when a question is pending. No answer UI yet (#115–#116).
 - **Review-resume re-dispatch** ([#113](https://github.com/svarm-dev/svarm/issues/113)): when enabled, the first GitHub changes-requested transition re-opens the ticket for a fresh agent run with review context; later SHA refreshes in the same episode stay detect-only. Shares `ci_resume_count` / `ci_circuit_open` and the CI resume `max_attempts` cap. Default **off** (`review_resume.enabled` / `SVARM_REVIEW_RESUME_ENABLED`). Detection stays always-on for GitHub.
 
 ### Fixed
 
+- **AgentQuestion answer/cancel double-inject**: `answer/2` and `cancel/1` clear durable wait immediately after inject so the board form cannot submit twice into the same PiRPC run (or a later dialog); optional `request_id` must match when present
 - **AgentQuestion clear/cancel/invalid park**: `clear/1` no longer PubSubs `status: in_progress` (would yank a review/failed card back); `cancel/1` returns `{:error, :invalid}` instead of raising when `request_id` is missing; invalid dialog park fails the PiRPC run instead of stalling until wall-clock timeout
 - **Compact terminal run console** ([#130](https://github.com/svarm-dev/svarm/issues/130)): collapse repeated projection whitespace and render typed output as dense terminal rows instead of separate padded cards
 
