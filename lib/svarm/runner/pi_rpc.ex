@@ -17,7 +17,8 @@ defmodule Svarm.Runner.PiRPC do
     - wall-clock timeout → send `abort`, wait grace, then force-kill the OS tree
     - `extension_ui_request` dialog (`select` / `confirm` / `input` / `editor`)
       → park via `Svarm.AgentQuestion`, wait for a board answer (or cancel /
-      deadline), then write `extension_ui_response` and continue
+      deadline), then write `extension_ui_response` and continue. Invalid
+      dialog (missing id/prompt) fails the run — same as pre-Q&A fail-fast.
     - fire-and-forget UI (`notify`, `setStatus`, `setWidget`, `setTitle`,
       `set_editor_text`) → log a short line and continue (no response)
     - `response` with `success: false` → fail (protocol / rejected command)
@@ -681,10 +682,10 @@ defmodule Svarm.Runner.PiRPC do
       {:error, :invalid} ->
         Events.broadcast_agent_line(
           task_id,
-          "\n[pi_rpc: ignoring invalid UI request (#{method})]\n"
+          "\n[pi_rpc: invalid UI request (#{method}) — failing run]\n"
         )
 
-        {log, usage, session}
+        {log, usage, %{session | error: true, settled: true, reason: :ui_request}}
     end
   end
 

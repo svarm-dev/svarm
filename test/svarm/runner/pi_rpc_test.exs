@@ -274,6 +274,21 @@ defmodule Svarm.Runner.PiRPCTest do
     assert {:error, :not_waiting} = AgentQuestion.answer(id, %{confirmed: true})
   end
 
+  test "invalid dialog UI fails the run instead of stalling", %{
+    workspace_root: root,
+    statuses: statuses
+  } do
+    assert {:error, {:pi, :ui_request}} =
+             PiRPC.run(
+               task("sva_ui_invalid"),
+               agent_config("ui_invalid"),
+               run_opts(root, statuses, timeout_ms: 30_000)
+             )
+
+    assert last_status(statuses, "sva_ui_invalid") == "failed"
+    assert_agent_line("sva_ui_invalid", "invalid UI request")
+  end
+
   test "fire-and-forget UI does not fail the run", %{
     workspace_root: root,
     statuses: statuses

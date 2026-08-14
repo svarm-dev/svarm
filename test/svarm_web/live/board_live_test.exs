@@ -1028,6 +1028,27 @@ defmodule SvarmWeb.BoardLiveTest do
     assert has_element?(view, "#task-#{task.id}")
   end
 
+  test "AgentQuestion.clear after review does not move the card to in_progress", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Stay in review",
+        status: "review",
+        assignee: "demo"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/board")
+    assert has_element?(view, "#col-review-tasks #task-#{task.id}")
+
+    Svarm.AgentQuestion.clear(task.id)
+    :sys.get_state(view.pid)
+
+    assert has_element?(view, "#col-review-tasks #task-#{task.id}")
+    refute has_element?(view, "#col-in_progress-tasks #task-#{task.id}")
+    refute render(view) =~ "[board] status → in_progress"
+  end
+
   test "run_finished restreams card so cost badge appears", %{conn: conn} do
     KanbanBridge.delete_all_tasks()
     Svarm.Repo.delete_all("usage_records")

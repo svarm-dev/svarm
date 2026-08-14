@@ -1,7 +1,7 @@
 defmodule Svarm.AgentQuestionTest do
   use ExUnit.Case, async: false
 
-  alias Svarm.{AgentQuestion, Coordination, KanbanBridge, Repo}
+  alias Svarm.{AgentQuestion, Coordination, Events, KanbanBridge, Repo, RunLog}
 
   setup do
     Repo.delete_all(Coordination)
@@ -16,6 +16,14 @@ defmodule Svarm.AgentQuestionTest do
     refute AgentQuestion.dialog_method?("notify")
     refute AgentQuestion.dialog_method?("setStatus")
     refute AgentQuestion.dialog_method?(nil)
+  end
+
+  test "flash_error/1 covers answer and cancel reasons" do
+    assert AgentQuestion.flash_error(:not_waiting) =~ "waiting"
+    assert AgentQuestion.flash_error(:no_runner) =~ "no longer waiting"
+    assert AgentQuestion.flash_error(:invalid) =~ "does not match"
+    assert AgentQuestion.flash_error(:not_found) =~ "not found"
+    assert AgentQuestion.flash_error(:other) =~ "other"
   end
 
   test "build_response/3 maps method to RPC body" do
@@ -128,6 +136,118 @@ defmodule Svarm.AgentQuestionTest do
     assert_receive {:got,
                     %{"type" => "extension_ui_response", "id" => "q-inj", "value" => "Ada"}},
                    1_000
+  end
+
+  test "park/3 without a request id is :invalid and does not persist" do
+    task = KanbanBridge.create_task(%{title: "no id", status: "in_progress", assignee: "demo"})
+
+    assert {:error, :invalid} =
+             AgentQuestion.park(task.id, %{"method" => "confirm", "message" => "Ship it?"})
+
+    assert KanbanBridge.get_task(task.id).pending_question == nil
+    assert Coordination.get(task.id) == nil or Coordination.get(task.id).pending_question == nil
+  end
+
+  test "cancel/1 returns :invalid instead of raising when request_id is missing" do
+    task =
+      KanbanBridge.create_task(%{title: "no id cancel", status: "in_progress", assignee: "demo"})
+
+    assert {:ok, _} = KanbanBridge.put_pending_question(task.id, %{prompt: "Ship it?"})
+
+    parent = self()
+
+    spawn(fn ->
+      {:ok, _} = Registry.register(AgentQuestion.inbox(), task.id, :waiting)
+      send(parent, :ready)
+      Process.sleep(5_000)
+    end)
+
+    assert_receive :ready, 1_000
+    assert {:error, :invalid} = AgentQuestion.cancel(task.id)
+  end
+
+  test "clear/1 does not PubSub in_progress or log a status line after review" do
+    Events.subscribe()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "clear after review",
+        status: "in_progress",
+        assignee: "demo"
+      })
+
+    {:ok, _} =
+      AgentQuestion.park(task.id, %{
+        "id" => "q-clr",
+        "method" => "confirm",
+        "message" => "Ship it?"
+      })
+
+    KanbanBridge.update_status(task.id, "review")
+    flush_task_updated()
+
+    AgentQuestion.clear(task.id)
+
+    updates = collect_task_updated(task.id, 200)
+    refute Enum.any?(updates, &(&1[:status] == "in_progress"))
+    assert Enum.any?(updates, fn u -> u[:wait_reason] == nil and u[:pending_question] == nil end)
+
+    assert KanbanBridge.get_task(task.id).status == "review"
+    assert KanbanBridge.get_task(task.id).pending_question == nil
+    refute RunLog.get(task.id) =~ ~r/status → in_progress\n$/
+  end
+
+  test "clear/1 on coord-only wait broadcasts wait fields without status" do
+    Events.subscribe()
+    id = "sva_coord_clear_#{System.unique_integer([:positive])}"
+
+    {:ok, _} =
+      Coordination.upsert(id, %{
+        wait_reason: "agent_question",
+        pending_question: %{"prompt" => "Hi?", "request_id" => "q-gh"}
+      })
+
+    flush_task_updated()
+    AgentQuestion.clear(id)
+
+    assert_receive {:task_updated, payload}, 500
+    assert payload.id == id
+    assert payload.wait_reason == nil
+    assert payload.pending_question == nil
+    refute Map.has_key?(payload, :status)
+    assert Coordination.get(id).wait_reason == nil
+    refute RunLog.get(id) =~ "status →"
+  end
+
+  defp flush_task_updated do
+    receive do
+      {:task_updated, _} -> flush_task_updated()
+    after
+      50 -> :ok
+    end
+  end
+
+  defp collect_task_updated(task_id, timeout_ms) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    collect_task_updated(task_id, deadline, [])
+  end
+
+  defp collect_task_updated(task_id, deadline, acc) do
+    remaining = deadline - System.monotonic_time(:millisecond)
+
+    if remaining <= 0 do
+      Enum.reverse(acc)
+    else
+      receive do
+        {:task_updated, %{id: ^task_id} = payload} ->
+          collect_task_updated(task_id, deadline, [payload | acc])
+
+        {:task_updated, _} ->
+          collect_task_updated(task_id, deadline, acc)
+      after
+        max(remaining, 1) -> Enum.reverse(acc)
+      end
+    end
   end
 
   defp wait_until(fun, timeout_ms \\ 1_000) do
