@@ -205,6 +205,19 @@ Env overrides:
 
 ---
 
+## Agent asked a question
+
+A **PiRPC** agent can pause mid-run on a dialog (`confirm`, `select`, `input`, or `editor`). The board card shows **Waiting for answer** even while the run is still `in_progress`. Open the card, answer the prompt, or **Dismiss**.
+
+- One pending question at a time — this is not a chat thread.
+- Dismiss or the wait deadline **continues** the run (it does not fail solely because you were slow).
+- Default deadline is **15 minutes** (`SVARM_AGENT_QUESTION_TIMEOUT_MS`, or a shorter timeout on the pi request).
+- **CLI** agents cannot be answered this way (unsupported). Fire-and-forget UI (`notify`, status widgets) never waits.
+
+Answering uses the same board auth as approve/reject (`APPROVALS_*` + `board_auth_at` TTL).
+
+---
+
 ## Troubleshooting
 
 | Symptom | Check |
@@ -212,7 +225,7 @@ Env overrides:
 | Container exits immediately | Check `docker compose logs`. `SECRET_KEY_BASE` is generated if unset; set it in `.env` only for stable sessions |
 | Config is a directory named `WORKFLOW.md` | Old file mounts. Use directory mount `./svarm-config:/app/config` (current compose) and delete the bogus dirs |
 | `/approvals` 404 text about APPROVALS_* | Set `APPROVALS_USER` and `APPROVALS_PASSWORD` in `.env` |
-| Board approve/reject/mark-done blocked without auth flash | Production needs `APPROVALS_*`; sign in via `/approvals` then return to the board. Local Mix without credentials is open only when `dev_routes` is on. Sticky proof expires after 8h by default (`BOARD_AUTH_TTL_SECONDS`) — re-sign in if mid-session mutations start failing |
+| Board approve/reject/mark-done/answer blocked without auth flash | Production needs `APPROVALS_*`; sign in via `/approvals` then return to the board. Local Mix without credentials is open only when `dev_routes` is on. Sticky proof expires after 8h by default (`BOARD_AUTH_TTL_SECONDS`) — re-sign in if mid-session mutations start failing |
 | `/approvals` 401 | Wrong Basic Auth credentials |
 | Nothing happens | `docker compose logs -f` (polling / eligibility) |
 | Stuck before agent runs | `/approvals` (default is untrusted) |

@@ -2,7 +2,7 @@ defmodule SvarmWeb.BoardLive do
   @moduledoc "Real-time board and agent run log (agent work · human judgment)."
   use SvarmWeb, :live_view
 
-  alias Svarm.{AgentRegistry, Approval, Board, Events, StreamEvent, Usage}
+  alias Svarm.{AgentQuestion, AgentRegistry, Approval, Board, Events, StreamEvent, Usage}
   alias SvarmWeb.Plugs.ApprovalsAuth
 
   @max_log_lines 400
@@ -130,6 +130,52 @@ defmodule SvarmWeb.BoardLive do
 
           {:error, reason} ->
             {:noreply, put_flash(socket, :error, Approval.flash_error(reason))}
+        end
+    end
+  end
+
+  def handle_event("answer_agent_question", params, socket) do
+    case authorize_board_mutation(socket) do
+      {:error, :unauthorized} ->
+        {:noreply, put_flash(socket, :error, unauthorized_mutation_flash("answer"))}
+
+      :ok ->
+        id = params["id"] || params["task_id"]
+
+        case AgentQuestion.answer(id, answer_attrs_from_params(params)) do
+          {:ok, :injected} ->
+            {:noreply,
+             socket
+             |> put_flash(:info, "Answer sent")
+             |> load_board()
+             |> then(fn s ->
+               if s.assigns.selected_task_id == id, do: select_task(s, id), else: s
+             end)}
+
+          {:error, reason} ->
+            {:noreply, put_flash(socket, :error, AgentQuestion.flash_error(reason))}
+        end
+    end
+  end
+
+  def handle_event("cancel_agent_question", %{"id" => id}, socket) do
+    case authorize_board_mutation(socket) do
+      {:error, :unauthorized} ->
+        {:noreply, put_flash(socket, :error, unauthorized_mutation_flash("dismiss"))}
+
+      :ok ->
+        case AgentQuestion.cancel(id) do
+          {:ok, _} ->
+            {:noreply,
+             socket
+             |> put_flash(:info, "Question dismissed — run continues")
+             |> load_board()
+             |> then(fn s ->
+               if s.assigns.selected_task_id == id, do: select_task(s, id), else: s
+             end)}
+
+          {:error, reason} ->
+            {:noreply, put_flash(socket, :error, AgentQuestion.flash_error(reason))}
         end
     end
   end
@@ -954,8 +1000,13 @@ defmodule SvarmWeb.BoardLive do
               "border-transparent bg-base-100/80 hover:border-base-300",
             card.running && "ring-2 ring-primary/50 bg-primary/5",
             card.retrying && "ring-2 ring-warning/40",
-            card.wait_reason in [:approval, :review, :ci_circuit, :changes_requested] &&
-              "border-dashed border-warning/60"
+            card.wait_reason in [
+              :approval,
+              :review,
+              :ci_circuit,
+              :changes_requested,
+              :agent_question
+            ] && "border-dashed border-warning/60"
           ]}>
             <button
               type="button"
@@ -1088,6 +1139,10 @@ defmodule SvarmWeb.BoardLive do
             <span class="opacity-40 mx-1">·</span>
             <span class="opacity-90">{@task.title}</span>
           </p>
+
+          <%= if q = Board.pending_question(@task) do %>
+            <.agent_question_panel task={@task} question={q} />
+          <% end %>
 
           <%= if @task.status == "review" do %>
             <% wait = Board.wait_reason(@task) %>
@@ -1292,28 +1347,38 @@ defmodule SvarmWeb.BoardLive do
 
   defp card_status_chip(assigns) do
     ~H"""
-    <%= if @card.running do %>
-      <span class="badge badge-primary badge-xs gap-1 shrink-0 font-mono">
-        <span class="w-1.5 h-1.5 rounded-full bg-primary-content motion-safe:animate-pulse" />
-        {format_elapsed(Map.get(@running_started, @task.id), @now_mono)}
-      </span>
-    <% else %>
-      <%= if @card.retrying do %>
-        <span class="badge badge-warning badge-xs shrink-0">retry</span>
+    <div class="flex items-center gap-1 shrink-0">
+      <%= if @card.wait_reason == :agent_question do %>
+        <span
+          class={["badge badge-xs", wait_chip_class(:agent_question)]}
+          title={Board.wait_reason_label(:agent_question)}
+        >
+          {Board.wait_reason_label(:agent_question)}
+        </span>
+      <% end %>
+      <%= if @card.running do %>
+        <span class="badge badge-primary badge-xs gap-1 font-mono">
+          <span class="w-1.5 h-1.5 rounded-full bg-primary-content motion-safe:animate-pulse" />
+          {format_elapsed(Map.get(@running_started, @task.id), @now_mono)}
+        </span>
       <% else %>
-        <%= if @card.wait_reason in [:approval, :review, :ci_circuit, :changes_requested] do %>
-          <span
-            class={[
-              "badge badge-xs shrink-0",
-              wait_chip_class(@card.wait_reason)
-            ]}
-            title={Board.wait_reason_label(@card.wait_reason)}
-          >
-            {Board.wait_reason_label(@card.wait_reason)}
-          </span>
+        <%= if @card.retrying do %>
+          <span class="badge badge-warning badge-xs">retry</span>
+        <% else %>
+          <%= if @card.wait_reason in [:approval, :review, :ci_circuit, :changes_requested] do %>
+            <span
+              class={[
+                "badge badge-xs",
+                wait_chip_class(@card.wait_reason)
+              ]}
+              title={Board.wait_reason_label(@card.wait_reason)}
+            >
+              {Board.wait_reason_label(@card.wait_reason)}
+            </span>
+          <% end %>
         <% end %>
       <% end %>
-    <% end %>
+    </div>
     """
   end
 
@@ -1386,7 +1451,111 @@ defmodule SvarmWeb.BoardLive do
 
   defp wait_chip_class(:ci_circuit), do: "badge-outline badge-error"
   defp wait_chip_class(:changes_requested), do: "badge-warning"
+  defp wait_chip_class(:agent_question), do: "badge-outline badge-warning"
   defp wait_chip_class(_), do: "badge-outline badge-warning"
+
+  defp answer_attrs_from_params(%{"confirmed" => confirmed} = params) do
+    %{confirmed: confirmed, value: params["value"]}
+  end
+
+  defp answer_attrs_from_params(%{"value" => value}), do: %{value: value}
+  defp answer_attrs_from_params(_), do: %{}
+
+  attr :task, :map, required: true
+  attr :question, :map, required: true
+
+  defp agent_question_panel(assigns) do
+    method = assigns.question["method"] || assigns.question[:method] || "input"
+    prompt = assigns.question["prompt"] || assigns.question[:prompt] || ""
+    options = question_options(assigns.question)
+
+    assigns =
+      assigns
+      |> assign(:method, method)
+      |> assign(:prompt, prompt)
+      |> assign(:options, options)
+
+    ~H"""
+    <div
+      id={"agent-question-#{@task.id}"}
+      class="rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-sm"
+    >
+      <p class="font-medium">Agent asked a question</p>
+      <p class="mt-0.5 opacity-90">{@prompt}</p>
+
+      <div class="mt-2 flex flex-wrap items-center gap-2">
+        <%= case @method do %>
+          <% "confirm" -> %>
+            <button
+              type="button"
+              phx-click="answer_agent_question"
+              phx-value-id={@task.id}
+              phx-value-confirmed="true"
+              class="btn btn-sm btn-primary"
+            >
+              Yes
+            </button>
+            <button
+              type="button"
+              phx-click="answer_agent_question"
+              phx-value-id={@task.id}
+              phx-value-confirmed="false"
+              class="btn btn-sm btn-outline"
+            >
+              No
+            </button>
+          <% "select" -> %>
+            <button
+              :for={{label, value} <- @options}
+              type="button"
+              phx-click="answer_agent_question"
+              phx-value-id={@task.id}
+              phx-value-value={value}
+              class="btn btn-sm btn-outline"
+            >
+              {label}
+            </button>
+          <% _ -> %>
+            <form phx-submit="answer_agent_question" class="flex flex-wrap items-center gap-2 w-full">
+              <input type="hidden" name="task_id" value={@task.id} />
+              <input
+                type="text"
+                name="value"
+                required
+                placeholder="Your answer"
+                class="input input-sm input-bordered min-w-[12rem] flex-1"
+              />
+              <button type="submit" class="btn btn-sm btn-primary">Send</button>
+            </form>
+        <% end %>
+
+        <button
+          type="button"
+          phx-click="cancel_agent_question"
+          phx-value-id={@task.id}
+          class="btn btn-ghost btn-sm"
+        >
+          Dismiss
+        </button>
+      </div>
+      <p class="mt-1 text-[11px] opacity-60">One question at a time. Dismiss continues the run.</p>
+    </div>
+    """
+  end
+
+  defp question_options(question) when is_map(question) do
+    case question["options"] || question[:options] do
+      list when is_list(list) -> Enum.map(list, &option_pair/1)
+      _ -> []
+    end
+  end
+
+  defp option_pair(%{"label" => label, "value" => value}),
+    do: {to_string(label), to_string(value)}
+
+  defp option_pair(%{label: label, value: value}), do: {to_string(label), to_string(value)}
+  defp option_pair(value) when is_binary(value), do: {value, value}
+  defp option_pair(value), do: {to_string(value), to_string(value)}
 
   defp review_badge(task) do
     case Board.wait_reason(task) do

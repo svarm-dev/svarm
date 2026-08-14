@@ -1,7 +1,7 @@
 defmodule SvarmWeb.BoardLiveTest do
   use SvarmWeb.LiveCase, async: false
 
-  alias Svarm.{Approval, Events, KanbanBridge, StreamEvent}
+  alias Svarm.{AgentQuestion, Approval, Events, KanbanBridge, StreamEvent}
 
   test "empty board shows first-value onboarding without column strip", %{conn: conn} do
     KanbanBridge.delete_all_tasks()
@@ -79,6 +79,104 @@ defmodule SvarmWeb.BoardLiveTest do
 
     updated = KanbanBridge.get_task(task.id)
     assert updated.status == "todo"
+  end
+
+  test "in_progress card shows Waiting for answer chip when a question is pending", %{
+    conn: conn
+  } do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Needs a human",
+        status: "in_progress",
+        assignee: "demo"
+      })
+
+    assert {:ok, _} =
+             KanbanBridge.put_pending_question(task.id, %{
+               prompt: "Which fixture?",
+               method: "confirm",
+               request_id: "q-chip"
+             })
+
+    {:ok, view, html} = live(conn, ~p"/board")
+    assert html =~ "Waiting for answer"
+    refute html =~ "Agent asked a question"
+
+    Events.broadcast_orchestrator_status(%{
+      running: 1,
+      running_ids: [task.id],
+      retry_ids: [],
+      running_started: %{task.id => System.monotonic_time(:millisecond)}
+    })
+
+    assert render(view) =~ "Waiting for answer"
+  end
+
+  test "selected task answer form injects via AgentQuestion", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Answer me",
+        status: "in_progress",
+        assignee: "demo"
+      })
+
+    assert {:ok, _} =
+             AgentQuestion.park(task.id, %{
+               "id" => "q-lv",
+               "method" => "confirm",
+               "message" => "Ship it?"
+             })
+
+    {:ok, view, html} = live(conn, ~p"/board?task=#{task.id}")
+    assert html =~ "Waiting for answer"
+    assert html =~ "Agent asked a question"
+    assert html =~ "Ship it?"
+
+    view
+    |> element("#agent-question-#{task.id} button[phx-value-confirmed=true]")
+    |> render_click()
+
+    assert_receive {:agent_question_reply, %{"id" => "q-lv", "confirmed" => true}}
+    assert render(view) =~ "Answer sent"
+  end
+
+  test "unauthorized answer mutation flashes like approve/reject", %{conn: conn} do
+    prev_auth = Application.get_env(:svarm, :approvals_auth)
+    Application.put_env(:svarm, :approvals_auth, %{username: "op", password: "secret"})
+
+    on_exit(fn ->
+      if prev_auth == nil,
+        do: Application.delete_env(:svarm, :approvals_auth),
+        else: Application.put_env(:svarm, :approvals_auth, prev_auth)
+    end)
+
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Auth answer",
+        status: "in_progress",
+        assignee: "demo"
+      })
+
+    assert {:ok, _} =
+             KanbanBridge.put_pending_question(task.id, %{
+               prompt: "Ship it?",
+               method: "confirm",
+               request_id: "q-auth"
+             })
+
+    {:ok, view, _html} = live(conn, ~p"/board?task=#{task.id}")
+
+    view
+    |> element("#agent-question-#{task.id} button[phx-value-confirmed=true]")
+    |> render_click()
+
+    assert render(view) =~ "Authentication required"
   end
 
   test "auth configured without credentials blocks approve", %{conn: conn} do

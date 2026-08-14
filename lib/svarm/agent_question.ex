@@ -120,6 +120,14 @@ defmodule Svarm.AgentQuestion do
     end
   end
 
+  @doc "Human-readable flash for `answer/2` / `cancel/1` errors."
+  @spec flash_error(error()) :: String.t()
+  def flash_error(:not_waiting), do: "No question is waiting on this task."
+  def flash_error(:no_runner), do: "The agent run is no longer waiting for an answer."
+  def flash_error(:invalid), do: "That answer does not match the question."
+  def flash_error(:not_found), do: "Task not found."
+  def flash_error(other), do: "Could not send answer (#{inspect(other)})."
+
   @doc """
   Drop durable wait + inbox registration without injecting.
 
