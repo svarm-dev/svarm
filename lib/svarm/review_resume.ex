@@ -12,6 +12,8 @@ defmodule Svarm.ReviewResume do
   `max_attempts` cap. See `Svarm.CiResume`.
   """
 
+  alias Svarm.Workflow.Env
+
   @type decision :: :noop | :record | :clear
   @type spawn_decision :: :noop | :resume | :circuit_open
 
@@ -44,7 +46,7 @@ defmodule Svarm.ReviewResume do
     wf = workflow_review(workflow_config)
 
     %{
-      enabled: env_bool("SVARM_REVIEW_RESUME_ENABLED", Map.get(wf, :enabled, false))
+      enabled: Env.env_bool("SVARM_REVIEW_RESUME_ENABLED", Map.get(wf, :enabled, false))
     }
   end
 
@@ -166,26 +168,7 @@ defmodule Svarm.ReviewResume do
   end
 
   defp parse_workflow_review(m) do
-    %{enabled: truthy?(Map.get(m, "enabled"))}
-    |> reject_nil()
-  end
-
-  defp env_bool(key, default) do
-    case System.get_env(key) do
-      nil -> default
-      "" -> default
-      v -> String.downcase(v) in ~w(1 true yes on)
-    end
-  end
-
-  defp truthy?(true), do: true
-  defp truthy?(false), do: false
-  defp truthy?("true"), do: true
-  defp truthy?("yes"), do: true
-  defp truthy?("1"), do: true
-  defp truthy?(_), do: false
-
-  defp reject_nil(map) do
-    Map.reject(map, fn {_k, v} -> is_nil(v) end)
+    %{enabled: Env.truthy?(Map.get(m, "enabled"))}
+    |> Env.reject_nil()
   end
 end
