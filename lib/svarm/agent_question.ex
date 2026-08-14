@@ -103,23 +103,15 @@ defmodule Svarm.AgentQuestion do
   @doc "Cancel a pending dialog (inject `cancelled: true` when a runner is live)."
   @spec cancel(String.t()) :: {:ok, :injected | :cleared} | {:error, error()}
   def cancel(task_id) when is_binary(task_id) do
-    case current_wait(task_id) do
-      {:ok, waiting} ->
-        case lookup_runner(task_id) do
-          {:ok, pid} ->
-            case build_response(waiting, %{}, cancelled: true) do
-              {:ok, body} ->
-                send(pid, {:agent_question_reply, body})
-                {:ok, :injected}
-
-              {:error, _} = err ->
-                err
-            end
-
-          {:error, :no_runner} ->
-            clear(task_id)
-            {:ok, :cleared}
-        end
+    with {:ok, waiting} <- current_wait(task_id),
+         {:ok, pid} <- lookup_runner(task_id),
+         {:ok, body} <- build_response(waiting, %{}, cancelled: true) do
+      send(pid, {:agent_question_reply, body})
+      {:ok, :injected}
+    else
+      {:error, :no_runner} ->
+        clear(task_id)
+        {:ok, :cleared}
 
       {:error, _} = err ->
         err
