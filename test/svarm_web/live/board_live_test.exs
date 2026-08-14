@@ -442,7 +442,7 @@ defmodule SvarmWeb.BoardLiveTest do
     render_click(view, "select_task", %{"id" => task.id})
     panel = render(view)
     assert panel =~ "Changes requested"
-    assert panel =~ "Detection only"
+    assert panel =~ "review-resume is enabled"
   end
 
   test "live review_decision PubSub flips the chip without a full refresh", %{conn: conn} do

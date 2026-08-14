@@ -1104,7 +1104,7 @@ defmodule SvarmWeb.BoardLive do
               </p>
               <p class="mt-0.5 opacity-80">
                 <%= if changes_requested? do %>
-                  A reviewer asked for changes on the PR. Detection only — no auto re-dispatch yet.
+                  A reviewer asked for changes on the PR. A follow-up run starts when review-resume is enabled; circuit shared with CI resume.
                 <% else %>
                   <%= if Board.pr_url(@task, @meta) do %>
                     Agent finished. Review the PR before merge, then mark done here.

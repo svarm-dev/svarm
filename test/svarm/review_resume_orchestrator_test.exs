@@ -73,6 +73,31 @@ defmodule Svarm.ReviewResumeOrchestratorTest do
     def post_run_summary(_config, _id, _summary), do: :ok
   end
 
+  # Simulates old GitHub bug: update_status("todo") leaves status as review
+  defmodule StickyReviewTracker do
+    def list_eligible(_config), do: {:ok, []}
+
+    def list_issues(_config, filters \\ []) do
+      issues = Application.get_env(:svarm, :review_resume_test_issues, %{}) |> Map.values()
+      status = Keyword.get(filters, :status)
+      issues = if status, do: Enum.filter(issues, &(&1.status == status)), else: issues
+      {:ok, issues}
+    end
+
+    def get_issue(_config, id) do
+      issues = Application.get_env(:svarm, :review_resume_test_issues, %{})
+
+      case Map.fetch(issues, id) do
+        {:ok, issue} -> {:ok, issue}
+        :error -> {:error, :not_found}
+      end
+    end
+
+    def update_status(_config, _id, _status), do: :ok
+    def update_attempts(_config, _id, _n), do: :ok
+    def post_run_summary(_config, _id, _summary), do: :ok
+  end
+
   setup do
     KanbanBridge.delete_all_tasks()
     Repo.delete_all(Coordination)
@@ -103,7 +128,8 @@ defmodule Svarm.ReviewResumeOrchestratorTest do
             active_states: ["todo", "in_progress"],
             terminal_states: ["done", "failed", "review"]
           },
-          ci_resume_caps: %{enabled: false, max_attempts: 3, skip_draft: true}
+          ci_resume_caps: %{enabled: false, max_attempts: 3, skip_draft: true},
+          review_resume_caps: %{enabled: false}
       }
     end)
 
@@ -359,5 +385,213 @@ defmodule Svarm.ReviewResumeOrchestratorTest do
            end)
 
     assert get_issue(live_id).status == "review"
+  end
+
+  defp enable_review_spawn(max_attempts \\ 3) do
+    :sys.replace_state(Orchestrator, fn state ->
+      %{
+        state
+        | review_resume_caps: %{enabled: true},
+          ci_resume_caps: %{enabled: false, max_attempts: max_attempts, skip_draft: true}
+      }
+    end)
+  end
+
+  defp put_changes_requested(sha) do
+    Application.put_env(
+      :svarm,
+      :review_resume_test_result,
+      {:ok,
+       %{
+         decision: :changes_requested,
+         head_sha: sha,
+         reviewer_logins: ["alice"],
+         summary: "Changes requested by alice",
+         draft: false,
+         review_count: 1
+       }}
+    )
+  end
+
+  test "enabled spawn reopens todo on first changes-requested and increments shared count" do
+    task_id = "review_spawn_1"
+    put_issue(task_id)
+    enable_review_spawn()
+
+    {:ok, _} =
+      Coordination.upsert(task_id, %{
+        pr_url: "https://github.com/o/r/pull/10",
+        pr_owner: "o",
+        pr_repo: "r",
+        pr_number: 10
+      })
+
+    put_changes_requested("sha_a")
+
+    :sys.replace_state(Orchestrator, fn state ->
+      %{state | completed: MapSet.put(state.completed, task_id)}
+    end)
+
+    send(Orchestrator, :tick)
+
+    assert wait_until(fn ->
+             match?(%{ci_resume_count: 1}, Coordination.get(task_id))
+           end)
+
+    coord = Coordination.get(task_id)
+    assert coord.ci_resume_count == 1
+    assert coord.review_decision == "changes_requested"
+    assert coord.review_last_head_sha == "sha_a"
+    assert coord.review_context_summary =~ "alice"
+    assert get_issue(task_id).status == "todo"
+
+    state = :sys.get_state(Orchestrator)
+    refute MapSet.member?(state.completed, task_id)
+    assert MapSet.member?(state.approved_once, task_id)
+  end
+
+  test "same episode SHA refresh records detection but does not increment again" do
+    task_id = "review_spawn_sha"
+    put_issue(task_id)
+    enable_review_spawn()
+
+    {:ok, _} =
+      Coordination.upsert(task_id, %{
+        pr_url: "https://github.com/o/r/pull/11",
+        pr_owner: "o",
+        pr_repo: "r",
+        pr_number: 11
+      })
+
+    put_changes_requested("sha_a")
+    send(Orchestrator, :tick)
+
+    assert wait_until(fn ->
+             match?(%{ci_resume_count: 1}, Coordination.get(task_id))
+           end)
+
+    # Agent finished — ticket is back in review; GitHub still CHANGES_REQUESTED on a new SHA.
+    put_issue(task_id, "review")
+    put_changes_requested("sha_b")
+    send(Orchestrator, :tick)
+    flush_orchestrator()
+
+    coord = Coordination.get(task_id)
+    assert coord.ci_resume_count == 1
+    assert coord.review_decision == "changes_requested"
+    assert coord.review_last_head_sha == "sha_b"
+    assert get_issue(task_id).status == "review"
+  end
+
+  test "clear then a new changes-requested starts a second resume episode" do
+    task_id = "review_spawn_episode"
+    put_issue(task_id)
+    enable_review_spawn()
+
+    {:ok, _} =
+      Coordination.upsert(task_id, %{
+        pr_url: "https://github.com/o/r/pull/12",
+        pr_owner: "o",
+        pr_repo: "r",
+        pr_number: 12
+      })
+
+    put_changes_requested("sha_a")
+    send(Orchestrator, :tick)
+
+    assert wait_until(fn ->
+             match?(%{ci_resume_count: 1}, Coordination.get(task_id))
+           end)
+
+    put_issue(task_id, "review")
+
+    Application.put_env(
+      :svarm,
+      :review_resume_test_result,
+      {:ok,
+       %{
+         decision: :none,
+         head_sha: "sha_a",
+         reviewer_logins: [],
+         summary: "no changes requested",
+         draft: false,
+         review_count: 1
+       }}
+    )
+
+    send(Orchestrator, :tick)
+
+    assert wait_until(fn ->
+             match?(%{review_decision: "none"}, Coordination.get(task_id))
+           end)
+
+    assert Coordination.get(task_id).ci_resume_count == 1
+    assert get_issue(task_id).status == "review"
+
+    put_changes_requested("sha_c")
+    send(Orchestrator, :tick)
+
+    assert wait_until(fn ->
+             match?(%{ci_resume_count: 2}, Coordination.get(task_id))
+           end)
+
+    assert get_issue(task_id).status == "todo"
+    assert Coordination.get(task_id).review_decision == "changes_requested"
+  end
+
+  test "shared circuit opens when resume count is already at the cap" do
+    task_id = "review_spawn_circuit"
+    put_issue(task_id)
+    enable_review_spawn(2)
+
+    {:ok, _} =
+      Coordination.upsert(task_id, %{
+        pr_url: "https://github.com/o/r/pull/13",
+        pr_owner: "o",
+        pr_repo: "r",
+        pr_number: 13,
+        ci_resume_count: 2
+      })
+
+    put_changes_requested("sha_new")
+    send(Orchestrator, :tick)
+
+    assert wait_until(fn ->
+             match?(%{ci_circuit_open: true}, Coordination.get(task_id))
+           end)
+
+    coord = Coordination.get(task_id)
+    assert coord.ci_circuit_open == true
+    assert coord.ci_resume_count == 2
+    assert coord.review_decision == "changes_requested"
+    assert get_issue(task_id).status == "review"
+  end
+
+  test "failed reopen does not increment the shared count" do
+    task_id = "review_spawn_sticky"
+    put_issue(task_id)
+    enable_review_spawn()
+
+    {:ok, _} =
+      Coordination.upsert(task_id, %{
+        pr_url: "https://github.com/o/r/pull/14",
+        pr_owner: "o",
+        pr_repo: "r",
+        pr_number: 14
+      })
+
+    put_changes_requested("sha_sticky")
+
+    :sys.replace_state(Orchestrator, fn state ->
+      %{state | tracker: StickyReviewTracker}
+    end)
+
+    send(Orchestrator, :tick)
+    flush_orchestrator()
+
+    coord = Coordination.get(task_id)
+    assert coord.ci_resume_count == 0
+    assert coord.review_decision == "changes_requested"
+    assert get_issue(task_id).status == "review"
   end
 end

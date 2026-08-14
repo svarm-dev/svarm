@@ -14,9 +14,10 @@ defmodule Svarm.Orchestrator do
   PRs in review and re-open for a fresh agent run with failure context until the
   circuit opens after N attempts. See `Svarm.CiResume`.
 
-  Review-resume detection: poll GitHub PR reviews for managed PRs in review and
-  record changes-requested state (board chip). No spawn — see `Svarm.ReviewResume`
-  and issue #113.
+  Review-resume: poll GitHub PR reviews for managed PRs in review and record
+  changes-requested state (board chip). When `review_resume.enabled`, the first
+  transition into changes-requested re-opens for a fresh run with review
+  context, sharing the CI resume circuit. See `Svarm.ReviewResume`.
 
   Reconcile now syncs running/claimed tasks against the tracker adapter (external
   terminal states stop workers). Workspace keys use issue source_id per §4.2.
@@ -89,6 +90,7 @@ defmodule Svarm.Orchestrator do
     approved_once: MapSet.new(),
     budget_caps: %{},
     ci_resume_caps: %{enabled: false, max_attempts: 3, skip_draft: true},
+    review_resume_caps: %{enabled: false},
     last_run_entries: %{},
     last_tick_mono_ms: nil
   ]
@@ -437,7 +439,8 @@ defmodule Svarm.Orchestrator do
       state
       | tracker_config: Settings.Resolve.tracker_overlay(base),
         budget_caps: Budget.load_caps(nil),
-        ci_resume_caps: CiResume.load_caps(nil)
+        ci_resume_caps: CiResume.load_caps(nil),
+        review_resume_caps: ReviewResume.load_caps(nil)
     }
   end
 
@@ -474,7 +477,8 @@ defmodule Svarm.Orchestrator do
         terminal_states: cfg.terminal_states,
         tracker_config: Settings.Resolve.tracker_overlay(cfg.tracker_config),
         budget_caps: Budget.load_caps(raw_config),
-        ci_resume_caps: CiResume.load_caps(raw_config)
+        ci_resume_caps: CiResume.load_caps(raw_config),
+        review_resume_caps: ReviewResume.load_caps(raw_config)
     }
   end
 
@@ -733,7 +737,7 @@ defmodule Svarm.Orchestrator do
   defp apply_ci_decision(state, coord, summary, _caps, :resume) do
     # Reopen first; only fingerprint after status is active so a failed
     # reopen cannot burn the head_sha (evaluate would forever :noop).
-    case reopen_for_ci_resume(state, coord.task_id) do
+    case reopen_for_resume(state, coord.task_id) do
       :ok ->
         commit_ci_resume(state, coord, summary)
 
@@ -774,7 +778,7 @@ defmodule Svarm.Orchestrator do
     end
   end
 
-  defp reopen_for_ci_resume(state, task_id) do
+  defp reopen_for_resume(state, task_id) do
     state.tracker.update_status(state.tracker_config, task_id, "todo")
 
     case safe_get_issue(state.tracker, state.tracker_config, task_id) do
@@ -842,7 +846,7 @@ defmodule Svarm.Orchestrator do
 
   defp maybe_store_conclusion(_coord, _summary), do: :ok
 
-  ## Review-resume detection (poll reviews → record state; no spawn)
+  ## Review-resume (poll reviews → record state; optional spawn)
 
   defp maybe_review_resume(state) do
     # Local tracker has no Reviews API. GitHub adapter (or test doubles) may run.
@@ -928,7 +932,11 @@ defmodule Svarm.Orchestrator do
            state.tracker_config
          ) do
       {:ok, summary} ->
-        apply_review_decision(state, coord, summary, ReviewResume.evaluate(coord, summary))
+        decision = ReviewResume.evaluate(coord, summary)
+
+        state
+        |> apply_review_decision(coord, summary, decision)
+        |> apply_review_spawn(coord, decision)
 
       {:error, reason} ->
         Logger.debug("review_resume reviews error for #{coord.task_id}: #{inspect(reason)}")
@@ -997,6 +1005,103 @@ defmodule Svarm.Orchestrator do
         state
     end
   end
+
+  defp apply_review_spawn(state, coord, detection) do
+    caps = %{
+      enabled: review_resume_enabled?(state),
+      max_attempts: ci_resume_max_attempts(state)
+    }
+
+    case ReviewResume.spawn_evaluate(coord, detection, caps) do
+      :noop ->
+        state
+
+      :resume ->
+        apply_review_resume(state, coord)
+
+      :circuit_open ->
+        apply_review_circuit(state, coord)
+    end
+  end
+
+  defp apply_review_resume(state, coord) do
+    case reopen_for_resume(state, coord.task_id) do
+      :ok ->
+        commit_review_resume(state, coord)
+
+      {:error, reason} ->
+        Logger.warning(
+          "review_resume: reopen failed for #{coord.task_id}: #{inspect(reason)} (not counting)"
+        )
+
+        state
+    end
+  end
+
+  defp commit_review_resume(state, coord) do
+    count = (coord.ci_resume_count || 0) + 1
+
+    case Coordination.upsert(coord.task_id, %{
+           ci_resume_count: count,
+           ci_circuit_open: false
+         }) do
+      {:ok, _} ->
+        Logger.info("review_resume: re-opened #{coord.task_id} (attempt #{count})")
+
+        Events.broadcast_task_updated(%{
+          id: coord.task_id,
+          status: "todo",
+          reason: :review_resume
+        })
+
+        %{
+          state
+          | completed: MapSet.delete(state.completed, coord.task_id),
+            approved_once: MapSet.put(state.approved_once, coord.task_id)
+        }
+
+      {:error, reason} ->
+        Logger.warning(
+          "review_resume: count upsert failed for #{coord.task_id}: #{inspect(reason)}"
+        )
+
+        state
+    end
+  end
+
+  defp apply_review_circuit(state, coord) do
+    case Coordination.upsert(coord.task_id, %{ci_circuit_open: true}) do
+      {:ok, _} ->
+        Logger.warning(
+          "review_resume: circuit open for #{coord.task_id} (shared resume retries exhausted)"
+        )
+
+        Events.broadcast_task_updated(%{
+          id: coord.task_id,
+          status: "review",
+          reason: :ci_circuit
+        })
+
+        broadcast_status(state)
+        state
+
+      {:error, reason} ->
+        Logger.warning(
+          "review_resume: circuit upsert failed for #{coord.task_id}: #{inspect(reason)}"
+        )
+
+        state
+    end
+  end
+
+  defp review_resume_enabled?(%{review_resume_caps: %{enabled: true}}), do: true
+  defp review_resume_enabled?(_), do: false
+
+  defp ci_resume_max_attempts(%{ci_resume_caps: %{max_attempts: n}})
+       when is_integer(n) and n > 0,
+       do: n
+
+  defp ci_resume_max_attempts(_), do: 3
 
   defp handle_run_exit(state, entry, task_id, result) do
     state =
@@ -1302,7 +1407,8 @@ defmodule Svarm.Orchestrator do
       last_tick_mono_ms: state.last_tick_mono_ms,
       budget_caps: state.budget_caps || %{},
       last_budget_block: state.last_budget_block,
-      ci_resume: state.ci_resume_caps || %{enabled: false}
+      ci_resume: state.ci_resume_caps || %{enabled: false},
+      review_resume: state.review_resume_caps || %{enabled: false}
     }
   end
 end

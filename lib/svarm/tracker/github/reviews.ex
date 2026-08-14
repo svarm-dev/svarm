@@ -2,8 +2,9 @@ defmodule Svarm.Tracker.GitHub.Reviews do
   @moduledoc """
   Poll GitHub pull-request reviews and classify the latest submitted state.
 
-  Signal path for review-resume detection (issue #112): poll on orchestrator
-  tick — not webhooks. Resume/re-dispatch is issue #113, not this module.
+  Signal path for review-resume detection: poll on orchestrator tick — not
+  webhooks. Spawn/re-dispatch lives in `Svarm.ReviewResume` / the orchestrator,
+  not this module.
 
   Classification (latest submitted review per user; PENDING/DISMISSED ignored):
   - any latest `CHANGES_REQUESTED` → `:changes_requested`

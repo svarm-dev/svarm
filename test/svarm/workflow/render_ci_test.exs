@@ -30,4 +30,23 @@ defmodule Svarm.Workflow.RenderCiTest do
 
     refute prompt =~ "CI feedback"
   end
+
+  test "render_prompt appends review_context_summary when present" do
+    task_id = "render_review_1"
+
+    {:ok, _} =
+      Coordination.upsert(task_id, %{
+        review_context_summary: "## Review feedback (changes requested)\n\nPlease fix the test"
+      })
+
+    assert {:ok, prompt} =
+             Render.render_prompt(%{id: task_id, title: "T", body: "B", status: "todo"}, nil)
+
+    assert prompt =~ "Review feedback"
+    assert prompt =~ "Please fix the test"
+  end
+
+  test "render_prompt accepts {{review_feedback}} placeholder" do
+    assert Render.validate("hello {{review_feedback}}") == :ok
+  end
 end

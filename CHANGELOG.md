@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Review-resume re-dispatch** ([#113](https://github.com/svarm-dev/svarm/issues/113)): when enabled, the first GitHub changes-requested transition re-opens the ticket for a fresh agent run with review context; later SHA refreshes in the same episode stay detect-only. Shares `ci_resume_count` / `ci_circuit_open` and the CI resume `max_attempts` cap. Default **off** (`review_resume.enabled` / `SVARM_REVIEW_RESUME_ENABLED`). Detection stays always-on for GitHub.
+
 ## [0.1.4] - 2026-08-14
 
 Run console & CI resume. Optional CI-fail re-dispatch (default **off**). Review-resume is **detect-only** — no auto spawn (#113). No breaking env-inheritance change (that was 0.1.3).
