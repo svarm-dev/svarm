@@ -419,6 +419,18 @@ defmodule Svarm.Board do
         t
       end
     end)
+    |> merge_coord_wait(c)
+  end
+
+  # Local cards already carry wait fields from the task row. GitHub cards
+  # have no kanban row — overlay Coordination so the board can show the wait.
+  defp merge_coord_wait(task, coord) do
+    pending = Map.get(task, :pending_question) || coord.pending_question
+    wait = Map.get(task, :wait_reason) || coord.wait_reason
+
+    task
+    |> Map.put(:wait_reason, wait)
+    |> Map.put(:pending_question, pending)
   end
 
   defp column_rank("todo"), do: 0

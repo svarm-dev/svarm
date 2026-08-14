@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fake pi --mode rpc peer for unit tests (no network).
-# Modes via FAKE_PI_MODE: happy | secrets | hang | crash | ui | malformed | protocol
+# Modes via FAKE_PI_MODE: happy | secrets | hang | crash | ui | notify | malformed | protocol
 # Optional FAKE_PI_PIDFILE: write $$ after prompt so tests can assert death.
 set -euo pipefail
 
@@ -65,10 +65,39 @@ case "$mode" in
     exit 1
     ;;
   ui)
-    printf '%s\n' '{"type":"extension_ui_request","id":"ui-1","requestType":"confirm","message":"proceed?"}'
-    while true; do
-      sleep 1
+    printf '%s\n' '{"type":"extension_ui_request","id":"ui-1","method":"confirm","message":"proceed?"}'
+    while IFS= read -r line; do
+      case "$line" in
+        *'"type":"extension_ui_response"'*|*'"type": "extension_ui_response"'*)
+          printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"got answer\n"}}'
+          printf '%s\n' '{"type":"agent_settled"}'
+          exit 0
+          ;;
+        *'"type":"abort"'*|*'"type": "abort"'*)
+          printf '%s\n' '{"type":"agent_settled"}'
+          exit 0
+          ;;
+      esac
     done
+    exit 0
+    ;;
+  notify)
+    printf '%s\n' '{"type":"extension_ui_request","id":"n-1","method":"notify","message":"heads up"}'
+    printf '%s\n' '{"type":"agent_settled"}'
+    exit 0
+    ;;
+  ui_invalid)
+    # Dialog without id — park must fail-fast, not hang on a response.
+    printf '%s\n' '{"type":"extension_ui_request","method":"confirm","message":"proceed?"}'
+    while IFS= read -r line; do
+      case "$line" in
+        *'"type":"abort"'*|*'"type": "abort"'*)
+          printf '%s\n' '{"type":"agent_settled"}'
+          exit 0
+          ;;
+      esac
+    done
+    exit 0
     ;;
   malformed)
     printf '%s\n' 'NOT JSON AT ALL'

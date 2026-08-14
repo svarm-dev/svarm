@@ -1,7 +1,7 @@
 defmodule Svarm.Runner.PiRPCTest do
   use ExUnit.Case, async: false
 
-  alias Svarm.{Events, Issue}
+  alias Svarm.{AgentQuestion, Events, Issue, KanbanBridge}
   alias Svarm.Runner.PiRPC
 
   @fake Path.expand("../../support/fake_pi_rpc.sh", __DIR__)
@@ -63,7 +63,8 @@ defmodule Svarm.Runner.PiRPCTest do
       run_id: "run_test_#{System.unique_integer([:positive])}",
       timeout_ms: Keyword.get(extra, :timeout_ms, 5_000),
       abort_grace_ms: Keyword.get(extra, :abort_grace_ms, 500),
-      settle_grace_ms: Keyword.get(extra, :settle_grace_ms, 500)
+      settle_grace_ms: Keyword.get(extra, :settle_grace_ms, 500),
+      question_timeout_ms: Keyword.get(extra, :question_timeout_ms, 15_000)
     ]
   end
 
@@ -201,24 +202,100 @@ defmodule Svarm.Runner.PiRPCTest do
     assert_agent_line("sva_crash", "process exited 1")
   end
 
-  test "extension_ui_request fails fast (no hang) + board line", %{
+  test "extension_ui_request parks, answer injects, run continues to review", %{
     workspace_root: root,
     statuses: statuses
   } do
-    t0 = System.monotonic_time(:millisecond)
+    kb = KanbanBridge.create_task(%{title: "ui ask", status: "in_progress", assignee: "demo"})
+    id = kb.id
 
+    runner =
+      Task.async(fn ->
+        PiRPC.run(task(id), agent_config("ui"), run_opts(root, statuses))
+      end)
+
+    assert_agent_line(id, "waiting for answer")
+    assert_pending_question(id, "proceed?")
+
+    assert {:ok, :injected} = AgentQuestion.answer(id, %{confirmed: true})
+    assert :ok = Task.await(runner, 5_000)
+    assert last_status(statuses, id) == "review"
+    assert KanbanBridge.get_task(id).pending_question == nil
+    assert_agent_line(id, "got answer")
+  end
+
+  test "question wait deadline sends cancelled and continues", %{
+    workspace_root: root,
+    statuses: statuses
+  } do
+    kb = KanbanBridge.create_task(%{title: "ui timeout", status: "in_progress", assignee: "demo"})
+    id = kb.id
+
+    runner =
+      Task.async(fn ->
+        PiRPC.run(
+          task(id),
+          agent_config("ui"),
+          run_opts(root, statuses, question_timeout_ms: 200, timeout_ms: 5_000)
+        )
+      end)
+
+    assert_agent_line(id, "waiting for answer")
+    assert_agent_line(id, "question timed out, continuing")
+    assert :ok = Task.await(runner, 5_000)
+    assert last_status(statuses, id) == "review"
+    assert KanbanBridge.get_task(id).pending_question == nil
+  end
+
+  test "abort clears wait; answer without runner is :no_runner", %{
+    workspace_root: root,
+    statuses: statuses
+  } do
+    kb = KanbanBridge.create_task(%{title: "ui abort", status: "in_progress", assignee: "demo"})
+    id = kb.id
+
+    {:ok, runner} =
+      Task.start(fn ->
+        PiRPC.run(
+          task(id),
+          agent_config("ui"),
+          run_opts(root, statuses, timeout_ms: 30_000, question_timeout_ms: 30_000)
+        )
+      end)
+
+    assert_agent_line(id, "waiting for answer")
+    assert_pending_question(id, "proceed?")
+
+    Process.exit(runner, :stall)
+    assert_wait_cleared(id)
+
+    # Abort clears durable wait; a leftover persist without a runner is :no_runner
+    # (covered in AgentQuestionTest). After clear, answer is :not_waiting.
+    assert {:error, :not_waiting} = AgentQuestion.answer(id, %{confirmed: true})
+  end
+
+  test "invalid dialog UI fails the run instead of stalling", %{
+    workspace_root: root,
+    statuses: statuses
+  } do
     assert {:error, {:pi, :ui_request}} =
              PiRPC.run(
-               task("sva_ui"),
-               agent_config("ui"),
-               run_opts(root, statuses, timeout_ms: 5_000)
+               task("sva_ui_invalid"),
+               agent_config("ui_invalid"),
+               run_opts(root, statuses, timeout_ms: 30_000)
              )
 
-    elapsed = System.monotonic_time(:millisecond) - t0
-    assert elapsed < 2_000, "UI fail-fast took #{elapsed}ms (expected << timeout)"
+    assert last_status(statuses, "sva_ui_invalid") == "failed"
+    assert_agent_line("sva_ui_invalid", "invalid UI request")
+  end
 
-    assert last_status(statuses, "sva_ui") == "failed"
-    assert_agent_line("sva_ui", "unsupported UI request")
+  test "fire-and-forget UI does not fail the run", %{
+    workspace_root: root,
+    statuses: statuses
+  } do
+    assert :ok = PiRPC.run(task("sva_notify"), agent_config("notify"), run_opts(root, statuses))
+    assert last_status(statuses, "sva_notify") == "review"
+    assert_agent_line("sva_notify", "UI notify (no response)")
   end
 
   test "protocol response success:false → failed + board line", %{
@@ -252,6 +329,50 @@ defmodule Svarm.Runner.PiRPCTest do
 
     assert last_status(statuses, "sva_missing") == "failed"
     assert_agent_line("sva_missing", "pi not found on PATH")
+  end
+
+  defp assert_pending_question(id, prompt, timeout_ms \\ 2_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+
+    Stream.repeatedly(fn ->
+      q = KanbanBridge.get_task(id).pending_question
+      Process.sleep(20)
+      q
+    end)
+    |> Enum.reduce_while(nil, fn q, _ ->
+      cond do
+        match?(%{"prompt" => ^prompt}, q) ->
+          {:halt, q}
+
+        System.monotonic_time(:millisecond) >= deadline ->
+          flunk("pending_question for #{id} never matched #{inspect(prompt)}")
+
+        true ->
+          {:cont, nil}
+      end
+    end)
+  end
+
+  defp assert_wait_cleared(id, timeout_ms \\ 2_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+
+    Stream.repeatedly(fn ->
+      q = KanbanBridge.get_task(id).pending_question
+      Process.sleep(20)
+      q
+    end)
+    |> Enum.reduce_while(true, fn q, _ ->
+      cond do
+        is_nil(q) ->
+          {:halt, :ok}
+
+        System.monotonic_time(:millisecond) >= deadline ->
+          flunk("pending_question for #{id} still set: #{inspect(q)}")
+
+        true ->
+          {:cont, true}
+      end
+    end)
   end
 
   defp list_fake_pids do

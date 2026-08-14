@@ -50,6 +50,25 @@ defmodule Svarm.CoordinationTest do
     assert row2.pr_number == 12
   end
 
+  test "upsert stores mid-run wait fields" do
+    payload = %{"prompt" => "Which one?", "method" => "confirm", "request_id" => "q"}
+
+    assert {:ok, row} =
+             Coordination.upsert("task_wait", %{
+               wait_reason: "agent_question",
+               pending_question: payload
+             })
+
+    assert row.wait_reason == "agent_question"
+    assert row.pending_question["prompt"] == "Which one?"
+
+    assert {:ok, cleared} =
+             Coordination.upsert("task_wait", %{wait_reason: nil, pending_question: nil})
+
+    assert cleared.wait_reason == nil
+    assert cleared.pending_question == nil
+  end
+
   test "record_pr from URL fills owner/repo/number" do
     assert {:ok, row} =
              Coordination.record_pr("task_pr", "https://github.com/acme/app/pull/99")

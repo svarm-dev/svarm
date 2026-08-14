@@ -15,7 +15,12 @@ defmodule Svarm.Runner.PiRPC do
     - `agent_settled` event (clean completion; then short grace for exit)
     - Port `exit_status` without settle (error if non-zero / unsettled)
     - wall-clock timeout → send `abort`, wait grace, then force-kill the OS tree
-    - `extension_ui_request` → fail immediately (no mid-run Q&A yet)
+    - `extension_ui_request` dialog (`select` / `confirm` / `input` / `editor`)
+      → park via `Svarm.AgentQuestion`, wait for a board answer (or cancel /
+      deadline), then write `extension_ui_response` and continue. Invalid
+      dialog (missing id/prompt) fails the run — same as pre-Q&A fail-fast.
+    - fire-and-forget UI (`notify`, `setStatus`, `setWidget`, `setTitle`,
+      `set_editor_text`) → log a short line and continue (no response)
     - `response` with `success: false` → fail (protocol / rejected command)
 
   `agent_end` fires per-run but does NOT end the session — pi may
@@ -41,7 +46,7 @@ defmodule Svarm.Runner.PiRPC do
 
   alias Svarm.Runner.LogFormat
 
-  alias Svarm.{Events, StreamEvent, Tracker, Workspace}
+  alias Svarm.{AgentQuestion, Events, StreamEvent, Tracker, Workspace}
 
   # 45 min wall-clock — long enough for real coding agents; keep ≤ orchestrator stall.
   @default_timeout_ms 45 * 60_000
@@ -138,6 +143,7 @@ defmodule Svarm.Runner.PiRPC do
     abort_grace_ms = Keyword.get(opts, :abort_grace_ms, @default_abort_grace_ms)
     settle_grace_ms = Keyword.get(opts, :settle_grace_ms, @default_settle_grace_ms)
     executable = resolve_executable(opts, agent_config)
+    watch_clear(task.id)
 
     case start_port(executable, build_args(agent_config, injected), workspace_path, env) do
       {:ok, port} ->
@@ -155,29 +161,34 @@ defmodule Svarm.Runner.PiRPC do
           settled: false,
           reason: nil,
           exit_status: nil,
-          tool_stdout_streamed: false
+          tool_stdout_streamed: false,
+          waiting_ui: nil,
+          question_timeout_ms: Keyword.get(opts, :question_timeout_ms, AgentQuestion.timeout_ms())
         }
 
         deadline = System.monotonic_time(:millisecond) + timeout_ms
 
-        {log, usage, session} =
-          drain_events(
-            port,
-            task.id,
-            "",
-            %{},
-            session0,
-            "",
-            deadline,
-            %{abort_grace_ms: abort_grace_ms, settle_grace_ms: settle_grace_ms}
-          )
+        try do
+          {log, usage, session} =
+            drain_events(
+              port,
+              task.id,
+              "",
+              %{},
+              session0,
+              "",
+              deadline,
+              %{abort_grace_ms: abort_grace_ms, settle_grace_ms: settle_grace_ms}
+            )
 
-        ensure_dead(port)
+          Svarm.Runner.write_run_log(log_path, log)
+          record_usage(task, agent_config, usage, opts)
 
-        Svarm.Runner.write_run_log(log_path, log)
-        record_usage(task, agent_config, usage, opts)
-
-        finish(task, tracker, tracker_config, session)
+          finish(task, tracker, tracker_config, session)
+        after
+          AgentQuestion.clear(task.id)
+          ensure_dead(port)
+        end
 
       {:error, reason} ->
         Logger.error("pi_rpc: #{inspect(reason)}")
@@ -188,7 +199,22 @@ defmodule Svarm.Runner.PiRPC do
     end
   end
 
+  # Exit signals (orchestrator stall) skip try/after. A monitor still clears
+  # the parked question so a dead worker cannot leave a stuck board chip.
+  defp watch_clear(task_id) when is_binary(task_id) do
+    worker = self()
+
+    spawn(fn ->
+      Process.monitor(worker)
+
+      receive do
+        {:DOWN, _ref, :process, ^worker, _reason} -> AgentQuestion.clear(task_id)
+      end
+    end)
+  end
+
   defp finish(task, tracker, tracker_config, session) do
+    AgentQuestion.clear(task.id)
     exit_code = if session.error, do: 1, else: 0
     # Success → review (human PR gate). Agents never mark done/merge.
     status = if session.error, do: "failed", else: "review"
@@ -307,20 +333,80 @@ defmodule Svarm.Runner.PiRPC do
 
       {^port, {:exit_status, status}} ->
         handle_exit(task_id, log, usage, session, status)
+
+      {:agent_question_reply, payload} when is_map(payload) ->
+        send_json(port, payload)
+        AgentQuestion.clear(task_id)
+
+        drain_events(
+          port,
+          task_id,
+          log,
+          usage,
+          %{session | waiting_ui: nil},
+          buffer,
+          deadline,
+          grace
+        )
     after
-      remaining_ms(deadline) ->
-        send_json(port, %{id: "abort-1", type: "abort"})
-        Events.broadcast_agent_line(task_id, "\n[pi_rpc: timeout, aborting]\n")
+      remaining_ms(effective_deadline(deadline, session)) ->
+        now = System.monotonic_time(:millisecond)
+        waiting = session[:waiting_ui]
 
-        session = %{session | error: true, reason: session.reason || :timeout}
-        abort_deadline = System.monotonic_time(:millisecond) + grace.abort_grace_ms
+        if is_map(waiting) and now >= waiting.deadline_ms do
+          send_json(port, %{
+            type: "extension_ui_response",
+            id: waiting.request_id,
+            cancelled: true
+          })
 
-        {log, usage, session, _buffer} =
-          wait_abort(port, task_id, log, usage, session, buffer, abort_deadline)
+          AgentQuestion.clear(task_id)
+          Events.broadcast_agent_line(task_id, "\n[pi_rpc: question timed out, continuing]\n")
 
-        {log, usage, %{session | settled: true}}
+          drain_events(
+            port,
+            task_id,
+            log,
+            usage,
+            %{session | waiting_ui: nil},
+            buffer,
+            deadline,
+            grace
+          )
+        else
+          maybe_cancel_waiting(port, session)
+          AgentQuestion.clear(task_id)
+          send_json(port, %{id: "abort-1", type: "abort"})
+          Events.broadcast_agent_line(task_id, "\n[pi_rpc: timeout, aborting]\n")
+
+          session = %{
+            session
+            | error: true,
+              reason: session.reason || :timeout,
+              waiting_ui: nil
+          }
+
+          abort_deadline = System.monotonic_time(:millisecond) + grace.abort_grace_ms
+
+          {log, usage, session, _buffer} =
+            wait_abort(port, task_id, log, usage, session, buffer, abort_deadline)
+
+          {log, usage, %{session | settled: true}}
+        end
     end
   end
+
+  defp effective_deadline(run_deadline, %{waiting_ui: %{deadline_ms: wd}}) when is_integer(wd) do
+    min(run_deadline, wd)
+  end
+
+  defp effective_deadline(run_deadline, _), do: run_deadline
+
+  defp maybe_cancel_waiting(port, %{waiting_ui: %{request_id: id}}) when is_binary(id) do
+    send_json(port, %{type: "extension_ui_response", id: id, cancelled: true})
+  end
+
+  defp maybe_cancel_waiting(_port, _), do: :ok
 
   defp drain_after_settle(port, task_id, log, usage, session, buffer, deadline) do
     receive do
@@ -440,14 +526,14 @@ defmodule Svarm.Runner.PiRPC do
   end
 
   defp handle_event(%{"type" => "extension_ui_request"} = event, task_id, log, usage, session) do
-    kind = event["requestType"] || event["request_type"] || "unknown"
+    method = ui_method(event)
 
-    Events.broadcast_agent_line(
-      task_id,
-      "\n[pi_rpc: unsupported UI request (#{kind}) — failing run]\n"
-    )
-
-    {log, usage, %{session | error: true, settled: true, reason: :ui_request}}
+    if AgentQuestion.dialog_method?(method) do
+      park_dialog(event, method, task_id, log, usage, session)
+    else
+      Events.broadcast_agent_line(task_id, "\n[pi_rpc: UI #{method} (no response)]\n")
+      {log, usage, session}
+    end
   end
 
   defp handle_event(%{"type" => "agent_end"} = event, task_id, log, usage, session) do
@@ -577,6 +663,39 @@ defmodule Svarm.Runner.PiRPC do
   end
 
   defp handle_event(_other, _task_id, log, usage, session), do: {log, usage, session}
+
+  defp park_dialog(event, method, task_id, log, usage, session) do
+    cap = session[:question_timeout_ms] || AgentQuestion.timeout_ms()
+
+    case AgentQuestion.park(task_id, event, question_timeout_ms: cap) do
+      {:ok, deadline_ms} ->
+        Events.broadcast_agent_line(task_id, "\n[pi_rpc: waiting for answer (#{method})]\n")
+
+        waiting = %{
+          request_id: event["id"] || get_in(event, ["params", "id"]),
+          method: method,
+          deadline_ms: deadline_ms
+        }
+
+        {log, usage, %{session | waiting_ui: waiting}}
+
+      {:error, :invalid} ->
+        Events.broadcast_agent_line(
+          task_id,
+          "\n[pi_rpc: invalid UI request (#{method}) — failing run]\n"
+        )
+
+        {log, usage, %{session | error: true, settled: true, reason: :ui_request}}
+    end
+  end
+
+  defp ui_method(event) when is_map(event) do
+    event["method"] ||
+      event["requestType"] ||
+      event["request_type"] ||
+      get_in(event, ["params", "method"]) ||
+      "unknown"
+  end
 
   # -- helpers --
 

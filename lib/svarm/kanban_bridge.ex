@@ -64,7 +64,8 @@ defmodule Svarm.KanbanBridge do
 
   Sets `wait_reason` to `"agent_question"` and stores `pending_question`.
   `attrs` must include a non-empty `prompt` (atom or string key). Optional
-  `request_id` and `asked_at` are kept. Survives board refresh and restart.
+  `request_id`, `asked_at`, `method`, and `options` (select) are kept.
+  Survives board refresh and restart.
   """
   @spec put_pending_question(String.t(), map()) :: {:ok, map()} | {:error, :not_found | :invalid}
   def put_pending_question(id, attrs) when is_binary(id) and is_map(attrs) do
@@ -246,7 +247,9 @@ defmodule Svarm.KanbanBridge do
         %{
           "reason" => "agent_question",
           "prompt" => prompt,
-          "request_id" => map_get(attrs, :request_id),
+          "request_id" => stringify_optional(map_get(attrs, :request_id)),
+          "method" => stringify_optional(map_get(attrs, :method)),
+          "options" => normalize_options(map_get(attrs, :options)),
           "asked_at" => map_get(attrs, :asked_at) || System.system_time(:second)
         }
         |> Map.reject(fn {_k, v} -> is_nil(v) or v == "" end)
@@ -260,4 +263,31 @@ defmodule Svarm.KanbanBridge do
   defp map_get(map, key) when is_map(map) do
     Map.get(map, key) || Map.get(map, Atom.to_string(key))
   end
+
+  defp stringify_optional(nil), do: nil
+  defp stringify_optional(value) when is_binary(value), do: value
+  defp stringify_optional(value), do: to_string(value)
+
+  defp normalize_options(nil), do: nil
+
+  defp normalize_options(options) when is_list(options) do
+    Enum.map(options, fn
+      option when is_binary(option) ->
+        option
+
+      %{"label" => label, "value" => value} ->
+        %{"label" => to_string(label), "value" => to_string(value)}
+
+      %{label: label, value: value} ->
+        %{"label" => to_string(label), "value" => to_string(value)}
+
+      option when is_atom(option) ->
+        Atom.to_string(option)
+
+      option ->
+        to_string(option)
+    end)
+  end
+
+  defp normalize_options(_), do: nil
 end

@@ -552,9 +552,13 @@ defmodule SvarmWeb.BoardLive do
   end
 
   # Marker already persisted once in Events.broadcast_task_updated/1.
-  defp maybe_append_status_marker(socket, %{id: id, status: status}) do
+  # Status-less payloads (wait-field clears) must not crash or log a line.
+  defp maybe_append_status_marker(socket, %{id: id, status: status})
+       when is_binary(id) and is_binary(status) do
     append_display_log(socket, id, "[board] status → #{status}\n")
   end
+
+  defp maybe_append_status_marker(socket, _), do: socket
 
   defp append_stream_event(socket, task_id, %{kind: :tool_end, payload: payload} = event) do
     case StreamEvent.to_text(event) do

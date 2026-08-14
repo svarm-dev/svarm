@@ -1,7 +1,7 @@
 defmodule Svarm.BoardWaitReasonTest do
   use ExUnit.Case, async: false
 
-  alias Svarm.{Board, Coordination, Repo}
+  alias Svarm.{Board, Coordination, KanbanBridge, Repo}
 
   setup do
     Repo.delete_all(Coordination)
@@ -55,6 +55,21 @@ defmodule Svarm.BoardWaitReasonTest do
 
     assert Board.pending_question(%{pending_question: %{"prompt" => "Which file?"}}) ==
              %{"prompt" => "Which file?"}
+  end
+
+  test "attach_coordination overlays wait fields from coordination" do
+    task =
+      KanbanBridge.create_task(%{title: "github-shaped", status: "in_progress", assignee: "demo"})
+
+    {:ok, _} =
+      Coordination.upsert(task.id, %{
+        wait_reason: "agent_question",
+        pending_question: %{"prompt" => "from coord", "request_id" => "c1"}
+      })
+
+    found = Board.get_task(task.id)
+    assert found.pending_question["prompt"] == "from coord"
+    assert Board.wait_reason(found) == :agent_question
   end
 
   test "pr_url prefers coordination row" do
