@@ -141,7 +141,18 @@ defmodule SvarmWeb.BoardLiveTest do
     |> render_click()
 
     assert_receive {:agent_question_reply, %{"id" => "q-lv", "confirmed" => true}}
-    assert render(view) =~ "Answer sent"
+    html = render(view)
+    assert html =~ "Answer sent"
+    refute html =~ "Agent asked a question"
+
+    render_click(view, "answer_agent_question", %{
+      "id" => task.id,
+      "confirmed" => "false",
+      "request_id" => "q-lv"
+    })
+
+    assert render(view) =~ "No question is waiting"
+    refute_received {:agent_question_reply, _}
   end
 
   test "unauthorized answer mutation flashes like approve/reject", %{conn: conn} do

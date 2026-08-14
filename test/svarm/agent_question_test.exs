@@ -132,10 +132,43 @@ defmodule Svarm.AgentQuestionTest do
 
     assert_receive :ready, 1_000
     assert {:ok, :injected} = AgentQuestion.answer(task.id, %{value: "Ada"})
+    assert KanbanBridge.get_task(task.id).pending_question == nil
+    assert Coordination.get(task.id).pending_question == nil
+    assert {:error, :not_waiting} = AgentQuestion.answer(task.id, %{value: "Bob"})
 
     assert_receive {:got,
                     %{"type" => "extension_ui_response", "id" => "q-inj", "value" => "Ada"}},
                    1_000
+  end
+
+  test "answer/2 with a stale request_id does not inject a later dialog" do
+    task = KanbanBridge.create_task(%{title: "stale", status: "in_progress", assignee: "demo"})
+    parent = self()
+
+    spawn(fn ->
+      {:ok, _} =
+        AgentQuestion.park(task.id, %{
+          "id" => "q-new",
+          "method" => "input",
+          "message" => "Later?"
+        })
+
+      send(parent, :ready)
+
+      receive do
+        {:agent_question_reply, payload} -> send(parent, {:got, payload})
+      after
+        2_000 -> send(parent, :timeout)
+      end
+    end)
+
+    assert_receive :ready, 1_000
+
+    assert {:error, :invalid} =
+             AgentQuestion.answer(task.id, %{value: "nope", request_id: "q-old"})
+
+    assert KanbanBridge.get_task(task.id).pending_question["request_id"] == "q-new"
+    refute_received {:got, _}
   end
 
   test "park/3 without a request id is :invalid and does not persist" do

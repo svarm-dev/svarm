@@ -89,13 +89,18 @@ defmodule Svarm.AgentQuestion do
   Inject a human answer into the waiting PiRPC worker.
 
   `attrs` must include `value` (select/input/editor) or `confirmed` (confirm).
+  Optional `request_id` must match the parked question when present.
+  Clears durable wait after inject so a second click cannot target this
+  dialog or a later one.
   """
   @spec answer(String.t(), answer_attrs()) :: {:ok, :injected} | {:error, error()}
   def answer(task_id, attrs) when is_binary(task_id) and is_map(attrs) do
     with {:ok, waiting} <- current_wait(task_id),
+         :ok <- match_request(waiting, attrs),
          {:ok, pid} <- lookup_runner(task_id),
          {:ok, body} <- build_response(waiting, attrs, cancelled: false) do
       send(pid, {:agent_question_reply, body})
+      clear(task_id)
       {:ok, :injected}
     end
   end
@@ -107,6 +112,7 @@ defmodule Svarm.AgentQuestion do
          {:ok, pid} <- lookup_runner(task_id),
          {:ok, body} <- build_response(waiting, %{}, cancelled: true) do
       send(pid, {:agent_question_reply, body})
+      clear(task_id)
       {:ok, :injected}
     else
       {:error, :no_runner} ->
@@ -320,6 +326,16 @@ defmodule Svarm.AgentQuestion do
 
   defp request_id(waiting), do: map_get(waiting, :request_id) || map_get(waiting, :id)
   defp method(waiting), do: map_get(waiting, :method) || "input"
+
+  defp match_request(waiting, attrs) do
+    given = map_get(attrs, :request_id)
+
+    cond do
+      not present?(given) -> :ok
+      given == request_id(waiting) -> :ok
+      true -> {:error, :invalid}
+    end
+  end
 
   defp value(attrs) do
     case map_get(attrs, :value) do

@@ -1458,12 +1458,13 @@ defmodule SvarmWeb.BoardLive do
   defp wait_chip_class(:agent_question), do: "badge-outline badge-warning"
   defp wait_chip_class(_), do: "badge-outline badge-warning"
 
-  defp answer_attrs_from_params(%{"confirmed" => confirmed} = params) do
-    %{confirmed: confirmed, value: params["value"]}
+  defp answer_attrs_from_params(params) when is_map(params) do
+    %{
+      confirmed: params["confirmed"],
+      value: params["value"],
+      request_id: params["request_id"]
+    }
   end
-
-  defp answer_attrs_from_params(%{"value" => value}), do: %{value: value}
-  defp answer_attrs_from_params(_), do: %{}
 
   attr :task, :map, required: true
   attr :question, :map, required: true
@@ -1472,12 +1473,14 @@ defmodule SvarmWeb.BoardLive do
     question = string_key_map(assigns.question)
     method = question["method"] || "input"
     prompt = question["prompt"] || ""
+    request_id = question["request_id"] || question["id"] || ""
     options = question_options(question)
 
     assigns =
       assigns
       |> assign(:method, method)
       |> assign(:prompt, prompt)
+      |> assign(:request_id, request_id)
       |> assign(:options, options)
 
     ~H"""
@@ -1495,6 +1498,7 @@ defmodule SvarmWeb.BoardLive do
               type="button"
               phx-click="answer_agent_question"
               phx-value-id={@task.id}
+              phx-value-request_id={@request_id}
               phx-value-confirmed="true"
               class="btn btn-sm btn-primary"
             >
@@ -1504,6 +1508,7 @@ defmodule SvarmWeb.BoardLive do
               type="button"
               phx-click="answer_agent_question"
               phx-value-id={@task.id}
+              phx-value-request_id={@request_id}
               phx-value-confirmed="false"
               class="btn btn-sm btn-outline"
             >
@@ -1515,6 +1520,7 @@ defmodule SvarmWeb.BoardLive do
               type="button"
               phx-click="answer_agent_question"
               phx-value-id={@task.id}
+              phx-value-request_id={@request_id}
               phx-value-value={value}
               class="btn btn-sm btn-outline"
             >
@@ -1523,6 +1529,7 @@ defmodule SvarmWeb.BoardLive do
           <% _ -> %>
             <form phx-submit="answer_agent_question" class="flex flex-wrap items-center gap-2 w-full">
               <input type="hidden" name="task_id" value={@task.id} />
+              <input type="hidden" name="request_id" value={@request_id} />
               <input
                 type="text"
                 name="value"
