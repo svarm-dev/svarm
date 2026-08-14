@@ -7,11 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Post-0.1.3 on `main` (not yet tagged): run console, optional CI resume, trust/perf hardening. Tagged release remains **v0.1.3**.
+### Fixed
+
+- **Compact terminal run console** ([#130](https://github.com/svarm-dev/svarm/issues/130)): collapse repeated projection whitespace and render typed output as dense terminal rows instead of separate padded cards
+
+## [0.1.4] - 2026-08-14
+
+Run console & CI resume. Optional CI-fail re-dispatch (default **off**). Review-resume is **detect-only** — no auto spawn (#113). No breaking env-inheritance change (that was 0.1.3).
 
 ### Added
 
 - **Typed stream run console** ([#110](https://github.com/svarm-dev/svarm/issues/110), [#111](https://github.com/svarm-dev/svarm/issues/111)): live path broadcasts v1 narrative, tool, and run events; BoardLive renders distinct chrome without duplicate compatibility lines; RunLog keeps a text projection and rehydrates compatible chrome on late join/re-selection (no schema change)
+- **Review-resume detection** ([#112](https://github.com/svarm-dev/svarm/issues/112)): poll GitHub PR reviews for managed tickets in **review**; record changes-requested state and show a board chip. **No auto re-dispatch** (follow-up #113). Same poll-on-tick path as CI Checks — no webhooks.
 - **Toolchain preflight contract** ([#108](https://github.com/svarm-dev/svarm/issues/108)): optional `tools` / `tools_mode` on agents (`fail` default, or `warn`); PATH-only check before spawn so missing host tools do not burn tokens; board `[toolchain: …]` note
 - **Sample skill pack `ai-task`** ([#52](https://github.com/svarm-dev/svarm/issues/52), [#124](https://github.com/svarm-dev/svarm/pull/124)): in-repo reference pack at `priv/packs/ai-task` (Docker `/app/packs/ai-task`); enable with `skills` on an agent — [docs/agents.md](docs/agents.md#sample-pack-ai-task)
 - **Agent skills dispatch inject** ([#107](https://github.com/svarm-dev/svarm/issues/107)): configured `skills` packs are copied into the ticket workspace (`.agents/skills/`) at run start, with a prompt note and Pi `--skill` flags; missing/invalid packs fail closed
@@ -24,7 +31,7 @@ Post-0.1.3 on `main` (not yet tagged): run console, optional CI resume, trust/pe
 
 - GETTING-STARTED journeys named by tracker topology, not lettered paths: **Feel the board** (local board, no tracker), **Real tracker loop** (external issue tracker — GitHub today), **Team hardening** ([#124](https://github.com/svarm-dev/svarm/pull/124))
 - Issue forms: **Ready to build** + **Epic** templates; Feature request clarified as ideas-only; CONTRIBUTING documents the forms
-- README Status lists post-0.1.3 capabilities on `main` (run console, optional CI resume) while **Current release** stays v0.1.3 until the next tag
+- README Status is **Current release: v0.1.4**; screenshots recaptured for current nav, run console, and dashboard spend chips ([#135](https://github.com/svarm-dev/svarm/issues/135), [#136](https://github.com/svarm-dev/svarm/issues/136))
 - README aligned with v0.1.3 governance floor: `/setup`, `APPROVALS_*` / budget env, agent env allowlist, estimated cost label, docs links ([#42](https://github.com/svarm-dev/svarm/pull/42))
 - Board card costs use SQL aggregates instead of per-card N+1 loads ([#66](https://github.com/svarm-dev/svarm/issues/66), [#93](https://github.com/svarm-dev/svarm/pull/93))
 - RunLog stream chunks coalesce in a buffer and append with SQL `content || ?` instead of full-row rewrite per delta ([#67](https://github.com/svarm-dev/svarm/issues/67), [#95](https://github.com/svarm-dev/svarm/pull/95))
@@ -34,7 +41,8 @@ Post-0.1.3 on `main` (not yet tagged): run console, optional CI resume, trust/pe
 
 ### Fixed
 
-- **Compact terminal run console** ([#130](https://github.com/svarm-dev/svarm/issues/130)): collapse repeated projection whitespace and render typed output as dense terminal rows instead of separate padded cards
+- **Dashboard 24h/7d spend windows** use wall-clock `inserted_at` so totals survive process restarts ([#100](https://github.com/svarm-dev/svarm/issues/100))
+- **Redact quoted `KEY="value"` / `KEY='value'` and bare JWTs** in agent output ([#99](https://github.com/svarm-dev/svarm/issues/99))
 - **Redact.map walks lists** so MCP `content` arrays in typed `{:stream_event, ...}` payloads are scrubbed (PubSub must not carry secrets)
 - **Prod fail-closed board mutations** ([#64](https://github.com/svarm-dev/svarm/issues/64), [#91](https://github.com/svarm-dev/svarm/pull/91)): approve/reject/mark-done deny when `APPROVALS_*` is unset outside local Mix `dev_routes`
 - Production LiveView **origin checks** stay on (allow-list from `PHX_HOST` / `PHX_CHECK_ORIGIN`); session cookies default to **Secure** for HTTPS deploys ([#65](https://github.com/svarm-dev/svarm/issues/65), [#92](https://github.com/svarm-dev/svarm/pull/92))
@@ -45,6 +53,7 @@ Post-0.1.3 on `main` (not yet tagged): run console, optional CI resume, trust/pe
 
 ### Security
 
+- Quoted `KEY="value"` / `KEY='value'` env dumps and bare JWTs redacted in transcripts ([#99](https://github.com/svarm-dev/svarm/issues/99))
 - `Redact.map/1` walks lists (MCP tool `args` / `result` content arrays) so typed stream PubSub payloads are scrubbed
 - Fail-closed board mutations without `APPROVALS_*` in production ([#64](https://github.com/svarm-dev/svarm/issues/64) / [#91](https://github.com/svarm-dev/svarm/pull/91))
 - Origin allow-list + Secure session cookies in prod ([#65](https://github.com/svarm-dev/svarm/issues/65) / [#92](https://github.com/svarm-dev/svarm/pull/92))
@@ -183,7 +192,8 @@ Shipped surface in this cut: **local board + GitHub Issues + pi/CLI + OpenRouter
 
 - Agent credentials and API keys must come from the environment; never written into task metadata, PubSub events, or tracked config files
 
-[Unreleased]: https://github.com/svarm-dev/svarm/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/svarm-dev/svarm/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/svarm-dev/svarm/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/svarm-dev/svarm/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/svarm-dev/svarm/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/svarm-dev/svarm/compare/v0.1.0...v0.1.1

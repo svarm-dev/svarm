@@ -33,17 +33,16 @@ defmodule Svarm.Dashboard do
 
   @doc """
   Cost summary for a rolling time window. Accepts "session", "24h", or "7d".
-  Uses model-specific pricing from Usage.Rates — no flat-rate estimation.
-
-  Returns cost, tokens, record_count, and estimated in one map so the UI
-  never pairs windowed cost with unscoped tokens.
+  Rolling 24h / 7d windows use wall-clock `inserted_at` (same honesty as daily
+  budget). Monotonic `recorded_at` is not used here — it resets across process
+  restarts.
   """
   def cost_for_window("session"), do: Usage.session_cost_summary()
 
   def cost_for_window(window) when window in ["24h", "7d"] do
     seconds = if window == "24h", do: 86_400, else: 604_800
-    since_mono = System.monotonic_time(:millisecond) - seconds * 1000
-    Usage.Query.cost_since(since_mono)
+    since = DateTime.add(DateTime.utc_now(), -seconds, :second)
+    Usage.Query.cost_since_inserted_at(since)
   end
 
   @doc """

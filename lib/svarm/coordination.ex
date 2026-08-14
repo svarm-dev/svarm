@@ -1,6 +1,7 @@
 defmodule Svarm.Coordination do
   @moduledoc """
-  Durable per-task coordination state (PR link, CI resume counters, circuit).
+  Durable per-task coordination state (PR link, CI resume counters, circuit,
+  review-resume detection).
 
   Lives in SQLite so it works for both Local and GitHub trackers without
   stuffing GitHub issue bodies. Owned by this context — not KanbanBridge.
@@ -24,6 +25,9 @@ defmodule Svarm.Coordination do
     field(:ci_last_conclusion, :string)
     field(:ci_circuit_open, :boolean, default: false)
     field(:ci_context_summary, :string)
+    field(:review_decision, :string)
+    field(:review_last_head_sha, :string)
+    field(:review_context_summary, :string)
 
     timestamps(type: :utc_datetime)
   end
@@ -39,7 +43,10 @@ defmodule Svarm.Coordination do
     :ci_last_head_sha,
     :ci_last_conclusion,
     :ci_circuit_open,
-    :ci_context_summary
+    :ci_context_summary,
+    :review_decision,
+    :review_last_head_sha,
+    :review_context_summary
   ]
 
   @pr_url_re ~r{https://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)}i
@@ -194,24 +201,44 @@ defmodule Svarm.Coordination do
   end
 
   @doc """
-  Rows with a PR number that are eligible for CI resume polling.
+  Rows with a PR number that are eligible for CI / review-resume polling.
 
-  Skips circuit-open tasks. Bound by caller (orchestrator max/tick).
+  Skips circuit-open tasks unless `include_circuit_open: true`.
+  Pass `task_ids:` to restrict to a known set (e.g. tickets currently in
+  `review`) so historical done rows cannot fill the window.
+  `task_ids: []` is an explicit empty set (no rows). Omit `task_ids` or
+  pass `nil` to leave the query unfiltered.
+  `limit: nil` drops the SQL LIMIT (unfiltered fallback scan).
+  Bound by caller (orchestrator max/tick).
   """
   @spec list_with_pr(keyword()) :: [t()]
   def list_with_pr(opts \\ []) do
-    limit = Keyword.get(opts, :limit, 50)
+    case Keyword.get(opts, :task_ids) do
+      [] -> []
+      task_ids -> opts |> pr_poll_query(task_ids) |> Repo.all()
+    end
+  end
+
+  defp pr_poll_query(opts, task_ids) do
     include_circuit = Keyword.get(opts, :include_circuit_open, false)
+    limit = Keyword.get(opts, :limit, 50)
 
     __MODULE__
     |> where([c], not is_nil(c.pr_number) and not is_nil(c.pr_owner) and not is_nil(c.pr_repo))
-    |> then(fn q ->
-      if include_circuit, do: q, else: where(q, [c], c.ci_circuit_open == false)
-    end)
+    |> exclude_open_circuit(include_circuit)
+    |> restrict_task_ids(task_ids)
     |> order_by([c], asc: c.updated_at)
-    |> limit(^limit)
-    |> Repo.all()
+    |> maybe_limit_rows(limit)
   end
+
+  defp exclude_open_circuit(query, true), do: query
+  defp exclude_open_circuit(query, false), do: where(query, [c], c.ci_circuit_open == false)
+
+  defp restrict_task_ids(query, ids) when is_list(ids), do: where(query, [c], c.task_id in ^ids)
+  defp restrict_task_ids(query, _), do: query
+
+  defp maybe_limit_rows(query, nil), do: query
+  defp maybe_limit_rows(query, limit) when is_integer(limit), do: limit(query, ^limit)
 
   @doc "True when circuit is open for this task."
   @spec circuit_open?(String.t()) :: boolean()

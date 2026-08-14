@@ -119,10 +119,11 @@ defmodule Svarm.Usage.Query do
   end
 
   @doc """
-  Returns spend summary for records since a monotonic timestamp (ms).
+  Spend summary for records whose wall-clock `inserted_at` is on or after `since`.
+  Rows with nil `inserted_at` are excluded.
   """
-  def cost_since(since_mono) when is_integer(since_mono) do
-    Ledger.cost_groups_since(since_mono) |> summarize_session_groups()
+  def cost_since_inserted_at(%DateTime{} = since) do
+    Ledger.cost_groups_since_inserted_at(since) |> summarize_session_groups()
   end
 
   @doc """

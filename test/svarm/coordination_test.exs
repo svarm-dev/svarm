@@ -120,6 +120,24 @@ defmodule Svarm.CoordinationTest do
     refute "closed_pr" in ids
   end
 
+  test "list_with_pr can restrict to task_ids" do
+    {:ok, _} = Coordination.record_pr("keep_pr", "https://github.com/o/r/pull/1")
+    {:ok, _} = Coordination.record_pr("skip_pr", "https://github.com/o/r/pull/2")
+
+    ids = Coordination.list_with_pr(task_ids: ["keep_pr"]) |> Enum.map(& &1.task_id)
+    assert ids == ["keep_pr"]
+    assert Coordination.list_with_pr(task_ids: []) == []
+  end
+
+  test "list_with_pr limit nil returns all matching rows" do
+    for i <- 1..3 do
+      {:ok, _} = Coordination.record_pr("all_pr_#{i}", "https://github.com/o/r/pull/#{i}")
+    end
+
+    ids = Coordination.list_with_pr(limit: nil) |> Enum.map(& &1.task_id)
+    assert Enum.sort(ids) == ["all_pr_1", "all_pr_2", "all_pr_3"]
+  end
+
   test "circuit_open?/1" do
     refute Coordination.circuit_open?("none")
 

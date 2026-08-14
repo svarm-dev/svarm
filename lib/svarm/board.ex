@@ -184,18 +184,20 @@ defmodule Svarm.Board do
   @doc """
   Why this task is waiting — human gates first, then agent activity.
 
-  Returns `:approval | :ci_circuit | :review | :running | :failed | nil`.
+  Returns `:approval | :ci_circuit | :changes_requested | :review | :running | :failed | nil`.
 
-  `:ci_circuit` wins over plain `:review` when the CI resume circuit is open
-  (ticket stays in `review` so humans can still merge).
+  `:ci_circuit` wins over `:changes_requested` and plain `:review` when the CI
+  resume circuit is open (ticket stays in `review` so humans can still merge).
+  `:changes_requested` wins over plain `:review` when GitHub review polling
+  recorded a latest submitted CHANGES_REQUESTED (detector only; no auto-spawn).
   """
   def wait_reason(%{status: "pending_approval"}), do: :approval
 
   def wait_reason(%{status: "review"} = task) do
-    if circuit_open_for?(task) do
-      :ci_circuit
-    else
-      :review
+    cond do
+      circuit_open_for?(task) -> :ci_circuit
+      changes_requested_for?(task) -> :changes_requested
+      true -> :review
     end
   end
 
@@ -218,9 +220,19 @@ defmodule Svarm.Board do
     end
   end
 
+  defp changes_requested_for?(task) do
+    if Map.has_key?(task, :review_decision) or Map.has_key?(task, "review_decision") do
+      map_get(task, :review_decision) in ["changes_requested", :changes_requested]
+    else
+      id = map_get(task, :id)
+      match?(%{review_decision: "changes_requested"}, id && Svarm.Coordination.get(id))
+    end
+  end
+
   @doc "Short UI label for `wait_reason/1`."
   def wait_reason_label(:approval), do: "Needs approval"
   def wait_reason_label(:ci_circuit), do: "CI retries exhausted"
+  def wait_reason_label(:changes_requested), do: "Changes requested"
   def wait_reason_label(:review), do: "Needs review"
   def wait_reason_label(:running), do: "Running"
   def wait_reason_label(:failed), do: "Failed"
@@ -343,7 +355,7 @@ defmodule Svarm.Board do
     }
   end
 
-  # One query for the board: attach ci_circuit_open + pr_url from Coordination.
+  # One query for the board: attach ci_circuit_open + review_decision + pr_url.
   defp attach_coordination(tasks) when is_list(tasks) do
     ids = Enum.map(tasks, & &1.id)
     by_id = Svarm.Coordination.get_many(ids)
@@ -357,11 +369,16 @@ defmodule Svarm.Board do
     merge_coord(task, Svarm.Coordination.get(task.id))
   end
 
-  defp merge_coord(task, nil), do: Map.put(task, :ci_circuit_open, false)
+  defp merge_coord(task, nil) do
+    task
+    |> Map.put(:ci_circuit_open, false)
+    |> Map.put(:review_decision, nil)
+  end
 
   defp merge_coord(task, %Svarm.Coordination{} = c) do
     task
     |> Map.put(:ci_circuit_open, c.ci_circuit_open == true)
+    |> Map.put(:review_decision, c.review_decision)
     |> then(fn t ->
       if is_binary(c.pr_url) and c.pr_url != "" do
         Map.put(t, :pr_url, c.pr_url)
