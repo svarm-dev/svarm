@@ -17,6 +17,8 @@ defmodule Svarm.Kanban.Task do
     field(:created_by, :string, default: "svarm")
     field(:created_at, :integer)
     field(:tenant, :string)
+    field(:wait_reason, :string)
+    field(:pending_question, :map)
   end
 
   @doc """
@@ -36,7 +38,9 @@ defmodule Svarm.Kanban.Task do
       :depends_on,
       :created_by,
       :created_at,
-      :tenant
+      :tenant,
+      :wait_reason,
+      :pending_question
     ])
     |> Ecto.Changeset.validate_required([:id, :title])
   end

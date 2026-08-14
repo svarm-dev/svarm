@@ -118,4 +118,48 @@ defmodule Svarm.KanbanBridgeTest do
       assert KanbanBridge.get_task(a.id) == nil
     end
   end
+
+  describe "put_pending_question/2 and clear_pending_question/1" do
+    test "persists wait reason and question payload, then clears" do
+      task = KanbanBridge.create_task(%{title: "ask", status: "in_progress", assignee: "demo"})
+      assert task.wait_reason == nil
+      assert task.pending_question == nil
+
+      assert {:ok, stored} =
+               KanbanBridge.put_pending_question(task.id, %{
+                 prompt: "Which fixture should I use?",
+                 request_id: "q_1"
+               })
+
+      assert stored.wait_reason == "agent_question"
+      assert stored.pending_question["prompt"] == "Which fixture should I use?"
+      assert stored.pending_question["reason"] == "agent_question"
+      assert stored.pending_question["request_id"] == "q_1"
+      assert is_integer(stored.pending_question["asked_at"])
+
+      reloaded = KanbanBridge.get_task(task.id)
+      assert reloaded.wait_reason == "agent_question"
+      assert reloaded.pending_question["prompt"] == "Which fixture should I use?"
+
+      listed = KanbanBridge.list_tasks([status: "in_progress"], include_body: false)
+      assert hd(listed).pending_question["prompt"] == "Which fixture should I use?"
+
+      assert {:ok, cleared} = KanbanBridge.clear_pending_question(task.id)
+      assert cleared.wait_reason == nil
+      assert cleared.pending_question == nil
+      assert KanbanBridge.get_task(task.id).pending_question == nil
+    end
+
+    test "rejects missing task and empty prompt" do
+      task = KanbanBridge.create_task(%{title: "nope", status: "in_progress"})
+
+      assert {:error, :not_found} =
+               KanbanBridge.put_pending_question("sva_missing", %{prompt: "x"})
+
+      assert {:error, :invalid} = KanbanBridge.put_pending_question(task.id, %{prompt: "  "})
+      assert {:error, :invalid} = KanbanBridge.put_pending_question(task.id, %{})
+      assert {:error, :not_found} = KanbanBridge.clear_pending_question("sva_missing")
+      assert KanbanBridge.get_task(task.id).pending_question == nil
+    end
+  end
 end

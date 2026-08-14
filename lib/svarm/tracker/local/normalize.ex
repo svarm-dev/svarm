@@ -26,6 +26,8 @@ defmodule Svarm.Tracker.Local.Normalize do
       tenant: map[:tenant],
       labels: Map.get(map, :labels, []),
       depends_on: Map.get(map, :depends_on, []),
+      wait_reason: Map.get(map, :wait_reason),
+      pending_question: Map.get(map, :pending_question),
       tracker: :local,
       raw: map
     }

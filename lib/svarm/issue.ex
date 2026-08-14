@@ -34,7 +34,11 @@ defmodule Svarm.Issue do
     # original tracker data, preserved for debugging. Never used in logic.
     :raw,
     # IDs of tasks that must complete before this one
-    depends_on: []
+    depends_on: [],
+    # Mid-run Q&A wait (`"agent_question"` or nil)
+    wait_reason: nil,
+    # Pending agent question payload (string-key map) or nil
+    pending_question: nil
   ]
 
   @type t :: %__MODULE__{
@@ -52,6 +56,8 @@ defmodule Svarm.Issue do
           tenant: String.t() | nil,
           labels: [String.t()],
           depends_on: [String.t()],
+          wait_reason: String.t() | nil,
+          pending_question: map() | nil,
           tracker: atom(),
           raw: map() | nil
         }
