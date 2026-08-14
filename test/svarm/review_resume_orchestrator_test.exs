@@ -31,6 +31,13 @@ defmodule Svarm.ReviewResumeOrchestratorTest do
   defmodule ReviewTracker do
     def list_eligible(_config), do: {:ok, []}
 
+    def list_issues(_config, filters \\ []) do
+      issues = Application.get_env(:svarm, :review_resume_test_issues, %{}) |> Map.values()
+      status = Keyword.get(filters, :status)
+      issues = if status, do: Enum.filter(issues, &(&1.status == status)), else: issues
+      {:ok, issues}
+    end
+
     def get_issue(_config, id) do
       issues = Application.get_env(:svarm, :review_resume_test_issues, %{})
 
@@ -250,7 +257,8 @@ defmodule Svarm.ReviewResumeOrchestratorTest do
   end
 
   test "stale PR rows do not starve an in-review ticket" do
-    for i <- 1..4 do
+    # More done PR rows than list_with_pr/1's default window (50).
+    for i <- 1..51 do
       id = "stale_pr_#{i}"
       put_issue(id, "done")
 

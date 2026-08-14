@@ -855,10 +855,31 @@ defmodule Svarm.Orchestrator do
 
   defp poll_review_resume(state) do
     {next, _polled} =
-      Coordination.list_with_pr(limit: 50, include_circuit_open: true)
+      state
+      |> review_resume_pr_rows()
       |> Enum.reduce_while({state, 0}, &poll_review_resume_step/2)
 
     next
+  end
+
+  # Only in-review tickets — done/todo PR rows must not occupy the 50-row window.
+  defp review_resume_pr_rows(state) do
+    Coordination.list_with_pr(
+      limit: 50,
+      include_circuit_open: true,
+      task_ids: review_task_ids(state)
+    )
+  end
+
+  defp review_task_ids(state) do
+    if function_exported?(state.tracker, :list_issues, 2) do
+      case state.tracker.list_issues(state.tracker_config, status: "review") do
+        {:ok, issues} when is_list(issues) -> Enum.map(issues, & &1.id)
+        _ -> []
+      end
+    else
+      nil
+    end
   end
 
   defp poll_review_resume_step(_coord, {acc, n}) when n >= @review_resume_max_per_tick do
@@ -925,7 +946,8 @@ defmodule Svarm.Orchestrator do
         Events.broadcast_task_updated(%{
           id: coord.task_id,
           status: "review",
-          reason: :review_changes_requested
+          reason: :review_changes_requested,
+          review_decision: "changes_requested"
         })
 
         broadcast_status(state)
@@ -952,7 +974,8 @@ defmodule Svarm.Orchestrator do
         Events.broadcast_task_updated(%{
           id: coord.task_id,
           status: "review",
-          reason: :review_changes_cleared
+          reason: :review_changes_cleared,
+          review_decision: "none"
         })
 
         broadcast_status(state)

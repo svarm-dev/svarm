@@ -201,23 +201,34 @@ defmodule Svarm.Coordination do
   end
 
   @doc """
-  Rows with a PR number that are eligible for CI resume polling.
+  Rows with a PR number that are eligible for CI / review-resume polling.
 
-  Skips circuit-open tasks. Bound by caller (orchestrator max/tick).
+  Skips circuit-open tasks unless `include_circuit_open: true`.
+  Pass `task_ids:` to restrict to a known set (e.g. tickets currently in
+  `review`) so historical done rows cannot fill the window.
+  Bound by caller (orchestrator max/tick).
   """
   @spec list_with_pr(keyword()) :: [t()]
   def list_with_pr(opts \\ []) do
     limit = Keyword.get(opts, :limit, 50)
     include_circuit = Keyword.get(opts, :include_circuit_open, false)
+    task_ids = Keyword.get(opts, :task_ids)
 
-    __MODULE__
-    |> where([c], not is_nil(c.pr_number) and not is_nil(c.pr_owner) and not is_nil(c.pr_repo))
-    |> then(fn q ->
-      if include_circuit, do: q, else: where(q, [c], c.ci_circuit_open == false)
-    end)
-    |> order_by([c], asc: c.updated_at)
-    |> limit(^limit)
-    |> Repo.all()
+    if task_ids == [] do
+      []
+    else
+      __MODULE__
+      |> where([c], not is_nil(c.pr_number) and not is_nil(c.pr_owner) and not is_nil(c.pr_repo))
+      |> then(fn q ->
+        if include_circuit, do: q, else: where(q, [c], c.ci_circuit_open == false)
+      end)
+      |> then(fn q ->
+        if is_list(task_ids), do: where(q, [c], c.task_id in ^task_ids), else: q
+      end)
+      |> order_by([c], asc: c.updated_at)
+      |> limit(^limit)
+      |> Repo.all()
+    end
   end
 
   @doc "True when circuit is open for this task."
