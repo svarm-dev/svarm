@@ -234,7 +234,7 @@ defmodule Svarm.Board do
   end
 
   defp pending_question?(question) when is_map(question) do
-    prompt = Map.get(question, "prompt") || Map.get(question, :prompt)
+    prompt = map_get(question, :prompt)
     is_binary(prompt) and String.trim(prompt) != ""
   end
 
