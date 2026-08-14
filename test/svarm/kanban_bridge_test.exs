@@ -128,13 +128,17 @@ defmodule Svarm.KanbanBridgeTest do
       assert {:ok, stored} =
                KanbanBridge.put_pending_question(task.id, %{
                  prompt: "Which fixture should I use?",
-                 request_id: "q_1"
+                 request_id: "q_1",
+                 method: "select",
+                 options: ["a", "b"]
                })
 
       assert stored.wait_reason == "agent_question"
       assert stored.pending_question["prompt"] == "Which fixture should I use?"
       assert stored.pending_question["reason"] == "agent_question"
       assert stored.pending_question["request_id"] == "q_1"
+      assert stored.pending_question["method"] == "select"
+      assert stored.pending_question["options"] == ["a", "b"]
       assert is_integer(stored.pending_question["asked_at"])
 
       reloaded = KanbanBridge.get_task(task.id)

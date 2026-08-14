@@ -28,6 +28,8 @@ defmodule Svarm.Coordination do
     field(:review_decision, :string)
     field(:review_last_head_sha, :string)
     field(:review_context_summary, :string)
+    field(:wait_reason, :string)
+    field(:pending_question, :map)
 
     timestamps(type: :utc_datetime)
   end
@@ -46,7 +48,9 @@ defmodule Svarm.Coordination do
     :ci_context_summary,
     :review_decision,
     :review_last_head_sha,
-    :review_context_summary
+    :review_context_summary,
+    :wait_reason,
+    :pending_question
   ]
 
   @pr_url_re ~r{https://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)}i

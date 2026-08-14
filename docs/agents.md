@@ -162,12 +162,12 @@ Default adapter `pi_rpc` spawns **`pi --mode rpc --no-session`** (+ provider/mod
 | Run timeout (wall-clock) | **45 min** | `Svarm.Runner.PiRPC` (`@default_timeout_ms`); not idle-reset |
 | Orchestrator stall | **45 min** | WORKFLOW `agent.stall_timeout_ms` |
 | Completion | `agent_settled` only | non-zero exit / no settle → `failed` |
-| Mid-run UI (`extension_ui_request`) | **fail-run** | clear board line; no hang |
+| Mid-run UI (`extension_ui_request`) | **park + inject** (dialogs) | `AgentQuestion`; fire-and-forget ignored; CLI unsupported |
 
 **Keep PiRPC timeout ≤ stall.** The runner uses a **wall-clock** deadline (streaming does not reset it), then aborts (JSONL `abort` → grace → `kill_tree`). Orchestrator stall only `Process.exit`s the worker Task (Port close is best-effort, no kill_tree). Raise both together for longer coding sessions.
 
 Missing `pi` on PATH → task `failed` with `[pi_rpc: pi not found on PATH]`. Broken protocol / rejected prompt → `failed` with a protocol board line.
 
-Flags: `--mode rpc --no-session`. Session resume and mid-run Q&A are not in v0.1.x.
+Flags: `--mode rpc --no-session`. Session resume is not in v0.1.x. Mid-run dialogs park until a board answer, cancel, or the wait deadline (default 15 min).
 
 Coding agents **editing this repository** (not swarm members): see root [AGENTS.md](../AGENTS.md).

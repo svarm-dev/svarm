@@ -26,11 +26,11 @@ If nothing material changed, **do not** edit this file.
 | Field | Value |
 |-------|--------|
 | **Updated** | 2026-08-14 |
-| **`main`** | (this PR) mid-run Q&A durable wait fields (#114) |
+| **`main`** | (this PR) mid-run Q&A answer API + PiRPC inject (#115) |
 | **Latest tag** | **v0.1.4** (2026-08-14) |
-| **Unreleased** | review-resume spawn + compact console + mid-run wait fields |
-| **Focus** | **[#115](https://github.com/svarm-dev/svarm/issues/115)** — mid-run Q&A: answer API + PiRPC inject |
-| **Next** | mid-run Q&A board UI (#116) / epic #51 |
+| **Unreleased** | review-resume spawn + compact console + mid-run Q&A inject |
+| **Focus** | **[#116](https://github.com/svarm-dev/svarm/issues/116)** — mid-run Q&A: board chip + answer UI |
+| **Next** | epic #51 (after #116) |
 
 `main` STATUS **lags open PR branches** — always check `gh pr list` / `gh issue list` for live work.
 
@@ -45,6 +45,6 @@ Format: `YYYY-MM-DD · one sentence · issue/PR link`
 
 ## Session log (newest first, max 3)
 
+- 2026-08-14 · mid-run Q&A answer API + PiRPC inject (#115); Focus → #116
 - 2026-08-14 · mid-run Q&A durable wait fields (#114); Focus → #115
 - 2026-08-14 · review-resume re-dispatch + shared circuit (#113); Focus → #114
-- 2026-08-14 · compact terminal run console (#130); Focus unchanged
