@@ -147,7 +147,7 @@ GitHub App identity (bot comments): [docs/github-app.md](docs/github-app.md).
 
 ## Status
 
-**Current release: v0.1.4** (run console & CI resume).
+**Current release: v0.1.5** (mid-run Q&A + review-resume).
 
 **Working now:**
 
@@ -159,8 +159,9 @@ GitHub App identity (bot comments): [docs/github-app.md](docs/github-app.md).
 - **Run console** on the ticket — typed narrative/tool/run chrome, late-join from durable log, deep link `/board?task=…&attach=1`
 - Optional **CI fail → fresh agent re-dispatch** with circuit breaker (default **off**; enable via WORKFLOW / `SVARM_CI_RESUME_*`)
 - **Review-resume** — Changes requested chip when GitHub reviews ask for changes; optional re-dispatch on first request (default **off**; `review_resume` / `SVARM_REVIEW_RESUME_ENABLED`; shares the CI resume circuit)
+- **Mid-run Q&A** — a PiRPC agent can pause on a dialog; **Waiting for answer** chip + board form (confirm / select / input). CLI inject is unsupported. Dismiss or the 15-minute deadline **continues** the run.
 
-**Not shipped yet:** Linear/Jira trackers, multi-provider/multi-agent registry UI, managed hosting, mid-run budget kill of in-flight workers, steer / mid-run Q&A in the console, soft budget hold mode. "Adapter-ready" means the behaviours exist; it does not mean every adapter is built.
+**Not shipped yet:** Linear/Jira trackers, multi-provider/multi-agent registry UI, managed hosting, mid-run budget kill of in-flight workers, steer / follow-up in the console, soft budget hold mode. "Adapter-ready" means the behaviours exist; it does not mean every adapter is built.
 
 Optional UI config after the demo: open `/setup` (same auth as `/approvals` in Docker). Details: [GETTING-STARTED.md](GETTING-STARTED.md).
 
