@@ -28,7 +28,7 @@ If nothing material changed, **do not** edit this file.
 | **Updated** | 2026-08-14 |
 | **`main`** | (this PR) review-resume re-dispatch + shared circuit (#113) |
 | **Latest tag** | **v0.1.4** (2026-08-14) |
-| **Unreleased** | review-resume spawn |
+| **Unreleased** | review-resume spawn + compact run console |
 | **Focus** | **[#114](https://github.com/svarm-dev/svarm/issues/114)** — mid-run Q&A: persist + render |
 | **Next** | mid-run Q&A children (#115–#116) / epic #51 |
 
@@ -46,5 +46,5 @@ Format: `YYYY-MM-DD · one sentence · issue/PR link`
 ## Session log (newest first, max 3)
 
 - 2026-08-14 · review-resume re-dispatch + shared circuit (#113); Focus → #114
+- 2026-08-14 · compact terminal run console (#130); Focus unchanged
 - 2026-08-14 · v0.1.4 cut + README screenshots (#135, #136); Focus stays #113
-- 2026-08-13 · review-resume GitHub changes-requested signal (#112); Focus → #113

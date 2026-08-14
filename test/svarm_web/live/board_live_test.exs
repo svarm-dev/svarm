@@ -768,6 +768,37 @@ defmodule SvarmWeb.BoardLiveTest do
 
     html = render(view)
     assert [_] = Regex.scan(~r/\$ bash mix test/, html)
+    refute html =~ ~s(data-stream-spacer="true")
+  end
+
+  test "terminal collapses blank runs live and after re-select", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Compact terminal",
+        status: "review",
+        assignee: "demo"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/board")
+    render_click(view, "select_task", %{"id" => task.id})
+
+    Events.broadcast_agent_line(task.id, "first line\n\n\nsecond line")
+    :sys.get_state(view.pid)
+
+    assert has_element?(view, ~s(#run-log[data-terminal="true"]))
+    html = render(view)
+    assert [_] = Regex.scan(~r/data-stream-spacer="true"/, html)
+    assert html =~ ">first line</span>"
+    assert html =~ ">second line</span>"
+
+    render_click(view, "clear_selection", %{})
+    render_click(view, "select_task", %{"id" => task.id})
+
+    assert [_] = Regex.scan(~r/data-stream-spacer="true"/, render(view))
+    assert has_element?(view, "#run-log", "first line")
+    assert has_element?(view, "#run-log", "second line")
   end
 
   test "late join and re-select restore typed text projections", %{conn: conn} do
@@ -801,6 +832,8 @@ defmodule SvarmWeb.BoardLiveTest do
              "failed"
            )
 
+    refute render(view) =~ ~s(data-stream-spacer="true")
+
     render_click(view, "clear_selection", %{})
     render_click(view, "select_task", %{"id" => task.id})
 
@@ -811,6 +844,8 @@ defmodule SvarmWeb.BoardLiveTest do
              ~s(#run-log [data-stream-kind="tool_end"][data-stream-status="error"]),
              "failed"
            )
+
+    refute render(view) =~ ~s(data-stream-spacer="true")
   end
 
   test "stream append after select appears in console", %{conn: conn} do

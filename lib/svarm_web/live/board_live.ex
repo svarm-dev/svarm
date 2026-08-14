@@ -1170,14 +1170,14 @@ defmodule SvarmWeb.BoardLive do
             </div>
           <% end %>
 
-          <div class="rounded-lg border border-base-300 bg-base-300/50">
-            <div class="flex items-center justify-between px-2.5 py-1 border-b border-base-300">
-              <span class="text-[10px] font-medium opacity-50 uppercase tracking-wide">Console</span>
+          <div class="overflow-hidden rounded-lg border border-neutral bg-neutral text-neutral-content shadow-inner">
+            <div class="flex items-center justify-between border-b border-neutral-content/10 px-3 py-1.5">
+              <span class="font-mono text-[10px] text-neutral-content/50">run.log</span>
               <button
                 id="run-log-copy"
                 type="button"
                 phx-hook="CopyLog"
-                class="text-[10px] font-medium opacity-40 hover:opacity-80 transition-opacity"
+                class="font-mono text-[10px] text-neutral-content/40 transition-colors hover:text-neutral-content/80"
               >
                 Copy
               </button>
@@ -1190,22 +1190,27 @@ defmodule SvarmWeb.BoardLive do
               role="log"
               aria-live="polite"
               aria-relevant="additions"
-              class="p-2.5 text-[11px] leading-relaxed font-mono max-h-[min(28rem,50vh)] overflow-y-auto whitespace-pre-wrap break-all space-y-0.5"
+              data-terminal="true"
+              class="max-h-[min(28rem,50vh)] overflow-y-auto p-3 font-mono text-[11px] leading-4"
             >
               <%= for {line, kind, status, cls} <- classify_log(@log) do %>
                 <% label = stream_entry_label(kind, status) %>
                 <div
                   data-stream-kind={kind}
                   data-stream-status={status}
-                  class={cls}
+                  data-stream-spacer={if is_nil(kind), do: "true"}
+                  class={[
+                    "grid grid-cols-[2.75rem_minmax(0,1fr)]",
+                    cls
+                  ]}
                 >
                   <span
-                    :if={label}
-                    class="badge badge-xs badge-outline shrink-0 font-sans uppercase tracking-wide"
+                    class="select-none border-r border-neutral-content/10 pr-2 text-right text-[9px] uppercase tracking-wider opacity-60"
+                    aria-hidden="true"
                   >
                     {label}
                   </span>
-                  <span>{line}</span>
+                  <span class="min-w-0 whitespace-pre-wrap break-words pl-2 [overflow-wrap:anywhere]">{line}</span>
                 </div>
               <% end %>
             </div>
@@ -1661,62 +1666,102 @@ defmodule SvarmWeb.BoardLive do
     # ponytail: stable projection prefixes are the restore boundary while RunLog is text-only.
     log
     |> String.split("\n")
+    |> compact_log_spacing()
     |> Enum.map(&classify_log_line/1)
   end
 
   defp classify_log(_), do: []
 
-  defp classify_log_line(""), do: {"", "text", nil, "h-1"}
+  defp compact_log_spacing(lines) do
+    lines
+    |> collapse_blank_lines()
+    |> trim_blank_lines()
+    |> drop_projection_spacers()
+  end
+
+  defp drop_projection_spacers([]), do: []
+
+  defp drop_projection_spacers(lines) do
+    [nil | lines]
+    |> Enum.chunk_every(3, 1, [nil])
+    |> Enum.flat_map(&keep_log_line/1)
+  end
+
+  defp collapse_blank_lines(lines) do
+    lines
+    |> Enum.chunk_by(&(&1 == ""))
+    |> Enum.flat_map(fn
+      ["" | _] -> [""]
+      run -> run
+    end)
+  end
+
+  defp trim_blank_lines(lines) do
+    lines
+    |> Enum.drop_while(&(&1 == ""))
+    |> Enum.reverse()
+    |> Enum.drop_while(&(&1 == ""))
+    |> Enum.reverse()
+  end
+
+  defp keep_log_line([previous, "", next]) do
+    if typed_projection_line?(previous) or typed_projection_line?(next), do: [], else: [""]
+  end
+
+  defp keep_log_line([_previous, line, _next]), do: [line]
+
+  defp typed_projection_line?("--- " <> _), do: true
+  defp typed_projection_line?("$ " <> _), do: true
+  defp typed_projection_line?("[tool " <> _), do: true
+  defp typed_projection_line?(_), do: false
+
+  defp classify_log_line(""), do: {"", nil, nil, "h-1 overflow-hidden"}
 
   defp classify_log_line("--- " <> _ = line) do
-    {line, "run_marker", nil,
-     "my-1 flex items-center gap-2 border-y border-base-content/10 py-1 opacity-60 italic"}
+    {line, "run_marker", nil, "text-neutral-content/50"}
   end
 
   defp classify_log_line("$ " <> _ = line) do
-    {line, "tool_start", nil,
-     "my-1 flex items-start gap-2 rounded-md border border-info/30 bg-info/5 px-2 py-1.5 text-info"}
+    {line, "tool_start", nil, "text-cyan-300"}
   end
 
   defp classify_log_line("[tool " <> _ = line), do: classify_tool_line(line)
 
   defp classify_log_line("[board]" <> _ = line) do
-    {line, "text", "board", "px-1 opacity-40 text-[10px]"}
+    {line, "text", "board", "text-[10px] text-neutral-content/35"}
   end
 
   defp classify_log_line(line) do
     cond do
       String.contains?(line, ["error", "Error"]) ->
-        {line, "text", "error", "px-1 text-error font-medium"}
+        {line, "text", "error", "text-red-300"}
 
       String.contains?(line, ["warning", "Warning"]) ->
-        {line, "text", "warning", "px-1 text-warning"}
+        {line, "text", "warning", "text-amber-300"}
 
       true ->
-        {line, "text", nil, "min-h-[1em] px-1"}
+        {line, "text", nil, "text-neutral-content/85"}
     end
   end
 
   defp classify_tool_line(line) do
     cond do
       String.ends_with?(line, " failed]") ->
-        {line, "tool_end", "error",
-         "my-1 flex items-start gap-2 rounded-md border border-error/30 bg-error/5 px-2 py-1.5 text-error font-medium"}
+        {line, "tool_end", "error", "text-red-300"}
 
       String.ends_with?(line, " complete]") ->
-        {line, "tool_end", "ok",
-         "my-1 flex items-start gap-2 rounded-md border border-success/30 bg-success/5 px-2 py-1.5 text-success"}
+        {line, "tool_end", "ok", "text-emerald-300"}
 
       true ->
-        {line, "text", nil, "min-h-[1em] px-1"}
+        {line, "text", nil, "text-neutral-content/85"}
     end
   end
 
   defp stream_entry_label("tool_start", _), do: "tool"
-  defp stream_entry_label("tool_end", "error"), do: "failed"
+  defp stream_entry_label("tool_end", "error"), do: "fail"
   defp stream_entry_label("tool_end", _), do: "done"
   defp stream_entry_label("run_marker", _), do: "run"
-  defp stream_entry_label(_, _), do: nil
+  defp stream_entry_label(_, _), do: ""
 
   defp monogram(%{display_name: name}) when is_binary(name) and name != "" do
     name
