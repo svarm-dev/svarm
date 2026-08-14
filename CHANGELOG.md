@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **AgentQuestion clear/cancel/invalid park**: `clear/1` no longer PubSubs `status: in_progress` (would yank a review/failed card back); `cancel/1` returns `{:error, :invalid}` instead of raising when `request_id` is missing; invalid dialog park fails the PiRPC run instead of stalling until wall-clock timeout
 - **Compact terminal run console** ([#130](https://github.com/svarm-dev/svarm/issues/130)): collapse repeated projection whitespace and render typed output as dense terminal rows instead of separate padded cards
 
 ## [0.1.4] - 2026-08-14

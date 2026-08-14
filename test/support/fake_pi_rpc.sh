@@ -86,6 +86,19 @@ case "$mode" in
     printf '%s\n' '{"type":"agent_settled"}'
     exit 0
     ;;
+  ui_invalid)
+    # Dialog without id — park must fail-fast, not hang on a response.
+    printf '%s\n' '{"type":"extension_ui_request","method":"confirm","message":"proceed?"}'
+    while IFS= read -r line; do
+      case "$line" in
+        *'"type":"abort"'*|*'"type": "abort"'*)
+          printf '%s\n' '{"type":"agent_settled"}'
+          exit 0
+          ;;
+      esac
+    done
+    exit 0
+    ;;
   malformed)
     printf '%s\n' 'NOT JSON AT ALL'
     printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"recovered\n"}}'

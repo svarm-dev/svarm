@@ -66,6 +66,7 @@ defmodule Svarm.AgentQuestion do
   Persist a parked question and register the calling process as the inbox.
 
   Must be called from the PiRPC worker. Returns `{:ok, deadline_ms}`.
+  Requires a non-empty prompt and request id (`id` / `request_id`).
   """
   @spec park(String.t(), map(), keyword()) :: {:ok, integer()} | {:error, :invalid}
   def park(task_id, event, opts \\ [])
@@ -106,9 +107,14 @@ defmodule Svarm.AgentQuestion do
       {:ok, waiting} ->
         case lookup_runner(task_id) do
           {:ok, pid} ->
-            {:ok, body} = build_response(waiting, %{}, cancelled: true)
-            send(pid, {:agent_question_reply, body})
-            {:ok, :injected}
+            case build_response(waiting, %{}, cancelled: true) do
+              {:ok, body} ->
+                send(pid, {:agent_question_reply, body})
+                {:ok, :injected}
+
+              {:error, _} = err ->
+                err
+            end
 
           {:error, :no_runner} ->
             clear(task_id)
@@ -132,9 +138,13 @@ defmodule Svarm.AgentQuestion do
     _ = Coordination.upsert(task_id, %{wait_reason: nil, pending_question: nil})
     unregister()
 
+    # Never send status — finish/after/watch_clear run after the tracker
+    # already moved the card to review/failed. A partial in_progress payload
+    # would yank BoardLive back and log a false status line.
     Events.broadcast_task_updated(%{
       id: task_id,
-      status: "in_progress",
+      wait_reason: nil,
+      pending_question: nil,
       reason: :agent_question_cleared
     })
 
@@ -212,13 +222,14 @@ defmodule Svarm.AgentQuestion do
 
   defp normalize_payload(attrs) when is_map(attrs) do
     prompt = map_get(attrs, :prompt)
+    request_id = map_get(attrs, :request_id)
 
-    if is_binary(prompt) and String.trim(prompt) != "" do
+    if present?(prompt) and present?(request_id) do
       payload =
         %{
           "reason" => "agent_question",
           "prompt" => prompt,
-          "request_id" => map_get(attrs, :request_id),
+          "request_id" => request_id,
           "method" => map_get(attrs, :method),
           "options" => map_get(attrs, :options),
           "asked_at" => map_get(attrs, :asked_at) || System.system_time(:second)
@@ -237,7 +248,7 @@ defmodule Svarm.AgentQuestion do
 
     %{
       prompt: prompt,
-      request_id: event["id"],
+      request_id: event["id"] || event["request_id"],
       method: method,
       options: event["options"],
       asked_at: System.system_time(:second)
@@ -331,6 +342,9 @@ defmodule Svarm.AgentQuestion do
       _ -> nil
     end
   end
+
+  defp present?(value) when is_binary(value), do: String.trim(value) != ""
+  defp present?(_), do: false
 
   defp map_get(map, key) when is_map(map) do
     Map.get(map, key) || Map.get(map, Atom.to_string(key))
