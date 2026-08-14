@@ -34,6 +34,7 @@ Post-0.1.3 on `main` (not yet tagged): run console, optional CI resume, trust/pe
 
 ### Fixed
 
+- **Dashboard 24h/7d spend windows** use wall-clock `inserted_at` so totals survive process restarts ([#100](https://github.com/svarm-dev/svarm/issues/100))
 - **Redact quoted `KEY="value"` / `KEY='value'` and bare JWTs** in agent output ([#99](https://github.com/svarm-dev/svarm/issues/99))
 - **Redact.map walks lists** so MCP `content` arrays in typed `{:stream_event, ...}` payloads are scrubbed (PubSub must not carry secrets)
 - **Prod fail-closed board mutations** ([#64](https://github.com/svarm-dev/svarm/issues/64), [#91](https://github.com/svarm-dev/svarm/pull/91)): approve/reject/mark-done deny when `APPROVALS_*` is unset outside local Mix `dev_routes`

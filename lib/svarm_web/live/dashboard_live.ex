@@ -291,7 +291,7 @@ defmodule SvarmWeb.DashboardLive do
       <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div>
           <h2 class="text-sm font-semibold">Spend</h2>
-          <p class="text-xs opacity-60 mt-0.5">Window applies to cost and tokens only</p>
+          <p class="text-xs opacity-60 mt-0.5">{window_caption(@window)}</p>
         </div>
         <.time_window_picker window={@window} />
       </div>
@@ -317,6 +317,11 @@ defmodule SvarmWeb.DashboardLive do
     """
   end
 
+  defp window_caption("session"), do: "All ledger rows in this database"
+  defp window_caption("24h"), do: "Wall-clock last 24 hours"
+  defp window_caption("7d"), do: "Wall-clock last 7 days"
+  defp window_caption(_), do: "Window applies to cost and tokens only"
+
   attr :window, :string, required: true
 
   defp time_window_picker(assigns) do
@@ -327,6 +332,7 @@ defmodule SvarmWeb.DashboardLive do
           type="button"
           phx-click="set_window"
           phx-value-window={value}
+          aria-pressed={to_string(@window == value)}
           class={[
             "btn btn-xs",
             @window == value && "btn-primary",
