@@ -29,6 +29,20 @@ defmodule Svarm.CiResumeOrchestratorTest do
     end
   end
 
+  defmodule StubReviewsNone do
+    def summarize_pr_reviews(_o, _r, _n, _config, _opts \\ []) do
+      {:ok,
+       %{
+         decision: :none,
+         head_sha: "x",
+         reviewer_logins: [],
+         summary: "no changes requested",
+         draft: false,
+         review_count: 0
+       }}
+    end
+  end
+
   defmodule ReviewTracker do
     def list_eligible(_config), do: {:ok, []}
 
@@ -86,8 +100,10 @@ defmodule Svarm.CiResumeOrchestratorTest do
     Repo.delete_all(Coordination)
 
     original = :sys.get_state(Orchestrator)
-    prev_mod = Application.get_env(:svarm, :github_checks_module)
+    prev_checks = Application.get_env(:svarm, :github_checks_module)
+    prev_reviews = Application.get_env(:svarm, :github_reviews_module)
     Application.put_env(:svarm, :github_checks_module, StubChecks)
+    Application.put_env(:svarm, :github_reviews_module, StubReviewsNone)
     Application.put_env(:svarm, :ci_resume_test_issues, %{})
     Application.put_env(:svarm, :ci_resume_test_checks_result, nil)
 
@@ -115,10 +131,16 @@ defmodule Svarm.CiResumeOrchestratorTest do
     end)
 
     on_exit(fn ->
-      if prev_mod do
-        Application.put_env(:svarm, :github_checks_module, prev_mod)
+      if prev_checks do
+        Application.put_env(:svarm, :github_checks_module, prev_checks)
       else
         Application.delete_env(:svarm, :github_checks_module)
+      end
+
+      if prev_reviews do
+        Application.put_env(:svarm, :github_reviews_module, prev_reviews)
+      else
+        Application.delete_env(:svarm, :github_reviews_module)
       end
 
       Application.delete_env(:svarm, :ci_resume_test_issues)

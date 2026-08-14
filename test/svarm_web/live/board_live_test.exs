@@ -415,6 +415,75 @@ defmodule SvarmWeb.BoardLiveTest do
     assert html =~ "Review chip"
   end
 
+  test "review card shows changes requested chip when coordination records it", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Please fix",
+        status: "review",
+        assignee: "demo"
+      })
+
+    {:ok, _} =
+      Svarm.Coordination.upsert(task.id, %{
+        pr_url: "https://github.com/o/r/pull/9",
+        pr_owner: "o",
+        pr_repo: "r",
+        pr_number: 9,
+        review_decision: "changes_requested"
+      })
+
+    {:ok, view, html} = live(conn, ~p"/board")
+
+    assert html =~ "Changes requested"
+    refute html =~ "Needs review"
+
+    render_click(view, "select_task", %{"id" => task.id})
+    panel = render(view)
+    assert panel =~ "Changes requested"
+    assert panel =~ "Detection only"
+  end
+
+  test "live review_decision PubSub flips the chip without a full refresh", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Live chip",
+        status: "review",
+        assignee: "demo"
+      })
+
+    {:ok, view, html} = live(conn, ~p"/board")
+    assert html =~ "Needs review"
+    refute html =~ "Changes requested"
+
+    Events.broadcast_task_updated(%{
+      id: task.id,
+      status: "review",
+      reason: :review_changes_requested,
+      review_decision: "changes_requested"
+    })
+
+    :sys.get_state(view.pid)
+    html = render(view)
+    assert html =~ "Changes requested"
+    refute html =~ "Needs review"
+
+    Events.broadcast_task_updated(%{
+      id: task.id,
+      status: "review",
+      reason: :review_changes_cleared,
+      review_decision: "none"
+    })
+
+    :sys.get_state(view.pid)
+    html = render(view)
+    assert html =~ "Needs review"
+    refute html =~ "Changes requested"
+  end
+
   test "review run panel shows awaiting human callout and PR link", %{conn: conn} do
     KanbanBridge.delete_all_tasks()
 

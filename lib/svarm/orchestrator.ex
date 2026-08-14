@@ -3,7 +3,7 @@ defmodule Svarm.Orchestrator do
   Orchestrator: Symphony-compatible poll loop. Plain GenServer.
 
   Tick:     reconcile (stall + tracker state sync §8.5–8.6) → maybe_ci_resume →
-            preflight (§6.3) → fetch eligible → dispatch.
+            maybe_review_resume → preflight (§6.3) → fetch eligible → dispatch.
   Dispatch: claim → spawn an agent runner task under the Task.Supervisor → monitor.
   Exit:     normal exit → completed (force `review` if tracker still active);
   crash → backoff retry. Multi-turn re-spawn is not used: runners that need
@@ -13,6 +13,10 @@ defmodule Svarm.Orchestrator do
   CI resume (optional): when `ci_resume.enabled`, poll GitHub Checks for managed
   PRs in review and re-open for a fresh agent run with failure context until the
   circuit opens after N attempts. See `Svarm.CiResume`.
+
+  Review-resume detection: poll GitHub PR reviews for managed PRs in review and
+  record changes-requested state (board chip). No spawn — see `Svarm.ReviewResume`
+  and issue #113.
 
   Reconcile now syncs running/claimed tasks against the tracker adapter (external
   terminal states stop workers). Workspace keys use issue source_id per §4.2.
@@ -32,6 +36,7 @@ defmodule Svarm.Orchestrator do
     Coordination,
     Demo,
     Events,
+    ReviewResume,
     Settings,
     Toolchain,
     Tracker,
@@ -41,6 +46,7 @@ defmodule Svarm.Orchestrator do
   }
 
   alias Svarm.Tracker.GitHub.Checks
+  alias Svarm.Tracker.GitHub.Reviews
 
   alias Svarm.Workflow.Config, as: WorkflowConfig
 
@@ -56,8 +62,9 @@ defmodule Svarm.Orchestrator do
   # Force-terminal status patch after ok exit: retry without blocking the GenServer.
   @force_terminal_max_attempts 3
   @force_terminal_backoff_ms 400
-  # Bound Checks polls per tick so the GenServer mailbox stays responsive.
+  # Bound Checks / review polls per tick so the GenServer mailbox stays responsive.
   @ci_resume_max_per_tick 3
+  @review_resume_max_per_tick 3
 
   defstruct [
     :poll_interval_ms,
@@ -162,6 +169,7 @@ defmodule Svarm.Orchestrator do
   def handle_info(:tick, state) do
     state = reconcile(state)
     state = maybe_ci_resume(state)
+    state = maybe_review_resume(state)
     state = if valid_preflight?(state), do: dispatch(state), else: state
     state = %{state | last_tick_mono_ms: System.monotonic_time(:millisecond)}
     Process.send_after(self(), :tick, state.poll_interval_ms)
@@ -833,6 +841,162 @@ defmodule Svarm.Orchestrator do
   end
 
   defp maybe_store_conclusion(_coord, _summary), do: :ok
+
+  ## Review-resume detection (poll reviews → record state; no spawn)
+
+  defp maybe_review_resume(state) do
+    # Local tracker has no Reviews API. GitHub adapter (or test doubles) may run.
+    if state.tracker == Tracker.Local do
+      state
+    else
+      poll_review_resume(state)
+    end
+  end
+
+  defp poll_review_resume(state) do
+    {next, _polled} =
+      state
+      |> review_resume_pr_rows()
+      |> Enum.reduce_while({state, 0}, &poll_review_resume_step/2)
+
+    next
+  end
+
+  # Prefer tracker review ids so done rows cannot fill a bounded window.
+  # Empty/failed list_issues must not mean "poll nothing": GitHub maps HTTP
+  # errors to `{:ok, []}`, and `status: "review"` may miss configured labels.
+  defp review_resume_pr_rows(state) do
+    case review_task_ids(state) do
+      [_ | _] = ids ->
+        Coordination.list_with_pr(
+          limit: 50,
+          include_circuit_open: true,
+          task_ids: ids
+        )
+
+      _ ->
+        Coordination.list_with_pr(include_circuit_open: true, limit: nil)
+    end
+  end
+
+  defp review_task_ids(state) do
+    if function_exported?(state.tracker, :list_issues, 2) do
+      case state.tracker.list_issues(state.tracker_config, status: "review") do
+        {:ok, [_ | _] = issues} -> Enum.map(issues, & &1.id)
+        _ -> nil
+      end
+    else
+      nil
+    end
+  end
+
+  defp poll_review_resume_step(_coord, {acc, n}) when n >= @review_resume_max_per_tick do
+    {:halt, {acc, n}}
+  end
+
+  defp poll_review_resume_step(coord, {acc, n}) do
+    {next, polled?} = maybe_review_resume_one(acc, coord)
+    {:cont, {next, if(polled?, do: n + 1, else: n)}}
+  end
+
+  defp maybe_review_resume_one(state, coord) do
+    task_id = coord.task_id
+
+    cond do
+      Map.has_key?(state.running, task_id) or MapSet.member?(state.claimed, task_id) ->
+        {state, false}
+
+      not pr_matches_tracker?(coord, state.tracker_config) ->
+        Logger.debug("review_resume: skip #{task_id} — PR repo does not match tracker")
+        {state, false}
+
+      not review_status?(state, task_id) ->
+        {state, false}
+
+      true ->
+        {evaluate_reviews_for_task(state, coord), true}
+    end
+  end
+
+  defp evaluate_reviews_for_task(state, coord) do
+    reviews_mod = Application.get_env(:svarm, :github_reviews_module, Reviews)
+
+    case reviews_mod.summarize_pr_reviews(
+           coord.pr_owner,
+           coord.pr_repo,
+           coord.pr_number,
+           state.tracker_config
+         ) do
+      {:ok, summary} ->
+        apply_review_decision(state, coord, summary, ReviewResume.evaluate(coord, summary))
+
+      {:error, reason} ->
+        Logger.debug("review_resume reviews error for #{coord.task_id}: #{inspect(reason)}")
+        state
+    end
+  end
+
+  defp apply_review_decision(state, _coord, _summary, :noop), do: state
+
+  defp apply_review_decision(state, coord, summary, :record) do
+    context = ReviewResume.context_summary(summary)
+
+    case Coordination.upsert(coord.task_id, %{
+           review_decision: "changes_requested",
+           review_last_head_sha: summary.head_sha,
+           review_context_summary: context
+         }) do
+      {:ok, _} ->
+        Logger.info(
+          "review_resume: changes requested for #{coord.task_id} sha=#{summary.head_sha}"
+        )
+
+        Events.broadcast_task_updated(%{
+          id: coord.task_id,
+          status: "review",
+          reason: :review_changes_requested,
+          review_decision: "changes_requested"
+        })
+
+        broadcast_status(state)
+        state
+
+      {:error, reason} ->
+        Logger.warning(
+          "review_resume: record upsert failed for #{coord.task_id}: #{inspect(reason)}"
+        )
+
+        state
+    end
+  end
+
+  defp apply_review_decision(state, coord, summary, :clear) do
+    case Coordination.upsert(coord.task_id, %{
+           review_decision: "none",
+           review_last_head_sha: summary.head_sha || coord.review_last_head_sha,
+           review_context_summary: nil
+         }) do
+      {:ok, _} ->
+        Logger.info("review_resume: cleared changes-requested for #{coord.task_id}")
+
+        Events.broadcast_task_updated(%{
+          id: coord.task_id,
+          status: "review",
+          reason: :review_changes_cleared,
+          review_decision: "none"
+        })
+
+        broadcast_status(state)
+        state
+
+      {:error, reason} ->
+        Logger.warning(
+          "review_resume: clear upsert failed for #{coord.task_id}: #{inspect(reason)}"
+        )
+
+        state
+    end
+  end
 
   defp handle_run_exit(state, entry, task_id, result) do
     state =
