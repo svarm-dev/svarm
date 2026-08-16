@@ -220,5 +220,44 @@ defmodule Svarm.ApprovalTest do
       assert Approval.list_pending() == []
       assert %{status: "todo"} = KanbanBridge.get_task(task.id)
     end
+
+    test "list_pending omits budget holds; approve unlocks overage" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "Over cap",
+          body: "",
+          type: "code",
+          assignee: "cody",
+          status: "pending_approval"
+        })
+
+      :ok = Svarm.Budget.persist_hold(task.id)
+      assert Approval.list_pending() == []
+
+      assert :ok = Approval.approve(task.id)
+      refute Svarm.Budget.held?(task.id)
+      assert %{status: "todo"} = KanbanBridge.get_task(task.id)
+      assert MapSet.member?(:sys.get_state(Svarm.Orchestrator).overage_once, task.id)
+
+      :sys.replace_state(Svarm.Orchestrator, fn state ->
+        %{state | overage_once: MapSet.delete(state.overage_once, task.id)}
+      end)
+    end
+
+    test "reject of a budget hold clears wait_reason" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "Reject hold",
+          body: "",
+          type: "code",
+          assignee: "cody",
+          status: "pending_approval"
+        })
+
+      :ok = Svarm.Budget.persist_hold(task.id)
+      assert :ok = Approval.reject(task.id)
+      refute Svarm.Budget.held?(task.id)
+      assert %{status: "failed"} = KanbanBridge.get_task(task.id)
+    end
   end
 end

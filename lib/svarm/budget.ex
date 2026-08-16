@@ -88,9 +88,10 @@ defmodule Svarm.Budget do
   @spec approve_overage(String.t()) :: :ok | {:error, :not_held | :not_found}
   def approve_overage(task_id) when is_binary(task_id) do
     if held?(task_id) do
+      # Permit first (sync) so a concurrent tick cannot re-park before overage_once lands.
+      Orchestrator.mark_overage_approved(task_id)
       clear_hold(task_id)
       Approval.tracker().update_status(Approval.tracker_config(), task_id, "todo")
-      Orchestrator.mark_overage_approved(task_id)
 
       Events.broadcast_task_updated(%{
         id: task_id,

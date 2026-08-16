@@ -118,7 +118,7 @@ defmodule Svarm.Orchestrator do
   Cleared after the first spawn attempt.
   """
   def mark_overage_approved(task_id) when is_binary(task_id) do
-    GenServer.cast(__MODULE__, {:mark_overage_approved, task_id})
+    GenServer.call(__MODULE__, {:mark_overage_approved, task_id})
   end
 
   @doc """
@@ -326,12 +326,14 @@ defmodule Svarm.Orchestrator do
   end
 
   @impl true
-  def handle_cast({:mark_approved, task_id}, state) when is_binary(task_id) do
-    {:noreply, %{state | approved_once: MapSet.put(state.approved_once, task_id)}}
+  def handle_call({:mark_overage_approved, task_id}, _from, state) when is_binary(task_id) do
+    {:reply, :ok,
+     %{state | overage_once: MapSet.put(state.overage_once || MapSet.new(), task_id)}}
   end
 
-  def handle_cast({:mark_overage_approved, task_id}, state) when is_binary(task_id) do
-    {:noreply, %{state | overage_once: MapSet.put(state.overage_once, task_id)}}
+  @impl true
+  def handle_cast({:mark_approved, task_id}, state) when is_binary(task_id) do
+    {:noreply, %{state | approved_once: MapSet.put(state.approved_once, task_id)}}
   end
 
   ## reconcile: stall detection + tracker state sync (§8.5–§8.6)
@@ -685,10 +687,29 @@ defmodule Svarm.Orchestrator do
   end
 
   defp maybe_release_budget_hold(state, %{task_id: task_id}) do
+    case state.tracker.get_issue(state.tracker_config, task_id) do
+      {:ok, task} ->
+        if task.status in (state.terminal_states || []) do
+          Budget.clear_hold(task_id)
+          state
+        else
+          release_active_budget_hold(state, task)
+        end
+
+      _ ->
+        state
+    end
+  end
+
+  defp release_active_budget_hold(state, %{id: task_id} = task) do
     case Budget.check(task_id, state.budget_caps || %{}) do
       :ok ->
         Budget.clear_hold(task_id)
-        state.tracker.update_status(state.tracker_config, task_id, "todo")
+
+        if task.status == Approval.pending_status() do
+          state.tracker.update_status(state.tracker_config, task_id, "todo")
+        end
+
         Logger.info("task #{task_id} released from budget hold (cap now allows spawn)")
         state
 
