@@ -589,9 +589,6 @@ defmodule Svarm.Orchestrator do
       task.status == Approval.pending_status() ->
         {:cont, acc}
 
-      budget_held_without_permit?(acc, task.id) ->
-        {:cont, acc}
-
       not dependencies_met?(task, acc) ->
         {:cont, acc}
 
@@ -620,14 +617,20 @@ defmodule Svarm.Orchestrator do
   end
 
   defp maybe_gate_or_spawn(state, task) do
-    one_shot? = MapSet.member?(state.approved_once, task.id)
-
-    if not one_shot? and Approval.required?(state.approval, task, state.agents) do
-      :ok = state.tracker.update_status(state.tracker_config, task.id, Approval.pending_status())
-      Logger.info("task #{task.id} held for human approval")
+    if budget_held_without_permit?(state, task.id) do
       state
     else
-      maybe_budget_or_spawn(state, task)
+      one_shot? = MapSet.member?(state.approved_once, task.id)
+
+      if not one_shot? and Approval.required?(state.approval, task, state.agents) do
+        :ok =
+          state.tracker.update_status(state.tracker_config, task.id, Approval.pending_status())
+
+        Logger.info("task #{task.id} held for human approval")
+        state
+      else
+        maybe_budget_or_spawn(state, task)
+      end
     end
   end
 
