@@ -391,7 +391,11 @@ defmodule SvarmWeb.DashboardLive do
 
     ~H"""
     <div class="rounded-lg border border-base-300 bg-base-200/60 p-4">
-      <h2 class="text-sm font-semibold mb-3">Who's working</h2>
+      <h2 class="text-sm font-semibold mb-1">Who's working</h2>
+      <p class="text-[11px] opacity-60 mb-3">
+        24h wall-clock cost from the usage ledger. Estimated rows labeled.
+        Retry share is n/a unless the tracker records attempts.
+      </p>
       <%= if @show == [] do %>
         <p class="text-sm opacity-50">No agents registered. Add agents in Setup.</p>
       <% else %>
@@ -440,6 +444,16 @@ defmodule SvarmWeb.DashboardLive do
                     {agent.running_task_title}
                   </a>
                 <% end %>
+                <p class="text-[11px] font-mono opacity-60">
+                  <%= if Map.get(agent, :window_record_count, 0) > 0 do %>
+                    <span>
+                      {if Map.get(agent, :window_cost_estimated), do: "est. ", else: ""}${agent.window_cost_usd}
+                    </span>
+                    / 24h
+                    ·
+                  <% end %>
+                  retry {reliability_label(Map.get(agent, :reliability))}
+                </p>
               </div>
             </li>
           <% end %>
@@ -633,4 +647,7 @@ defmodule SvarmWeb.DashboardLive do
   defp format_age(s) when s < 60, do: "#{s}s ago"
   defp format_age(s) when s < 3600, do: "#{div(s, 60)}m ago"
   defp format_age(s), do: "#{div(s, 3600)}h ago"
+
+  defp reliability_label(nil), do: "n/a"
+  defp reliability_label(%{retried: retried, total: total}), do: "#{retried}/#{total}"
 end

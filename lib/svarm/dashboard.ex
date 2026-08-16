@@ -45,11 +45,19 @@ defmodule Svarm.Dashboard do
     Usage.Query.cost_since_inserted_at(since)
   end
 
+  @window_seconds 86_400
+
   @doc """
-  Per-agent roster: identity, current workload, completed count, running task info.
-  Merges agents.toml definitions with live task data.
+  Per-agent roster: identity, current workload, completed count, running task info,
+  plus 24h wall-clock cost (from the usage ledger) and retry share when attempts
+  are recorded.
   """
   def agent_roster(tasks, agents, orchestrator) do
+    cost_by_task =
+      DateTime.utc_now()
+      |> DateTime.add(-@window_seconds, :second)
+      |> Usage.Query.cost_since_by_task()
+
     active_assignees =
       orchestrator
       |> Map.get(:active_assignees, [])
@@ -69,6 +77,7 @@ defmodule Svarm.Dashboard do
         Enum.filter(tasks, &(AgentRegistry.normalize_assignee(&1.assignee) == key))
 
       tallies = tally_assigned(assigned_tasks, running_map)
+      {window_usd, window_estimated, window_records} = window_cost(assigned_tasks, cost_by_task)
 
       %{
         key: key,
@@ -84,7 +93,11 @@ defmodule Svarm.Dashboard do
         busy?: key in active_assignees,
         running_task_id: tallies.running_task && tallies.running_task.id,
         running_task_title: tallies.running_task && tallies.running_task.title,
-        running_started_ms: tallies.running_started_ms
+        running_started_ms: tallies.running_started_ms,
+        window_cost_usd: window_usd,
+        window_cost_estimated: window_estimated,
+        window_record_count: window_records,
+        reliability: reliability_rate(assigned_tasks)
       }
     end)
     |> Enum.sort_by(fn a -> {not a.busy?, -a.active_count, -a.total_assigned} end)
@@ -119,6 +132,35 @@ defmodule Svarm.Dashboard do
   end
 
   defp maybe_set_running(acc, _task, _running_map), do: acc
+
+  defp window_cost(assigned_tasks, cost_by_task) do
+    Enum.reduce(assigned_tasks, {0.0, false, 0}, fn task, {usd, estimated, count} ->
+      case Map.get(cost_by_task, task.id) do
+        %{total_cost_usd: cost, estimated: est, record_count: n} ->
+          {usd + cost, estimated or est == true, count + (n || 0)}
+
+        _ ->
+          {usd, estimated, count}
+      end
+    end)
+    |> then(fn {usd, estimated, count} -> {Float.round(usd, 2), estimated, count} end)
+  end
+
+  # attempts is a retry counter (0 until the first retry). All zeros → n/a
+  # (GitHub tracker does not persist attempts).
+  defp reliability_rate(tasks) when is_list(tasks) do
+    {retried, total} =
+      Enum.reduce(tasks, {0, 0}, fn task, {retried, total} ->
+        bump = if task_attempts(task) > 0, do: 1, else: 0
+        {retried + bump, total + 1}
+      end)
+
+    if retried > 0, do: %{retried: retried, total: total}, else: nil
+  end
+
+  defp task_attempts(%{attempts: n}) when is_integer(n), do: n
+  defp task_attempts(%{"attempts" => n}) when is_integer(n), do: n
+  defp task_attempts(_), do: 0
 
   @doc """
   Last N completed or failed tasks with cost, newest first.

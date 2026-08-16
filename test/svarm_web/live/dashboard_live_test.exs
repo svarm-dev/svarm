@@ -203,4 +203,41 @@ defmodule SvarmWeb.DashboardLiveTest do
     assert html =~ "Waiting on humans"
     assert html =~ "Dashboard"
   end
+
+  test "roster shows 24h estimated cost and retry n/a when attempts are zero", %{conn: conn} do
+    task =
+      KanbanBridge.create_task(%{
+        title: "Roster spend",
+        status: "done",
+        assignee: "demo"
+      })
+
+    Usage.append(%{
+      run_id: "run_roster_1",
+      task_id: task.id,
+      source: "worker",
+      provider: "openrouter",
+      model_id: "unknown-model",
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      estimated: true
+    })
+
+    {:ok, _view, html} = live(conn, ~p"/dashboard")
+
+    assert html =~ "24h wall-clock cost"
+    assert html =~ "est."
+    assert html =~ "/ 24h"
+    assert html =~ "retry n/a"
+  end
+
+  test "roster shows retry share when a task has been retried", %{conn: conn} do
+    KanbanBridge.create_task(%{title: "First try", status: "done", assignee: "demo"})
+    retried = KanbanBridge.create_task(%{title: "Retried", status: "done", assignee: "demo"})
+    KanbanBridge.update_attempts(retried.id, 1)
+
+    {:ok, _view, html} = live(conn, ~p"/dashboard")
+
+    assert html =~ "retry 1/2"
+  end
 end
