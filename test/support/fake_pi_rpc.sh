@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fake pi --mode rpc peer for unit tests (no network).
-# Modes via FAKE_PI_MODE: happy | secrets | hang | crash | ui | notify | malformed | protocol
+# Modes via FAKE_PI_MODE: happy | secrets | hang | crash | ui | notify | malformed | protocol | steer | steer_reject
 # Optional FAKE_PI_PIDFILE: write $$ after prompt so tests can assert death.
 set -euo pipefail
 
@@ -107,6 +107,41 @@ case "$mode" in
     ;;
   protocol)
     printf '%s\n' '{"type":"response","id":"prompt-1","success":false,"error":"bad prompt"}'
+    exit 0
+    ;;
+  steer)
+    printf '%s\n' '{"type":"response","id":"prompt-1","success":true}'
+    while IFS= read -r line; do
+      case "$line" in
+        *'"type":"steer"'*|*'"type": "steer"'*)
+          printf '%s\n' '{"type":"response","command":"steer","success":true}'
+          printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"got steer\n"}}'
+          printf '%s\n' '{"type":"agent_settled"}'
+          exit 0
+          ;;
+        *'"type":"abort"'*|*'"type": "abort"'*)
+          printf '%s\n' '{"type":"agent_settled"}'
+          exit 0
+          ;;
+      esac
+    done
+    exit 0
+    ;;
+  steer_reject)
+    printf '%s\n' '{"type":"response","id":"prompt-1","success":true}'
+    while IFS= read -r line; do
+      case "$line" in
+        *'"type":"steer"'*|*'"type": "steer"'*)
+          printf '%s\n' '{"type":"response","command":"steer","success":false,"error":"busy"}'
+          printf '%s\n' '{"type":"agent_settled"}'
+          exit 0
+          ;;
+        *'"type":"abort"'*|*'"type": "abort"'*)
+          printf '%s\n' '{"type":"agent_settled"}'
+          exit 0
+          ;;
+      esac
+    done
     exit 0
     ;;
   *)

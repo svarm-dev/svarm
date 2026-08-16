@@ -219,6 +219,16 @@ Answering uses the same board auth as approve/reject (`APPROVALS_*` + `board_aut
 
 ---
 
+## Steer a live run
+
+While a **PiRPC** run is `in_progress` (and not waiting on a question), the console has a **Steer** field. That queues a pi `steer` message: after the current tool calls finish, the agent sees your note before the next model call.
+
+- Same board auth as approve / answer.
+- **CLI** runs show the control disabled — steer is Pi RPC only.
+- Spend stays on the same run (`message_end` usage). This is not a new ticket.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Check |
@@ -226,7 +236,7 @@ Answering uses the same board auth as approve/reject (`APPROVALS_*` + `board_aut
 | Container exits immediately | Check `docker compose logs`. `SECRET_KEY_BASE` is generated if unset; set it in `.env` only for stable sessions |
 | Config is a directory named `WORKFLOW.md` | Old file mounts. Use directory mount `./svarm-config:/app/config` (current compose) and delete the bogus dirs |
 | `/approvals` 404 text about APPROVALS_* | Set `APPROVALS_USER` and `APPROVALS_PASSWORD` in `.env` |
-| Board approve/reject/mark-done/answer blocked without auth flash | Production needs `APPROVALS_*`; sign in via `/approvals` then return to the board. Local Mix without credentials is open only when `dev_routes` is on. Sticky proof expires after 8h by default (`BOARD_AUTH_TTL_SECONDS`) — re-sign in if mid-session mutations start failing |
+| Board approve/reject/mark-done/answer/steer blocked without auth flash | Production needs `APPROVALS_*`; sign in via `/approvals` then return to the board. Local Mix without credentials is open only when `dev_routes` is on. Sticky proof expires after 8h by default (`BOARD_AUTH_TTL_SECONDS`) — re-sign in if mid-session mutations start failing |
 | `/approvals` 401 | Wrong Basic Auth credentials |
 | Nothing happens | `docker compose logs -f` (polling / eligibility) |
 | Stuck before agent runs | `/approvals` (default is untrusted) |

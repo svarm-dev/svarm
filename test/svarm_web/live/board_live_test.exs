@@ -1,7 +1,7 @@
 defmodule SvarmWeb.BoardLiveTest do
   use SvarmWeb.LiveCase, async: false
 
-  alias Svarm.{AgentQuestion, Approval, Events, KanbanBridge, StreamEvent}
+  alias Svarm.{AgentQuestion, Approval, Events, KanbanBridge, RunSteer, StreamEvent}
 
   test "empty board shows first-value onboarding without column strip", %{conn: conn} do
     KanbanBridge.delete_all_tasks()
@@ -135,6 +135,7 @@ defmodule SvarmWeb.BoardLiveTest do
     assert html =~ "Waiting for answer"
     assert html =~ "Agent asked a question"
     assert html =~ "Ship it?"
+    refute html =~ "Steer this run"
 
     view
     |> element("#agent-question-#{task.id} button[phx-value-confirmed=true]")
@@ -188,6 +189,75 @@ defmodule SvarmWeb.BoardLiveTest do
     |> render_click()
 
     assert render(view) =~ "Authentication required"
+  end
+
+  test "selected in_progress PiRPC task steers via RunSteer", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Steer me",
+        status: "in_progress",
+        assignee: "default"
+      })
+
+    assert :ok = RunSteer.register(task.id)
+
+    {:ok, view, html} = live(conn, ~p"/board?task=#{task.id}")
+    assert html =~ "Steer this run"
+    refute html =~ "Steer is Pi RPC on a live run"
+
+    view
+    |> element("#steer-run-#{task.id} form")
+    |> render_submit(%{"task_id" => task.id, "message" => "try the other approach"})
+
+    assert_receive {:steer, "try the other approach"}
+    assert render(view) =~ "Steer sent"
+    RunSteer.unregister()
+  end
+
+  test "CLI in_progress console shows disabled steer copy", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "CLI run",
+        status: "in_progress",
+        assignee: "demo"
+      })
+
+    {:ok, _view, html} = live(conn, ~p"/board?task=#{task.id}")
+    assert html =~ "Steer is Pi RPC on a live run"
+    assert html =~ ~s(disabled)
+  end
+
+  test "unauthorized steer mutation flashes like approve/reject", %{conn: conn} do
+    prev_auth = Application.get_env(:svarm, :approvals_auth)
+    Application.put_env(:svarm, :approvals_auth, %{username: "op", password: "secret"})
+
+    on_exit(fn ->
+      if prev_auth == nil,
+        do: Application.delete_env(:svarm, :approvals_auth),
+        else: Application.put_env(:svarm, :approvals_auth, prev_auth)
+    end)
+
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Auth steer",
+        status: "in_progress",
+        assignee: "default"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/board?task=#{task.id}")
+
+    view
+    |> element("#steer-run-#{task.id} form")
+    |> render_submit(%{"task_id" => task.id, "message" => "nudge"})
+
+    assert render(view) =~ "Authentication required"
+    refute_received {:steer, _}
   end
 
   test "auth configured without credentials blocks approve", %{conn: conn} do

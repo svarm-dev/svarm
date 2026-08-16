@@ -3,8 +3,8 @@ defmodule Svarm.Runner.Cli do
   CLI runner adapter. Executes an agent as a subprocess via System.cmd/Port.
   Implements `Svarm.Runner` behaviour.
 
-  Mid-run UI inject (`extension_ui_request`) is not supported here — that
-  path lives on `Svarm.Runner.PiRPC` via `Svarm.AgentQuestion`.
+  Mid-run UI inject (`extension_ui_request`) and operator steer are not
+  supported here — those paths live on `Svarm.Runner.PiRPC`.
   """
   @behaviour Svarm.Runner
 

@@ -21,7 +21,8 @@ defmodule Svarm.Runner.PiRPC do
       dialog (missing id/prompt) fails the run — same as pre-Q&A fail-fast.
     - fire-and-forget UI (`notify`, `setStatus`, `setWidget`, `setTitle`,
       `set_editor_text`) → log a short line and continue (no response)
-    - `response` with `success: false` → fail (protocol / rejected command)
+    - `response` with `success: false` → fail (protocol / rejected command),
+      except rejected **steer** (board line, run continues)
 
   `agent_end` fires per-run but does NOT end the session — pi may
   auto-retry or compact. Only `agent_settled` means "fully done."
@@ -37,8 +38,8 @@ defmodule Svarm.Runner.PiRPC do
   but does **not** run this module's `kill_tree/1` (grandchildren may need the
   kernel/reaper). Keep **PiRPC timeout ≤ stall** so abort→kill_tree runs first.
 
-  ## pony tail: follow_up/steer not yet implemented.
-  Add when Symphony §7.1 multi-turn continuation is prioritized.
+  Operator **steer** (board → live session) uses pi RPC `type: steer`.
+  Follow-up-after-settle is not implemented.
   """
   @behaviour Svarm.Runner
 
@@ -46,7 +47,7 @@ defmodule Svarm.Runner.PiRPC do
 
   alias Svarm.Runner.LogFormat
 
-  alias Svarm.{AgentQuestion, Events, StreamEvent, Tracker, Workspace}
+  alias Svarm.{AgentQuestion, Events, RunSteer, StreamEvent, Tracker, Workspace}
 
   # 45 min wall-clock — long enough for real coding agents; keep ≤ orchestrator stall.
   @default_timeout_ms 45 * 60_000
@@ -154,6 +155,7 @@ defmodule Svarm.Runner.PiRPC do
           "[pi_rpc] session started (#{agent_config[:model]})\n"
         )
 
+        RunSteer.register(task.id)
         send_json(port, %{id: "prompt-1", type: "prompt", message: prompt})
 
         session0 = %{
@@ -187,6 +189,7 @@ defmodule Svarm.Runner.PiRPC do
           finish(task, tracker, tracker_config, session)
         after
           AgentQuestion.clear(task.id)
+          RunSteer.unregister()
           ensure_dead(port)
         end
 
@@ -348,6 +351,21 @@ defmodule Svarm.Runner.PiRPC do
           deadline,
           grace
         )
+
+      {:steer, text} when is_binary(text) ->
+        send_json(port, %{type: "steer", message: text})
+        Events.broadcast_agent_line(task_id, "\n[board] steered: #{text}\n")
+
+        drain_events(
+          port,
+          task_id,
+          log,
+          usage,
+          session,
+          buffer,
+          deadline,
+          grace
+        )
     after
       remaining_ms(effective_deadline(deadline, session)) ->
         now = System.monotonic_time(:millisecond)
@@ -502,6 +520,18 @@ defmodule Svarm.Runner.PiRPC do
 
   defp handle_event(%{"type" => "agent_settled"}, _task_id, log, usage, session) do
     {log, usage, %{session | settled: true}}
+  end
+
+  defp handle_event(
+         %{"type" => "response", "success" => false, "command" => "steer"} = event,
+         task_id,
+         log,
+         usage,
+         session
+       ) do
+    err = event["error"] || "steer rejected"
+    Events.broadcast_agent_line(task_id, "\n[board] steer rejected: #{inspect(err)}\n")
+    {log, usage, session}
   end
 
   defp handle_event(

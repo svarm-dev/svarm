@@ -20,6 +20,7 @@ defmodule Svarm.Application do
         {DNSCluster, query: Application.get_env(:svarm, :dns_cluster_query) || :ignore},
         {Phoenix.PubSub, name: Svarm.PubSub},
         {Registry, keys: :unique, name: Svarm.AgentQuestion.Inbox},
+        {Registry, keys: :unique, name: Svarm.RunSteer.Inbox},
         # Svärm orchestration — Repo must start before KanbanBridge / RunLog.Buffer
         Svarm.Repo,
         Svarm.RunLog.Buffer,
