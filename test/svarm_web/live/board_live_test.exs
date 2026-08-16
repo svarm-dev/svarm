@@ -379,6 +379,58 @@ defmodule SvarmWeb.BoardLiveTest do
     assert KanbanBridge.get_task(task.id).status == "todo"
   end
 
+  test "over-budget card shows approve-overage and unlocks the hold", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Overage card",
+        status: Approval.pending_status(),
+        assignee: "demo",
+        wait_reason: "budget_overage"
+      })
+
+    {:ok, view, html} = live(conn, ~p"/board")
+
+    assert html =~ "Over budget"
+    assert has_element?(view, "button", "Approve overage")
+
+    view |> element("button", "Approve overage") |> render_click()
+    assert KanbanBridge.get_task(task.id).status == "todo"
+    refute Svarm.Budget.held?(task.id)
+  end
+
+  test "approve-overage requires board mutation auth when credentials configured", %{conn: conn} do
+    prev_auth = Application.get_env(:svarm, :approvals_auth)
+    Application.put_env(:svarm, :approvals_auth, %{username: "op", password: "secret"})
+
+    on_exit(fn ->
+      if prev_auth == nil,
+        do: Application.delete_env(:svarm, :approvals_auth),
+        else: Application.put_env(:svarm, :approvals_auth, prev_auth)
+    end)
+
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Overage blocked",
+        status: Approval.pending_status(),
+        assignee: "demo",
+        wait_reason: "budget_overage"
+      })
+
+    {:ok, view, _html} =
+      conn
+      |> init_test_session(%{})
+      |> live(~p"/board")
+
+    view |> element("button", "Approve overage") |> render_click()
+    assert render(view) =~ "Authentication required"
+    assert KanbanBridge.get_task(task.id).status == Approval.pending_status()
+    assert Svarm.Budget.held?(task.id)
+  end
+
   test "auth configured without credentials blocks reject and complete_review", %{conn: conn} do
     prev_auth = Application.get_env(:svarm, :approvals_auth)
     Application.put_env(:svarm, :approvals_auth, %{username: "op", password: "secret"})

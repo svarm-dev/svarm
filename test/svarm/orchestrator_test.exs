@@ -108,6 +108,7 @@ defmodule Svarm.OrchestratorTest do
     setup do
       KanbanBridge.delete_all_tasks()
       Svarm.Repo.delete_all(Svarm.Usage.Record)
+      Svarm.Repo.delete_all(Svarm.Coordination)
 
       original = :sys.get_state(Orchestrator)
 
@@ -118,7 +119,10 @@ defmodule Svarm.OrchestratorTest do
             claimed: MapSet.new(),
             completed: MapSet.new(),
             approved_once: MapSet.new(),
+            overage_once: MapSet.new(),
             retry_attempts: %{},
+            budget_caps: %{},
+            budget_mode: :hard,
             last_budget_block: nil,
             last_run_entries: %{}
         }
@@ -305,16 +309,287 @@ defmodule Svarm.OrchestratorTest do
       end
     end
 
-    test "toolchain fail mode marks task failed and does not claim or spawn" do
-      missing = "svarm_missing_tool_#{System.unique_integer([:positive])}"
-
+    test "hold mode parks over-budget task as pending_approval" do
       task =
         KanbanBridge.create_task(%{
-          title: "toolchain fail",
+          title: "over budget hold",
           status: "todo",
           assignee: "demo"
         })
 
+      Svarm.Usage.append(
+        run_id: "rbh",
+        task_id: task.id,
+        source: "worker",
+        provider: "openrouter",
+        model_id: "x",
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        provider_cost_usd: 10.0,
+        estimated: false
+      )
+
+      original = :sys.get_state(Orchestrator)
+
+      local_config = %{
+        kind: :local,
+        active_states: ["todo", "in_progress"],
+        terminal_states: ["done", "failed", "review"],
+        ignored_assignees: []
+      }
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | tracker: Svarm.Tracker.Local,
+            tracker_config: local_config,
+            budget_caps: %{max_usd_per_ticket: 1.0},
+            budget_mode: :hold,
+            approval: %{mode: :off, trusted_assignees: MapSet.new()},
+            claimed: MapSet.delete(state.claimed, task.id),
+            running: Map.delete(state.running, task.id),
+            completed: MapSet.delete(state.completed, task.id),
+            overage_once: MapSet.new(),
+            last_budget_block: nil
+        }
+      end)
+
+      try do
+        send(Orchestrator, :tick)
+
+        assert wait_until(fn ->
+                 KanbanBridge.get_task(task.id).status == Approval.pending_status()
+               end)
+
+        held = KanbanBridge.get_task(task.id)
+        assert held.wait_reason == "budget_overage"
+        assert Svarm.Budget.held?(task.id)
+        refute task.id in Orchestrator.status().running_ids
+        assert Orchestrator.status().last_budget_block.mode == :hold
+      after
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "approve-overage allows one subsequent spawn in hold mode" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "overage unlock",
+          status: "todo",
+          assignee: "demo"
+        })
+
+      Svarm.Usage.append(
+        run_id: "rbu",
+        task_id: task.id,
+        source: "worker",
+        provider: "openrouter",
+        model_id: "x",
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        provider_cost_usd: 10.0,
+        estimated: false
+      )
+
+      original = :sys.get_state(Orchestrator)
+
+      local_config = %{
+        kind: :local,
+        active_states: ["todo", "in_progress"],
+        terminal_states: ["done", "failed", "review"],
+        ignored_assignees: []
+      }
+
+      demo_agent = %{
+        command: "true",
+        args: [],
+        env: %{},
+        adapter: "cli",
+        display_name: "Demo",
+        name: "demo"
+      }
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | tracker: Svarm.Tracker.Local,
+            tracker_config: local_config,
+            agents: Map.put(state.agents, "demo", demo_agent),
+            budget_caps: %{max_usd_per_ticket: 1.0},
+            budget_mode: :hold,
+            approval: %{mode: :off, trusted_assignees: MapSet.new()},
+            claimed: MapSet.delete(state.claimed, task.id),
+            running: Map.delete(state.running, task.id),
+            completed: MapSet.delete(state.completed, task.id),
+            overage_once: MapSet.new(),
+            last_budget_block: nil
+        }
+      end)
+
+      try do
+        send(Orchestrator, :tick)
+
+        assert wait_until(fn ->
+                 KanbanBridge.get_task(task.id).status == Approval.pending_status()
+               end)
+
+        assert :ok = Svarm.Budget.approve_overage(task.id)
+        assert KanbanBridge.get_task(task.id).status == "todo"
+        assert MapSet.member?(:sys.get_state(Orchestrator).overage_once, task.id)
+
+        send(Orchestrator, :tick)
+
+        assert wait_until(fn ->
+                 task.id in Orchestrator.status().running_ids or
+                   KanbanBridge.get_task(task.id).status in ["in_progress", "review", "done"]
+               end)
+      after
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "raising the cap releases a budget hold without approve-overage" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "cap raised",
+          status: "todo",
+          assignee: "demo"
+        })
+
+      Svarm.Usage.append(
+        run_id: "rbr",
+        task_id: task.id,
+        source: "worker",
+        provider: "openrouter",
+        model_id: "x",
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        provider_cost_usd: 10.0,
+        estimated: false
+      )
+
+      original = :sys.get_state(Orchestrator)
+
+      local_config = %{
+        kind: :local,
+        active_states: ["todo", "in_progress"],
+        terminal_states: ["done", "failed", "review"],
+        ignored_assignees: []
+      }
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | tracker: Svarm.Tracker.Local,
+            tracker_config: local_config,
+            budget_caps: %{max_usd_per_ticket: 1.0},
+            budget_mode: :hold,
+            approval: %{mode: :off, trusted_assignees: MapSet.new()},
+            claimed: MapSet.delete(state.claimed, task.id),
+            running: Map.delete(state.running, task.id),
+            completed: MapSet.delete(state.completed, task.id),
+            overage_once: MapSet.new(),
+            last_budget_block: nil
+        }
+      end)
+
+      try do
+        send(Orchestrator, :tick)
+
+        assert wait_until(fn ->
+                 KanbanBridge.get_task(task.id).status == Approval.pending_status()
+               end)
+
+        :sys.replace_state(Orchestrator, fn state ->
+          %{state | budget_caps: %{max_usd_per_ticket: 100.0}}
+        end)
+
+        send(Orchestrator, :tick)
+
+        assert wait_until(fn ->
+                 not Svarm.Budget.held?(task.id) and
+                   KanbanBridge.get_task(task.id).status != Approval.pending_status()
+               end)
+      after
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "raising the cap does not resurrect a rejected budget hold" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "rejected hold",
+          status: "todo",
+          assignee: "demo"
+        })
+
+      Svarm.Usage.append(
+        run_id: "rbrj",
+        task_id: task.id,
+        source: "worker",
+        provider: "openrouter",
+        model_id: "x",
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        provider_cost_usd: 10.0,
+        estimated: false
+      )
+
+      original = :sys.get_state(Orchestrator)
+
+      local_config = %{
+        kind: :local,
+        active_states: ["todo", "in_progress"],
+        terminal_states: ["done", "failed", "review"],
+        ignored_assignees: []
+      }
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | tracker: Svarm.Tracker.Local,
+            tracker_config: local_config,
+            budget_caps: %{max_usd_per_ticket: 1.0},
+            budget_mode: :hold,
+            approval: %{mode: :off, trusted_assignees: MapSet.new()},
+            claimed: MapSet.delete(state.claimed, task.id),
+            running: Map.delete(state.running, task.id),
+            completed: MapSet.delete(state.completed, task.id),
+            overage_once: MapSet.new(),
+            last_budget_block: nil
+        }
+      end)
+
+      try do
+        send(Orchestrator, :tick)
+
+        assert wait_until(fn ->
+                 KanbanBridge.get_task(task.id).status == Approval.pending_status()
+               end)
+
+        assert :ok = Approval.reject(task.id)
+        assert KanbanBridge.get_task(task.id).status == "failed"
+
+        :sys.replace_state(Orchestrator, fn state ->
+          %{state | budget_caps: %{max_usd_per_ticket: 100.0}}
+        end)
+
+        before = Orchestrator.status().last_tick_mono_ms
+        send(Orchestrator, :tick)
+
+        assert wait_until(fn ->
+                 Orchestrator.status().last_tick_mono_ms != before
+               end)
+
+        assert KanbanBridge.get_task(task.id).status == "failed"
+        refute Svarm.Budget.held?(task.id)
+      after
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "toolchain fail mode marks task failed and does not claim or spawn" do
+      missing = "svarm_missing_tool_#{System.unique_integer([:positive])}"
       original = :sys.get_state(Orchestrator)
 
       local_config = %{
@@ -340,15 +615,27 @@ defmodule Svarm.OrchestratorTest do
             tracker_config: local_config,
             agents: agents,
             budget_caps: %{},
+            budget_mode: :hard,
+            overage_once: MapSet.new(),
             approval: %{mode: :off, trusted_assignees: MapSet.new()},
-            claimed: MapSet.delete(state.claimed, task.id),
-            running: Map.delete(state.running, task.id),
-            completed: MapSet.delete(state.completed, task.id),
+            claimed: MapSet.new(),
+            running: %{},
+            completed: MapSet.new(),
             last_budget_block: nil
         }
       end)
 
       try do
+        # Configure before insert so a queued poll cannot gate `demo` (untrusted).
+        flush_orchestrator()
+
+        task =
+          KanbanBridge.create_task(%{
+            title: "toolchain fail",
+            status: "todo",
+            assignee: "demo"
+          })
+
         send(Orchestrator, :tick)
 
         assert wait_until(fn ->
@@ -366,14 +653,6 @@ defmodule Svarm.OrchestratorTest do
 
     test "toolchain warn mode still claims and spawns the agent" do
       missing = "svarm_missing_tool_#{System.unique_integer([:positive])}"
-
-      task =
-        KanbanBridge.create_task(%{
-          title: "toolchain warn",
-          status: "todo",
-          assignee: "demo"
-        })
-
       original = :sys.get_state(Orchestrator)
 
       local_config = %{
@@ -383,34 +662,48 @@ defmodule Svarm.OrchestratorTest do
         ignored_assignees: []
       }
 
-      demo = Map.fetch!(original.agents, "demo")
-
-      agents =
-        Map.put(original.agents, "demo", %{
-          demo
-          | tools: [missing],
-            tools_mode: :warn
-        })
+      demo_agent = %{
+        command: "true",
+        args: [],
+        env: %{},
+        adapter: "cli",
+        display_name: "Demo",
+        name: "demo",
+        tools: [missing],
+        tools_mode: :warn
+      }
 
       :sys.replace_state(Orchestrator, fn state ->
         %{
           state
           | tracker: Svarm.Tracker.Local,
             tracker_config: local_config,
-            agents: agents,
+            agents: Map.put(state.agents, "demo", demo_agent),
             budget_caps: %{},
+            budget_mode: :hard,
+            overage_once: MapSet.new(),
             approval: %{mode: :off, trusted_assignees: MapSet.new()},
-            claimed: MapSet.delete(state.claimed, task.id),
-            running: Map.delete(state.running, task.id),
-            completed: MapSet.delete(state.completed, task.id),
+            claimed: MapSet.new(),
+            running: %{},
+            completed: MapSet.new(),
             last_budget_block: nil
         }
       end)
 
       try do
+        # Configure before insert so a queued poll cannot gate `demo` (untrusted).
+        flush_orchestrator()
+
+        task =
+          KanbanBridge.create_task(%{
+            title: "toolchain warn",
+            status: "todo",
+            assignee: "demo"
+          })
+
         send(Orchestrator, :tick)
 
-        # Demo agent should still start (warn does not block).
+        # Warn does not block spawn (`true` exits 0 fast).
         assert wait_until(fn ->
                  st = :sys.get_state(Orchestrator)
                  t = KanbanBridge.get_task(task.id)
@@ -419,8 +712,6 @@ defmodule Svarm.OrchestratorTest do
                    t.status in ["in_progress", "review", "done", "failed"]
                end)
 
-        # Must not have failed solely at preflight before any claim/run.
-        # (Demo may finish to review/done; never stuck at todo without claim.)
         st = :sys.get_state(Orchestrator)
         t = KanbanBridge.get_task(task.id)
 

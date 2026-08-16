@@ -57,6 +57,17 @@ defmodule Svarm.BoardWaitReasonTest do
              %{"prompt" => "Which file?"}
   end
 
+  test "wait_reason pending_approval becomes :budget_overage when held" do
+    assert Board.wait_reason(%{status: "pending_approval"}) == :approval
+
+    assert Board.wait_reason(%{
+             status: "pending_approval",
+             wait_reason: "budget_overage"
+           }) == :budget_overage
+
+    assert Board.wait_reason_label(:budget_overage) == "Over budget"
+  end
+
   test "attach_coordination overlays wait fields from coordination" do
     task =
       KanbanBridge.create_task(%{title: "github-shaped", status: "in_progress", assignee: "demo"})

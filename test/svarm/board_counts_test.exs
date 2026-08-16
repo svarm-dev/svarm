@@ -26,11 +26,17 @@ defmodule Svarm.BoardCountsTest do
 
   test "wait_reason maps human and agent states" do
     assert Board.wait_reason(%{status: "pending_approval"}) == :approval
+
+    assert Board.wait_reason(%{status: "pending_approval", wait_reason: "budget_overage"}) ==
+             :budget_overage
+
+    assert Board.wait_reason(%{status: "todo", wait_reason: "budget_overage"}) == :budget_overage
     assert Board.wait_reason(%{status: "review"}) == :review
     assert Board.wait_reason(%{status: "in_progress"}) == :running
     assert Board.wait_reason(%{status: "failed"}) == :failed
     assert Board.wait_reason(%{status: "todo"}) == nil
     assert Board.wait_reason_label(:approval) == "Needs approval"
+    assert Board.wait_reason_label(:budget_overage) == "Over budget"
     assert Board.wait_reason_label(:review) == "Needs review"
   end
 
@@ -45,8 +51,25 @@ defmodule Svarm.BoardCountsTest do
 
     assert Board.human_wait_summary(tasks) == %{
              pending_approval: 2,
+             budget_overage: 0,
              review: 1,
              total: 3
+           }
+  end
+
+  test "human_wait_summary splits budget overage from trust-gate approval" do
+    tasks = [
+      %{status: "pending_approval", wait_reason: "budget_overage"},
+      %{status: "pending_approval"},
+      %{status: "todo", wait_reason: "budget_overage"},
+      %{status: "review"}
+    ]
+
+    assert Board.human_wait_summary(tasks) == %{
+             pending_approval: 1,
+             budget_overage: 2,
+             review: 1,
+             total: 4
            }
   end
 

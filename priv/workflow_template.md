@@ -36,6 +36,11 @@ approval:
   trusted_assignees: ["default", "demo_research", "demo_docs"]
 workspace:
   root: ~/svarm_workspaces
+# Optional spend caps (unset = no stop). Mode hard skips spawn; hold parks for overage approval.
+# budget:
+#   max_usd_per_ticket: 5
+#   max_usd_per_day: 25
+#   mode: hard                   # hard | hold
 ---
 
 You are an autonomous engineer. Complete the task below on a new branch,

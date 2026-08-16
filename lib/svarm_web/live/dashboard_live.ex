@@ -250,7 +250,11 @@ defmodule SvarmWeb.DashboardLive do
       <div>
         <p class="text-sm font-semibold">Waiting on humans</p>
         <p class="text-xs opacity-70 mt-0.5">
-          Approvals {@summary.pending_approval} · Review {@summary.review} · Total {@summary.total}
+          Approvals {@summary.pending_approval}
+          <%= if Map.get(@summary, :budget_overage, 0) > 0 do %>
+            · Over budget {@summary.budget_overage}
+          <% end %>
+          · Review {@summary.review} · Total {@summary.total}
         </p>
       </div>
       <div class="flex gap-2">

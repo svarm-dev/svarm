@@ -315,7 +315,7 @@ mix test --only <tag>
 
 - **Usage ledger is append-only** — never update or delete ledger rows; correct with new records.
 - **Store tokens + model_id; compute cost at query time** from rate tables (not a frozen dollar column as source of truth).
-- **Budget checks belong in preflight/dispatch**, not only on dashboards after spend. Hard caps (`SVARM_BUDGET_*` / WORKFLOW `budget.*`) hard-stop **new** spawns; estimated spend counts toward the cap; in-flight runs are not killed.
+- **Budget checks belong in preflight/dispatch**, not only on dashboards after spend. Caps (`SVARM_BUDGET_*` / WORKFLOW `budget.*`) hard-stop **new** spawns (`hard`) or park for overage approval (`hold`); estimated spend counts toward the cap; in-flight runs are not killed.
 - **Flag estimates** — never present estimated costs as exact.
 
 ## Security
