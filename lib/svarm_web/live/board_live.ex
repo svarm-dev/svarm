@@ -2,7 +2,7 @@ defmodule SvarmWeb.BoardLive do
   @moduledoc "Real-time board and agent run log (agent work · human judgment)."
   use SvarmWeb, :live_view
 
-  alias Svarm.{AgentQuestion, AgentRegistry, Approval, Board, Events, StreamEvent, Usage}
+  alias Svarm.{AgentQuestion, AgentRegistry, Approval, Board, Budget, Events, StreamEvent, Usage}
   alias SvarmWeb.Plugs.ApprovalsAuth
 
   @max_log_lines 400
@@ -130,6 +130,28 @@ defmodule SvarmWeb.BoardLive do
 
           {:error, reason} ->
             {:noreply, put_flash(socket, :error, Approval.flash_error(reason))}
+        end
+    end
+  end
+
+  def handle_event("approve_overage", %{"id" => id}, socket) do
+    case authorize_board_mutation(socket) do
+      {:error, :unauthorized} ->
+        {:noreply, put_flash(socket, :error, unauthorized_mutation_flash("approve overage"))}
+
+      :ok ->
+        case Budget.approve_overage(id) do
+          :ok ->
+            {:noreply,
+             socket
+             |> put_flash(:info, "Approved overage for #{id}")
+             |> load_board()
+             |> then(fn s ->
+               if s.assigns.selected_task_id == id, do: select_task(s, id), else: s
+             end)}
+
+          {:error, reason} ->
+            {:noreply, put_flash(socket, :error, Budget.flash_error(reason))}
         end
     end
   end
@@ -887,7 +909,12 @@ defmodule SvarmWeb.BoardLive do
           <span class="font-mono">{budget_block[:task_id] || budget_block["task_id"]}</span>
           ({budget_block[:scope] || budget_block["scope"]}: spent ${budget_block[:spent] ||
             budget_block["spent"]} / cap ${budget_block[:cap] || budget_block["cap"]}).
-          In-flight runs continue; raise or clear caps to dispatch more.
+          <%= if (budget_block[:mode] || budget_block["mode"]) == :hold or
+                   (budget_block[:mode] || budget_block["mode"]) == "hold" do %>
+            Ticket held for overage approval; in-flight runs continue.
+          <% else %>
+            In-flight runs continue; raise or clear caps to dispatch more.
+          <% end %>
         </p>
       <% end %>
 
@@ -1006,6 +1033,7 @@ defmodule SvarmWeb.BoardLive do
             card.retrying && "ring-2 ring-warning/40",
             card.wait_reason in [
               :approval,
+              :budget_overage,
               :review,
               :ci_circuit,
               :changes_requested,
@@ -1054,6 +1082,18 @@ defmodule SvarmWeb.BoardLive do
               <% end %>
             </button>
 
+            <%= if card.wait_reason == :budget_overage do %>
+              <div class="mt-2 flex gap-1">
+                <button
+                  type="button"
+                  phx-click="approve_overage"
+                  phx-value-id={task.id}
+                  class="btn btn-primary btn-xs"
+                >
+                  Approve overage
+                </button>
+              </div>
+            <% end %>
             <%= if card.wait_reason == :approval do %>
               <div class="mt-2 flex gap-1">
                 <button
@@ -1207,7 +1247,25 @@ defmodule SvarmWeb.BoardLive do
             </div>
           <% end %>
 
-          <%= if @task.status == Approval.pending_status() do %>
+          <%= if Board.wait_reason(@task) == :budget_overage do %>
+            <div class="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
+              <p class="font-medium">Over budget</p>
+              <p class="mt-0.5 opacity-80">
+                Spend is at or above the cap. Approve once to allow the next spawn, or raise the cap.
+              </p>
+              <button
+                type="button"
+                phx-click="approve_overage"
+                phx-value-id={@task.id}
+                class="btn btn-primary btn-sm mt-2"
+              >
+                Approve overage
+              </button>
+            </div>
+          <% end %>
+
+          <%= if @task.status == Approval.pending_status() and
+                   Board.wait_reason(@task) != :budget_overage do %>
             <div class="flex flex-wrap items-center gap-2">
               <button
                 type="button"
@@ -1369,7 +1427,13 @@ defmodule SvarmWeb.BoardLive do
         <%= if @card.retrying do %>
           <span class="badge badge-warning badge-xs">retry</span>
         <% else %>
-          <%= if @card.wait_reason in [:approval, :review, :ci_circuit, :changes_requested] do %>
+          <%= if @card.wait_reason in [
+                :approval,
+                :budget_overage,
+                :review,
+                :ci_circuit,
+                :changes_requested
+              ] do %>
             <span
               class={[
                 "badge badge-xs",

@@ -10,10 +10,12 @@ defmodule Svarm.BudgetTest do
 
     prev_ticket = System.get_env("SVARM_BUDGET_MAX_USD_PER_TICKET")
     prev_day = System.get_env("SVARM_BUDGET_MAX_USD_PER_DAY")
+    prev_mode = System.get_env("SVARM_BUDGET_MODE")
 
     on_exit(fn ->
       restore_env("SVARM_BUDGET_MAX_USD_PER_TICKET", prev_ticket)
       restore_env("SVARM_BUDGET_MAX_USD_PER_DAY", prev_day)
+      restore_env("SVARM_BUDGET_MODE", prev_mode)
     end)
 
     :ok
@@ -118,5 +120,15 @@ defmodule Svarm.BudgetTest do
 
     assert {:error, :budget_exceeded, %{scope: :ticket}} =
              Budget.check(task_id, %{max_usd_per_ticket: summary.total_cost_usd})
+  end
+
+  test "load_mode defaults to hard and rejects unknown values" do
+    System.delete_env("SVARM_BUDGET_MODE")
+    assert Budget.load_mode(nil) == :hard
+    assert Budget.load_mode(%{"budget" => %{"mode" => "hold"}}) == :hold
+    assert Budget.load_mode(%{"budget" => %{"mode" => "skip"}}) == :hard
+
+    System.put_env("SVARM_BUDGET_MODE", "hold")
+    assert Budget.load_mode(%{"budget" => %{"mode" => "hard"}}) == :hold
   end
 end

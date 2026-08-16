@@ -123,7 +123,8 @@ Docker mounts `./svarm-config/` as a directory. On first boot, missing files are
 | `BOARD_AUTH_TTL_SECONDS` | Optional TTL for sticky board mutation proof after Basic Auth (default `28800` = 8h; see [SECURITY.md](SECURITY.md)) |
 | `GITHUB_TOKEN` | PAT for GitHub Issues (`repo` scope) |
 | `OPENROUTER_API_KEY` | LLM access for agents — must also be listed in the agent `env` block in `agents.toml` |
-| `SVARM_BUDGET_MAX_USD_PER_TICKET` / `SVARM_BUDGET_MAX_USD_PER_DAY` | Optional hard USD caps (or WORKFLOW `budget.*`); hard-stop **new** spawns only |
+| `SVARM_BUDGET_MAX_USD_PER_TICKET` / `SVARM_BUDGET_MAX_USD_PER_DAY` | Optional USD caps (or WORKFLOW `budget.*`); block **new** spawns only |
+| `SVARM_BUDGET_MODE` | `hard` (default: skip spawn) or `hold` (park ticket for overage approval) |
 | `SVARM_BASE_URL` | Links in issue comments (e.g. `http://localhost:4000`) |
 | `PHX_HOST` | Public hostname for URLs + LiveView origin checks (prod) |
 | `PHX_CHECK_ORIGIN` | Optional comma-separated origin allow-list (default: `//PHX_HOST`) |
@@ -153,7 +154,7 @@ GitHub App identity (bot comments): [docs/github-app.md](docs/github-app.md).
 
 - Local board + GitHub Issues + pi/CLI agents + OpenRouter
 - Approvals (one-shot after human approve); board mutations require `APPROVALS_*` in Docker/prod (**fail closed** if unset)
-- Per-ticket cost (estimated labeled); optional hard daily/per-ticket USD caps that block **new** spawns
+- Per-ticket cost (estimated labeled); optional daily/per-ticket USD caps that block **new** spawns (`hard` skip, or `hold` for a one-shot overage approval)
 - Allowlisted agent child env; usage ledger export (`mix svarm.export_usage`)
 - Optional **in-app `/setup`** (encrypted keys; file/env still work); human-wait visibility on board/dashboard
 - **Run console** on the ticket — typed narrative/tool/run chrome, late-join from durable log, deep link `/board?task=…&attach=1`
@@ -161,7 +162,7 @@ GitHub App identity (bot comments): [docs/github-app.md](docs/github-app.md).
 - **Review-resume** — Changes requested chip when GitHub reviews ask for changes; optional re-dispatch on first request (default **off**; `review_resume` / `SVARM_REVIEW_RESUME_ENABLED`; shares the CI resume circuit)
 - **Mid-run Q&A** — a PiRPC agent can pause on a dialog; **Waiting for answer** chip + board form (confirm / select / input). CLI inject is unsupported. Dismiss or the 15-minute deadline **continues** the run.
 
-**Not shipped yet:** Linear/Jira trackers, multi-provider/multi-agent registry UI, managed hosting, mid-run budget kill of in-flight workers, steer / follow-up in the console, soft budget hold mode. "Adapter-ready" means the behaviours exist; it does not mean every adapter is built.
+**Not shipped yet:** Linear/Jira trackers, multi-provider/multi-agent registry UI, managed hosting, mid-run budget kill of in-flight workers, steer / follow-up in the console. "Adapter-ready" means the behaviours exist; it does not mean every adapter is built.
 
 Optional UI config after the demo: open `/setup` (same auth as `/approvals` in Docker). Details: [GETTING-STARTED.md](GETTING-STARTED.md).
 

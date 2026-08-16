@@ -67,7 +67,9 @@ Agent Port processes receive a **small allowlist** of host env vars (PATH, HOME,
 
 ### Hard spend caps
 
-Optional hard caps at preflight: `SVARM_BUDGET_MAX_USD_PER_TICKET` / `SVARM_BUDGET_MAX_USD_PER_DAY` (env) and WORKFLOW `budget.max_usd_per_ticket` / `budget.max_usd_per_day`. When both sources set a field, the **stricter** (lower) value wins. Caps block **new** spawns; in-flight runs are not killed. Estimated ledger rows count toward the cap. Unset = no hard stop.
+Optional caps at preflight: `SVARM_BUDGET_MAX_USD_PER_TICKET` / `SVARM_BUDGET_MAX_USD_PER_DAY` (env) and WORKFLOW `budget.max_usd_per_ticket` / `budget.max_usd_per_day`. When both sources set a field, the **stricter** (lower) value wins. Caps block **new** spawns; in-flight runs are not killed. Estimated ledger rows count toward the cap. Unset = no hard stop.
+
+Mode (`SVARM_BUDGET_MODE` / WORKFLOW `budget.mode`): **`hard`** (default) skips the spawn; **`hold`** moves the ticket to a visible over-budget wait until a board **Approve overage** (one subsequent spawn) or the cap is raised.
 
 ## Production hardening
 

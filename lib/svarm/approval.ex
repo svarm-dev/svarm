@@ -10,7 +10,7 @@ defmodule Svarm.Approval do
   orchestrator and board — not a hardcoded Local adapter.
   """
 
-  alias Svarm.{ProfileRouter, Settings, Tracker, Workflow}
+  alias Svarm.{Budget, ProfileRouter, Settings, Tracker, Workflow}
   alias Svarm.Workflow.Config, as: WorkflowConfig
 
   @status_pending "pending_approval"
@@ -113,7 +113,7 @@ defmodule Svarm.Approval do
   def list_pending do
     {adapter, config} = resolve_tracker()
     {:ok, issues} = adapter.list_issues(config, status: @status_pending)
-    issues
+    Enum.reject(issues, &Budget.held?(&1.id))
   end
 
   def approve(task_id) when is_binary(task_id) do
@@ -124,11 +124,15 @@ defmodule Svarm.Approval do
   defp do_approve(adapter, config, task_id) do
     case adapter.get_issue(config, task_id) do
       {:ok, %{status: @status_pending}} ->
-        :ok = adapter.update_status(config, task_id, "todo")
-        # One-shot: next poll may dispatch without re-entering pending_approval
-        Svarm.Orchestrator.mark_approved(task_id)
-        broadcast(:approved, task_id)
-        :ok
+        if Budget.held?(task_id) do
+          Budget.approve_overage(task_id)
+        else
+          :ok = adapter.update_status(config, task_id, "todo")
+          # One-shot: next poll may dispatch without re-entering pending_approval
+          Svarm.Orchestrator.mark_approved(task_id)
+          broadcast(:approved, task_id)
+          :ok
+        end
 
       {:ok, %{status: other}} ->
         {:error, {:not_pending, other}}
@@ -150,6 +154,7 @@ defmodule Svarm.Approval do
   defp do_reject(adapter, config, task_id, to_status) do
     case adapter.get_issue(config, task_id) do
       {:ok, %{status: @status_pending}} ->
+        if Budget.held?(task_id), do: Budget.clear_hold(task_id)
         :ok = adapter.update_status(config, task_id, to_status)
         broadcast(:rejected, task_id)
         :ok

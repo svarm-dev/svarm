@@ -81,6 +81,13 @@ defmodule Svarm.Coordination do
     end
   end
 
+  @doc "Coordination rows with a given wait_reason (e.g. budget overage holds)."
+  @spec list_by_wait_reason(String.t()) :: [t()]
+  def list_by_wait_reason(reason) when is_binary(reason) do
+    from(c in __MODULE__, where: c.wait_reason == ^reason)
+    |> Repo.all()
+  end
+
   @doc """
   Upsert coordination fields for `task_id`.
 

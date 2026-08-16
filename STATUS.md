@@ -26,9 +26,9 @@ If nothing material changed, **do not** edit this file.
 | Field | Value |
 |-------|--------|
 | **Updated** | 2026-08-16 |
-| **`main`** | v0.1.5 |
+| **`main`** | v0.1.5 + soft budget hold (#45) |
 | **Latest tag** | **v0.1.5** (2026-08-14) |
-| **Unreleased** | dashboard agent 24h cost + retry share (#54) |
+| **Unreleased** | soft budget hold (#45); dashboard agent 24h cost + retry share (#54) |
 | **Focus** | _(none — do not auto-claim #53 / #118)_ |
 | **Next** | do not auto-claim #53 / #118 |
 
@@ -46,5 +46,5 @@ Format: `YYYY-MM-DD · one sentence · issue/PR link`
 ## Session log (newest first, max 3)
 
 - 2026-08-16 · dashboard roster 24h cost + retry n/a (#54)
+- 2026-08-16 · soft budget hold (#45); Focus → #54
 - 2026-08-14 · cut v0.1.5 (#142); README Status honest about mid-run Q&A
-- 2026-08-14 · mid-run Q&A board UI (#116); epic #51 complete
