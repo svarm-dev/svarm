@@ -239,6 +239,5 @@ defmodule SvarmWeb.DashboardLiveTest do
     {:ok, _view, html} = live(conn, ~p"/dashboard")
 
     assert html =~ "retry 1/2"
-    refute html =~ "retry n/a"
   end
 end

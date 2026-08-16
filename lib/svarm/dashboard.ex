@@ -149,14 +149,13 @@ defmodule Svarm.Dashboard do
   # attempts is a retry counter (0 until the first retry). All zeros → n/a
   # (GitHub tracker does not persist attempts).
   defp reliability_rate(tasks) when is_list(tasks) do
-    attempts = Enum.map(tasks, &task_attempts/1)
+    {retried, total} =
+      Enum.reduce(tasks, {0, 0}, fn task, {retried, total} ->
+        bump = if task_attempts(task) > 0, do: 1, else: 0
+        {retried + bump, total + 1}
+      end)
 
-    if Enum.any?(attempts, &(&1 > 0)) do
-      retried = Enum.count(attempts, &(&1 > 0))
-      %{retried: retried, total: length(tasks)}
-    else
-      nil
-    end
+    if retried > 0, do: %{retried: retried, total: total}, else: nil
   end
 
   defp task_attempts(%{attempts: n}) when is_integer(n), do: n
