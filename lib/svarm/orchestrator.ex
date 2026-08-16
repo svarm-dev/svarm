@@ -88,7 +88,9 @@ defmodule Svarm.Orchestrator do
     claimed: MapSet.new(),
     completed: MapSet.new(),
     approved_once: MapSet.new(),
+    overage_once: MapSet.new(),
     budget_caps: %{},
+    budget_mode: :hard,
     ci_resume_caps: %{enabled: false, max_attempts: 3, skip_draft: true},
     review_resume_caps: %{enabled: false},
     last_run_entries: %{},
@@ -109,6 +111,14 @@ defmodule Svarm.Orchestrator do
   """
   def mark_approved(task_id) when is_binary(task_id) do
     GenServer.cast(__MODULE__, {:mark_approved, task_id})
+  end
+
+  @doc """
+  Record a one-shot overage approval so the next poll can spawn despite the cap.
+  Cleared after the first spawn attempt.
+  """
+  def mark_overage_approved(task_id) when is_binary(task_id) do
+    GenServer.cast(__MODULE__, {:mark_overage_approved, task_id})
   end
 
   @doc """
@@ -320,6 +330,10 @@ defmodule Svarm.Orchestrator do
     {:noreply, %{state | approved_once: MapSet.put(state.approved_once, task_id)}}
   end
 
+  def handle_cast({:mark_overage_approved, task_id}, state) when is_binary(task_id) do
+    {:noreply, %{state | overage_once: MapSet.put(state.overage_once, task_id)}}
+  end
+
   ## reconcile: stall detection + tracker state sync (§8.5–§8.6)
   # Per-tick: kill stalled workers, then refresh state from tracker for any
   # in-flight (running/claimed/retrying) tasks. If tracker now shows terminal
@@ -439,6 +453,7 @@ defmodule Svarm.Orchestrator do
       state
       | tracker_config: Settings.Resolve.tracker_overlay(base),
         budget_caps: Budget.load_caps(nil),
+        budget_mode: Budget.load_mode(nil),
         ci_resume_caps: CiResume.load_caps(nil),
         review_resume_caps: ReviewResume.load_caps(nil)
     }
@@ -477,6 +492,7 @@ defmodule Svarm.Orchestrator do
         terminal_states: cfg.terminal_states,
         tracker_config: Settings.Resolve.tracker_overlay(cfg.tracker_config),
         budget_caps: Budget.load_caps(raw_config),
+        budget_mode: Budget.load_mode(raw_config),
         ci_resume_caps: CiResume.load_caps(raw_config),
         review_resume_caps: ReviewResume.load_caps(raw_config)
     }
@@ -534,6 +550,8 @@ defmodule Svarm.Orchestrator do
   end
 
   defp dispatch(state) do
+    state = maybe_release_budget_holds(state)
+
     case state.tracker.list_eligible(state.tracker_config) do
       {:ok, candidates} ->
         Enum.reduce_while(candidates, state, &dispatch_candidate/2)
@@ -569,6 +587,9 @@ defmodule Svarm.Orchestrator do
         {:cont, acc}
 
       task.status == Approval.pending_status() ->
+        {:cont, acc}
+
+      budget_held_without_permit?(acc, task.id) ->
         {:cont, acc}
 
       not dependencies_met?(task, acc) ->
@@ -611,20 +632,70 @@ defmodule Svarm.Orchestrator do
   end
 
   defp maybe_budget_or_spawn(state, task) do
-    case Budget.check(task.id, state.budget_caps || %{}) do
+    if MapSet.member?(state.overage_once || MapSet.new(), task.id) do
+      maybe_toolchain_or_spawn(state, task)
+    else
+      case Budget.check(task.id, state.budget_caps || %{}) do
+        :ok ->
+          maybe_toolchain_or_spawn(state, task)
+
+        {:error, :budget_exceeded, meta} ->
+          handle_budget_exceeded(state, task, meta)
+      end
+    end
+  end
+
+  defp handle_budget_exceeded(state, task, meta) do
+    Logger.warning(
+      "budget_exceeded task=#{task.id} mode=#{state.budget_mode} scope=#{meta.scope} spent=#{meta.spent} cap=#{meta.cap}"
+    )
+
+    block =
+      Map.merge(meta, %{
+        task_id: task.id,
+        at: System.system_time(:second),
+        mode: state.budget_mode || :hard
+      })
+
+    state = %{state | last_budget_block: block}
+
+    state =
+      if state.budget_mode == :hold do
+        :ok =
+          state.tracker.update_status(state.tracker_config, task.id, Approval.pending_status())
+
+        :ok = Budget.persist_hold(task.id)
+        Logger.info("task #{task.id} held for budget overage approval")
+        state
+      else
+        state
+      end
+
+    broadcast_status(state)
+    state
+  end
+
+  defp maybe_release_budget_holds(state) do
+    Budget.wait_reason()
+    |> Coordination.list_by_wait_reason()
+    |> Enum.reduce(state, &maybe_release_budget_hold(&2, &1))
+  end
+
+  defp maybe_release_budget_hold(state, %{task_id: task_id}) do
+    case Budget.check(task_id, state.budget_caps || %{}) do
       :ok ->
-        maybe_toolchain_or_spawn(state, task)
+        Budget.clear_hold(task_id)
+        state.tracker.update_status(state.tracker_config, task_id, "todo")
+        Logger.info("task #{task_id} released from budget hold (cap now allows spawn)")
+        state
 
-      {:error, :budget_exceeded, meta} ->
-        Logger.warning(
-          "budget_exceeded task=#{task.id} scope=#{meta.scope} spent=#{meta.spent} cap=#{meta.cap}"
-        )
-
-        block = Map.merge(meta, %{task_id: task.id, at: System.system_time(:second)})
-        state = %{state | last_budget_block: block}
-        broadcast_status(state)
+      {:error, :budget_exceeded, _} ->
         state
     end
+  end
+
+  defp budget_held_without_permit?(state, task_id) do
+    Budget.held?(task_id) and not MapSet.member?(state.overage_once || MapSet.new(), task_id)
   end
 
   # PATH-only host-tool contract (agents.toml `tools` / `tools_mode`).
@@ -1114,7 +1185,13 @@ defmodule Svarm.Orchestrator do
 
   defp spawn_worker(state, task) do
     # One-shot approval: clear after first spawn attempt (re-gate if agent fails back to todo)
-    state = %{state | approved_once: MapSet.delete(state.approved_once, task.id)}
+    state = %{
+      state
+      | approved_once: MapSet.delete(state.approved_once, task.id),
+        overage_once: MapSet.delete(state.overage_once || MapSet.new(), task.id)
+    }
+
+    Budget.clear_hold(task.id)
 
     run_id = "run_" <> Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)
 
@@ -1406,6 +1483,7 @@ defmodule Svarm.Orchestrator do
       running_started: running_started,
       last_tick_mono_ms: state.last_tick_mono_ms,
       budget_caps: state.budget_caps || %{},
+      budget_mode: state.budget_mode || :hard,
       last_budget_block: state.last_budget_block,
       ci_resume: state.ci_resume_caps || %{enabled: false},
       review_resume: state.review_resume_caps || %{enabled: false}

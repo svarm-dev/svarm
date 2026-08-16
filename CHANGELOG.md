@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Soft budget hold** ([#45](https://github.com/svarm-dev/svarm/issues/45)): WORKFLOW `budget.mode` / `SVARM_BUDGET_MODE` = `hard` (default, skip spawn) or `hold` (park ticket as **Over budget** until a one-shot board **Approve overage**, or until the cap is raised). Estimated usage still counts toward the cap.
+
 ## [0.1.5] - 2026-08-14
 
 Mid-run Q&A & review-resume spawn. Optional review re-dispatch (default **off**). Compact run console. No breaking env change.

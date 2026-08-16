@@ -108,6 +108,7 @@ defmodule Svarm.OrchestratorTest do
     setup do
       KanbanBridge.delete_all_tasks()
       Svarm.Repo.delete_all(Svarm.Usage.Record)
+      Svarm.Repo.delete_all(Svarm.Coordination)
 
       original = :sys.get_state(Orchestrator)
 
@@ -300,6 +301,211 @@ defmodule Svarm.OrchestratorTest do
         assert status.last_budget_block.task_id == task.id
         refute task.id in status.running_ids
         refute MapSet.member?(:sys.get_state(Orchestrator).claimed, task.id)
+      after
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "hold mode parks over-budget task as pending_approval" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "over budget hold",
+          status: "todo",
+          assignee: "demo"
+        })
+
+      Svarm.Usage.append(
+        run_id: "rbh",
+        task_id: task.id,
+        source: "worker",
+        provider: "openrouter",
+        model_id: "x",
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        provider_cost_usd: 10.0,
+        estimated: false
+      )
+
+      original = :sys.get_state(Orchestrator)
+
+      local_config = %{
+        kind: :local,
+        active_states: ["todo", "in_progress"],
+        terminal_states: ["done", "failed", "review"],
+        ignored_assignees: []
+      }
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | tracker: Svarm.Tracker.Local,
+            tracker_config: local_config,
+            budget_caps: %{max_usd_per_ticket: 1.0},
+            budget_mode: :hold,
+            approval: %{mode: :off, trusted_assignees: MapSet.new()},
+            claimed: MapSet.delete(state.claimed, task.id),
+            running: Map.delete(state.running, task.id),
+            completed: MapSet.delete(state.completed, task.id),
+            overage_once: MapSet.new(),
+            last_budget_block: nil
+        }
+      end)
+
+      try do
+        send(Orchestrator, :tick)
+
+        assert wait_until(fn ->
+                 KanbanBridge.get_task(task.id).status == Approval.pending_status()
+               end)
+
+        held = KanbanBridge.get_task(task.id)
+        assert held.wait_reason == "budget_overage"
+        assert Svarm.Budget.held?(task.id)
+        refute task.id in Orchestrator.status().running_ids
+        assert Orchestrator.status().last_budget_block.mode == :hold
+      after
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "approve-overage allows one subsequent spawn in hold mode" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "overage unlock",
+          status: "todo",
+          assignee: "demo"
+        })
+
+      Svarm.Usage.append(
+        run_id: "rbu",
+        task_id: task.id,
+        source: "worker",
+        provider: "openrouter",
+        model_id: "x",
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        provider_cost_usd: 10.0,
+        estimated: false
+      )
+
+      original = :sys.get_state(Orchestrator)
+
+      local_config = %{
+        kind: :local,
+        active_states: ["todo", "in_progress"],
+        terminal_states: ["done", "failed", "review"],
+        ignored_assignees: []
+      }
+
+      demo_agent = %{
+        command: "true",
+        args: [],
+        env: %{},
+        adapter: "cli",
+        display_name: "Demo",
+        name: "demo"
+      }
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | tracker: Svarm.Tracker.Local,
+            tracker_config: local_config,
+            agents: Map.put(state.agents, "demo", demo_agent),
+            budget_caps: %{max_usd_per_ticket: 1.0},
+            budget_mode: :hold,
+            approval: %{mode: :off, trusted_assignees: MapSet.new()},
+            claimed: MapSet.delete(state.claimed, task.id),
+            running: Map.delete(state.running, task.id),
+            completed: MapSet.delete(state.completed, task.id),
+            overage_once: MapSet.new(),
+            last_budget_block: nil
+        }
+      end)
+
+      try do
+        send(Orchestrator, :tick)
+
+        assert wait_until(fn ->
+                 KanbanBridge.get_task(task.id).status == Approval.pending_status()
+               end)
+
+        assert :ok = Svarm.Budget.approve_overage(task.id)
+        assert KanbanBridge.get_task(task.id).status == "todo"
+
+        send(Orchestrator, :tick)
+
+        assert wait_until(fn ->
+                 task.id in Orchestrator.status().running_ids or
+                   KanbanBridge.get_task(task.id).status in ["in_progress", "review", "done"]
+               end)
+      after
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "raising the cap releases a budget hold without approve-overage" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "cap raised",
+          status: "todo",
+          assignee: "demo"
+        })
+
+      Svarm.Usage.append(
+        run_id: "rbr",
+        task_id: task.id,
+        source: "worker",
+        provider: "openrouter",
+        model_id: "x",
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        provider_cost_usd: 10.0,
+        estimated: false
+      )
+
+      original = :sys.get_state(Orchestrator)
+
+      local_config = %{
+        kind: :local,
+        active_states: ["todo", "in_progress"],
+        terminal_states: ["done", "failed", "review"],
+        ignored_assignees: []
+      }
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | tracker: Svarm.Tracker.Local,
+            tracker_config: local_config,
+            budget_caps: %{max_usd_per_ticket: 1.0},
+            budget_mode: :hold,
+            approval: %{mode: :off, trusted_assignees: MapSet.new()},
+            claimed: MapSet.delete(state.claimed, task.id),
+            running: Map.delete(state.running, task.id),
+            completed: MapSet.delete(state.completed, task.id),
+            overage_once: MapSet.new(),
+            last_budget_block: nil
+        }
+      end)
+
+      try do
+        send(Orchestrator, :tick)
+
+        assert wait_until(fn ->
+                 KanbanBridge.get_task(task.id).status == Approval.pending_status()
+               end)
+
+        :sys.replace_state(Orchestrator, fn state ->
+          %{state | budget_caps: %{max_usd_per_ticket: 100.0}}
+        end)
+
+        send(Orchestrator, :tick)
+
+        assert wait_until(fn ->
+                 not Svarm.Budget.held?(task.id) and
+                   KanbanBridge.get_task(task.id).status != Approval.pending_status()
+               end)
       after
         :sys.replace_state(Orchestrator, fn _ -> original end)
       end

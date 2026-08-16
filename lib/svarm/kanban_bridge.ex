@@ -54,6 +54,10 @@ defmodule Svarm.KanbanBridge do
   def update_attempts(id, attempts),
     do: GenServer.call(__MODULE__, {:update, id, :attempts, attempts})
 
+  @doc "Set or clear the durable `wait_reason` string on a task."
+  def update_wait_reason(id, reason),
+    do: GenServer.call(__MODULE__, {:update, id, :wait_reason, reason})
+
   def delete_all_tasks, do: GenServer.call(__MODULE__, :delete_all)
 
   def update_depends_on(id, depends_on),
@@ -159,7 +163,7 @@ defmodule Svarm.KanbanBridge do
       from(t in Task, where: t.id == ^id)
       |> Repo.update_all(set: updates)
 
-    if count > 0 and field in [:status, :attempts] do
+    if count > 0 and field in [:status, :attempts, :wait_reason] do
       case Repo.get(Task, id) do
         nil -> :ok
         task -> Events.broadcast_task_updated(task_to_map(task))

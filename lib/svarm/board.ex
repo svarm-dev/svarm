@@ -184,9 +184,11 @@ defmodule Svarm.Board do
   @doc """
   Why this task is waiting — human gates first, then agent activity.
 
-  Returns `:approval | :ci_circuit | :changes_requested | :review |
-  :agent_question | :running | :failed | nil`.
+  Returns `:approval | :budget_overage | :ci_circuit | :changes_requested |
+  :review | :agent_question | :running | :failed | nil`.
 
+  `:budget_overage` is a human hold after a spend cap (hold mode). It wins over
+  a generic `pending_approval` gate so the board can show **Over budget**.
   `:ci_circuit` wins over `:changes_requested` and plain `:review` when the CI
   resume circuit is open (ticket stays in `review` so humans can still merge).
   `:changes_requested` wins over plain `:review` when GitHub review polling
@@ -194,9 +196,17 @@ defmodule Svarm.Board do
   `:agent_question` is a mid-run wait on `in_progress` (durable pending
   question). Distinct from approval/review/ci_circuit.
   """
-  def wait_reason(%{status: "pending_approval"}), do: :approval
+  def wait_reason(task) when is_map(task) do
+    if budget_overage_for?(task) do
+      :budget_overage
+    else
+      wait_reason_status(task)
+    end
+  end
 
-  def wait_reason(%{status: "review"} = task) do
+  defp wait_reason_status(%{status: "pending_approval"}), do: :approval
+
+  defp wait_reason_status(%{status: "review"} = task) do
     cond do
       circuit_open_for?(task) -> :ci_circuit
       changes_requested_for?(task) -> :changes_requested
@@ -204,12 +214,12 @@ defmodule Svarm.Board do
     end
   end
 
-  def wait_reason(%{status: "in_progress"} = task) do
+  defp wait_reason_status(%{status: "in_progress"} = task) do
     if agent_question_for?(task), do: :agent_question, else: :running
   end
 
-  def wait_reason(%{status: "failed"}), do: :failed
-  def wait_reason(_), do: nil
+  defp wait_reason_status(%{status: "failed"}), do: :failed
+  defp wait_reason_status(_), do: nil
 
   # Prefer preloaded field from list_tasks/get_task; fall back to one query.
   defp circuit_open_for?(task) do
@@ -233,6 +243,10 @@ defmodule Svarm.Board do
     reason in ["agent_question", :agent_question] or pending_question?(question)
   end
 
+  defp budget_overage_for?(task) do
+    map_get(task, :wait_reason) in ["budget_overage", :budget_overage]
+  end
+
   defp pending_question?(question) when is_map(question) do
     prompt = map_get(question, :prompt)
     is_binary(prompt) and String.trim(prompt) != ""
@@ -251,6 +265,7 @@ defmodule Svarm.Board do
 
   @doc "Short UI label for `wait_reason/1`."
   def wait_reason_label(:approval), do: "Needs approval"
+  def wait_reason_label(:budget_overage), do: "Over budget"
   def wait_reason_label(:ci_circuit), do: "CI retries exhausted"
   def wait_reason_label(:changes_requested), do: "Changes requested"
   def wait_reason_label(:review), do: "Needs review"
@@ -270,12 +285,24 @@ defmodule Svarm.Board do
   @doc """
   Counts of tickets blocked on humans.
 
-  Returns `%{pending_approval: n, review: n, total: n}`.
+  Returns `%{pending_approval: n, budget_overage: n, review: n, total: n}`.
   """
   def human_wait_summary(tasks) when is_list(tasks) do
-    pending = Enum.count(tasks, &(&1.status == "pending_approval"))
+    overage = Enum.count(tasks, &(wait_reason(&1) == :budget_overage))
+
+    pending =
+      Enum.count(tasks, fn t ->
+        t.status == "pending_approval" and wait_reason(t) != :budget_overage
+      end)
+
     review = Enum.count(tasks, &(&1.status == "review"))
-    %{pending_approval: pending, review: review, total: pending + review}
+
+    %{
+      pending_approval: pending,
+      budget_overage: overage,
+      review: review,
+      total: pending + overage + review
+    }
   end
 
   @doc "PR URL from coordination, run meta, or task map when known (no inventing)."
