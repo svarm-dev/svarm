@@ -127,6 +127,21 @@ defmodule Svarm.Usage.Query do
   end
 
   @doc """
+  Per-task spend summaries for records with wall-clock `inserted_at >= since`.
+
+  Returns `%{task_id => summary}` (same shape as `task_cost_summaries/1`).
+  Missing keys mean no in-window ledger rows.
+  """
+  @spec cost_since_by_task(DateTime.t()) :: %{optional(String.t()) => map()}
+  def cost_since_by_task(%DateTime{} = since) do
+    Ledger.task_cost_groups_since_inserted_at(since)
+    |> Enum.group_by(& &1.task_id)
+    |> Map.new(fn {task_id, groups} ->
+      {task_id, summarize_task_groups(groups)}
+    end)
+  end
+
+  @doc """
   Returns aggregate spend grouped by model for a given time period.
   """
   def by_model(since_unix) when is_integer(since_unix) do

@@ -25,11 +25,11 @@ If nothing material changed, **do not** edit this file.
 
 | Field | Value |
 |-------|--------|
-| **Updated** | 2026-08-14 |
-| **`main`** | (this PR) v0.1.5 honesty + tag cut (#142) |
+| **Updated** | 2026-08-16 |
+| **`main`** | v0.1.5 |
 | **Latest tag** | **v0.1.5** (2026-08-14) |
-| **Unreleased** | _(empty)_ |
-| **Focus** | _(none — epic #51 complete; maintainer picks next)_ |
+| **Unreleased** | dashboard agent 24h cost + retry share (#54) |
+| **Focus** | _(none — do not auto-claim #53 / #118)_ |
 | **Next** | do not auto-claim #53 / #118 |
 
 `main` STATUS **lags open PR branches** — always check `gh pr list` / `gh issue list` for live work.
@@ -45,6 +45,6 @@ Format: `YYYY-MM-DD · one sentence · issue/PR link`
 
 ## Session log (newest first, max 3)
 
+- 2026-08-16 · dashboard roster 24h cost + retry n/a (#54)
 - 2026-08-14 · cut v0.1.5 (#142); README Status honest about mid-run Q&A
 - 2026-08-14 · mid-run Q&A board UI (#116); epic #51 complete
-- 2026-08-14 · mid-run Q&A answer API + PiRPC inject (#115); Focus → #116

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Dashboard per-agent 24h cost + retry share** ([#54](https://github.com/svarm-dev/svarm/issues/54)): roster shows wall-clock 24h spend from the usage ledger (estimated rows labeled `est.`) and retry `retried/total` when any assigned task has `attempts > 0`, else **n/a**.
+
 ## [0.1.5] - 2026-08-14
 
 Mid-run Q&A & review-resume spawn. Optional review re-dispatch (default **off**). Compact run console. No breaking env change.

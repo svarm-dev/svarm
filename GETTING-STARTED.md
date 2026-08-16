@@ -25,6 +25,7 @@ docker compose --profile demo up --build
 - Mock agents (`demo_*`) run without OpenRouter or GitHub.
 - **Seed demo** stays available if you clear the board.
 - Approvals UI: Basic Auth `svarm` / `svarm` by default in the demo profile.
+- Ops overview: [`/dashboard`](http://localhost:4000/dashboard) — 24h wall-clock cost per agent from the usage ledger (`est.` when any row is estimated) and retry share (`n/a` unless the tracker records attempts).
 
 **Local Elixir:** `mix setup && mix phx.server` → `/board` → **Seed demo**.  
 (`mix svarm.demo` is a separate CLI process with its own temp DB; use Seed demo for the UI board.)
@@ -259,3 +260,4 @@ rm -rf ~/svarm_workspaces/ && mix phx.server
 | Bot identity on comments | [docs/github-app.md](docs/github-app.md) |
 | Other trackers (Linear/Jira) | Not in OSS yet. GitHub + local only today |
 | Export costs to CSV/JSON | `mix svarm.export_usage --format csv` (or `json`; optional `--out path`). Costs also on the board and in GitHub comments |
+| Per-agent 24h cost / retry | [`/dashboard`](http://localhost:4000/dashboard) roster — wall-clock last 24 hours; estimated spend labeled; retry is n/a when attempts are not recorded (GitHub today) |

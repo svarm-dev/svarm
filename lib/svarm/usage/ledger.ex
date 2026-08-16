@@ -161,6 +161,18 @@ defmodule Svarm.Usage.Ledger do
     |> Repo.all()
   end
 
+  @doc """
+  SQL cost groups for records with wall-clock `inserted_at >= since`,
+  grouped by task + provider + model. Nil `inserted_at` excluded.
+  """
+  def task_cost_groups_since_inserted_at(%DateTime{} = since) do
+    from(r in Record,
+      where: not is_nil(r.inserted_at) and r.inserted_at >= ^since
+    )
+    |> task_cost_groups_query()
+    |> Repo.all()
+  end
+
   # --- private: group-by aggregates for cost (provider bill + rate-table tokens) ---
 
   defp cost_groups_query(queryable) do
