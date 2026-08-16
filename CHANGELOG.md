@@ -7,12 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-08-14
+
+Mid-run Q&A & review-resume spawn. Optional review re-dispatch (default **off**). Compact run console. No breaking env change.
+
 ### Added
 
 - **Mid-run Q&A board chip + answer UI** ([#116](https://github.com/svarm-dev/svarm/issues/116)): **Waiting for answer** chip on running cards; selected-task confirm/select/input form; same `board_auth_at` gate as approve/reject. Operator notes in GETTING-STARTED. Completes epic #51.
 - **Mid-run Q&A answer API + PiRPC inject** ([#115](https://github.com/svarm-dev/svarm/issues/115)): `Svarm.AgentQuestion` parks PiRPC `extension_ui_request` dialogs, injects `extension_ui_response`, and persists wait on kanban + `task_coordination` (GitHub cards). Deadline (default 15 min) or cancel continues the run; CLI inject is unsupported. Board answer UI is #116.
 - **Mid-run Q&A wait fields** ([#114](https://github.com/svarm-dev/svarm/issues/114)): durable `wait_reason` + `pending_question` on the kanban task (SQLite); `KanbanBridge.put_pending_question/2` / `clear_pending_question/1`; `Board.wait_reason/1` returns `:agent_question` on `in_progress` when a question is pending. No answer UI yet (#115–#116).
 - **Review-resume re-dispatch** ([#113](https://github.com/svarm-dev/svarm/issues/113)): when enabled, the first GitHub changes-requested transition re-opens the ticket for a fresh agent run with review context; later SHA refreshes in the same episode stay detect-only. Shares `ci_resume_count` / `ci_circuit_open` and the CI resume `max_attempts` cap. Default **off** (`review_resume.enabled` / `SVARM_REVIEW_RESUME_ENABLED`). Detection stays always-on for GitHub.
+
+### Changed
+
+- README Status is **Current release: v0.1.5**; mid-run Q&A moved out of **Not shipped** ([#142](https://github.com/svarm-dev/svarm/issues/142))
 
 ### Fixed
 
@@ -201,7 +209,8 @@ Shipped surface in this cut: **local board + GitHub Issues + pi/CLI + OpenRouter
 
 - Agent credentials and API keys must come from the environment; never written into task metadata, PubSub events, or tracked config files
 
-[Unreleased]: https://github.com/svarm-dev/svarm/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/svarm-dev/svarm/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/svarm-dev/svarm/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/svarm-dev/svarm/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/svarm-dev/svarm/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/svarm-dev/svarm/compare/v0.1.1...v0.1.2
