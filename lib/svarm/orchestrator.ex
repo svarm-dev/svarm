@@ -76,6 +76,8 @@ defmodule Svarm.Orchestrator do
     :max_retry_backoff_ms,
     :max_retries,
     :workspace_root,
+    :workspace_isolation,
+    :workspace_git_repo,
     :agents,
     :workflow,
     :approval,
@@ -141,6 +143,8 @@ defmodule Svarm.Orchestrator do
         Keyword.get(opts, :max_retry_backoff_ms, @default_max_retry_backoff_ms),
       max_retries: Keyword.get(opts, :max_retries, @default_max_retries),
       workspace_root: Keyword.get(opts, :workspace_root) || Workspace.default_root(),
+      workspace_isolation: Keyword.get(opts, :workspace_isolation, :path),
+      workspace_git_repo: Keyword.get(opts, :workspace_git_repo),
       active_states: Keyword.get(opts, :active_states, @default_active_states),
       terminal_states: Keyword.get(opts, :terminal_states, @default_terminal_states),
       agents: %{}
@@ -492,6 +496,8 @@ defmodule Svarm.Orchestrator do
         max_retry_backoff_ms: cfg.max_retry_backoff_ms,
         stall_timeout_ms: cfg.stall_timeout_ms,
         workspace_root: workspace_root,
+        workspace_isolation: Map.get(cfg, :workspace_isolation, :path),
+        workspace_git_repo: Map.get(cfg, :workspace_git_repo),
         active_states: cfg.active_states,
         terminal_states: cfg.terminal_states,
         tracker_config: Settings.Resolve.tracker_overlay(cfg.tracker_config),
@@ -1290,6 +1296,8 @@ defmodule Svarm.Orchestrator do
     opts = [
       agents: state.agents,
       workspace_root: state.workspace_root,
+      workspace_isolation: state.workspace_isolation || :path,
+      workspace_git_repo: state.workspace_git_repo,
       tracker: state.tracker,
       tracker_config: state.tracker_config,
       run_id: run_id

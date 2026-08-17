@@ -13,6 +13,8 @@ defmodule Svarm.Workflow.Config do
     %{
       poll_interval_ms: get_int(config, ["polling", "interval_ms"], 30_000),
       workspace_root: get_string(config, ["workspace", "root"], Workspace.default_root()),
+      workspace_isolation: workspace_isolation(config),
+      workspace_git_repo: workspace_git_repo(config),
       active_states: get_list(config, ["tracker", "active_states"], ["todo", "in_progress"]),
       terminal_states:
         get_list(config, ["tracker", "terminal_states"], ["done", "failed", "review"]),
@@ -72,6 +74,20 @@ defmodule Svarm.Workflow.Config do
   defp blank?(nil), do: true
   defp blank?(""), do: true
   defp blank?(_), do: false
+
+  defp workspace_isolation(config) do
+    case get_string(config, ["workspace", "isolation"], "path") do
+      "worktree" -> :worktree
+      _ -> :path
+    end
+  end
+
+  defp workspace_git_repo(config) do
+    case get_string(config, ["workspace", "git_repo"], nil) do
+      path when is_binary(path) and path != "" -> expand_path(path)
+      _ -> nil
+    end
+  end
 
   @doc """
   Parses the tracker config from workflow front matter.
