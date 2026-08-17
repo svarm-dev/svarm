@@ -37,6 +37,7 @@ defmodule Svarm.Usage.Outcomes do
   Options:
   - `:since` — `%DateTime{}` wall-clock filter on `inserted_at` (nil = all rows)
   - `:task_statuses` — `%{task_id => status}` (required for meaningful buckets)
+  - `:task_ids` — optional enumerable of task ids to include (scopes ledger + status)
 
   Returns:
 
@@ -54,11 +55,19 @@ defmodule Svarm.Usage.Outcomes do
   def by_outcome(opts \\ []) when is_list(opts) do
     since = Keyword.get(opts, :since)
     statuses = opts |> Keyword.get(:task_statuses, %{}) |> normalize_statuses()
+    task_id_filter = opts |> Keyword.get(:task_ids) |> normalize_task_id_filter()
 
     groups =
       case since do
         %DateTime{} = dt -> Ledger.task_cost_groups_since_inserted_at(dt)
         _ -> Ledger.task_cost_groups_all()
+      end
+
+    groups =
+      if task_id_filter do
+        Enum.filter(groups, &MapSet.member?(task_id_filter, &1.task_id))
+      else
+        groups
       end
 
     by_task =
@@ -82,6 +91,16 @@ defmodule Svarm.Usage.Outcomes do
       task_count: map_size(by_task)
     }
   end
+
+  defp normalize_task_id_filter(nil), do: nil
+  defp normalize_task_id_filter([]), do: MapSet.new()
+
+  defp normalize_task_id_filter(ids) when is_list(ids) do
+    ids |> Enum.filter(&is_binary/1) |> MapSet.new()
+  end
+
+  defp normalize_task_id_filter(%MapSet{} = set), do: set
+  defp normalize_task_id_filter(_), do: nil
 
   defp normalize_statuses(map) when is_map(map) do
     Map.new(map, fn
