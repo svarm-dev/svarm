@@ -18,6 +18,9 @@ defmodule Svarm.WorkspaceTest do
     assert File.dir?(path)
 
     assert {:ok, {^path, false}} = Workspace.ensure("ticket-1", root, isolation: :path)
+
+    assert :ok = Workspace.cleanup("ticket-1", root, isolation: :path)
+    refute File.dir?(path)
   end
 
   test "path escape rejected", %{root: root} do
@@ -62,6 +65,41 @@ defmodule Svarm.WorkspaceTest do
 
     assert {:ok, {^path, false}} =
              Workspace.ensure("issue-42", wt_root,
+               isolation: :worktree,
+               git_repo: repo
+             )
+
+    assert :ok =
+             Workspace.cleanup("issue-42", wt_root,
+               isolation: :worktree,
+               git_repo: repo
+             )
+
+    refute File.dir?(path)
+    {list, 0} = System.cmd("git", ["-C", repo, "worktree", "list", "--porcelain"])
+    refute list =~ path
+  end
+
+  test "worktree git timeout returns tagged error", %{root: root} do
+    repo = init_git_repo(Path.join(root, "repo"))
+    wt_root = Path.join(root, "trees")
+    File.mkdir_p!(wt_root)
+
+    hang = Path.join(root, "hang.sh")
+    File.write!(hang, "#!/bin/sh\nexec sleep 30\n")
+    File.chmod!(hang, 0o755)
+
+    assert {:error, :git_timeout} =
+             Workspace.ensure("issue-timeout", wt_root,
+               isolation: :worktree,
+               git_repo: repo,
+               git: hang,
+               git_timeout_ms: 50
+             )
+
+    # Timed-out Port messages must not leak into the next git call.
+    assert {:ok, {_path, true}} =
+             Workspace.ensure("issue-timeout", wt_root,
                isolation: :worktree,
                git_repo: repo
              )
