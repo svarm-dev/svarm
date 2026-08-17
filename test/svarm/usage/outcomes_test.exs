@@ -4,8 +4,8 @@ defmodule Svarm.Usage.OutcomesTest do
   import Ecto.Query
 
   alias Svarm.{KanbanBridge, Usage}
-  alias Svarm.Usage.Record
   alias Svarm.Repo
+  alias Svarm.Usage.Record
 
   setup do
     KanbanBridge.delete_all_tasks()

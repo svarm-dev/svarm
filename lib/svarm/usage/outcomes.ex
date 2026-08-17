@@ -124,13 +124,20 @@ defmodule Svarm.Usage.Outcomes do
 
   defp merge_summaries(a, b) do
     %{
-      total_cost_usd: Float.round((a.total_cost_usd || 0.0) + (b.total_cost_usd || 0.0), 4),
-      estimated: a.estimated or b.estimated,
-      record_count: (a.record_count || 0) + (b.record_count || 0),
-      task_count: (a.task_count || 0) + 1,
-      prompt_tokens: (a.prompt_tokens || 0) + (b.prompt_tokens || 0),
-      completion_tokens: (a.completion_tokens || 0) + (b.completion_tokens || 0)
+      total_cost_usd: Float.round(num(a, :total_cost_usd) + num(b, :total_cost_usd), 4),
+      estimated: Enum.any?([a, b], &(&1[:estimated] == true)),
+      record_count: num(a, :record_count) + num(b, :record_count),
+      task_count: num(a, :task_count) + 1,
+      prompt_tokens: num(a, :prompt_tokens) + num(b, :prompt_tokens),
+      completion_tokens: num(a, :completion_tokens) + num(b, :completion_tokens)
     }
+  end
+
+  defp num(map, key) do
+    case Map.get(map, key) do
+      n when is_number(n) -> n
+      _ -> 0
+    end
   end
 
   defp summarize_task_groups(groups) do
