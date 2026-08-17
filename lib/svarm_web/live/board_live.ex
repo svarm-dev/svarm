@@ -1091,7 +1091,7 @@ defmodule SvarmWeb.BoardLive do
                     >
                       {if glance == :has_pr, do: "PR", else: "no PR"}
                     </span>
-                    <% ci = Board.review_evidence(task).ci %>
+                    <% ci = Board.review_ci(task) %>
                     <%= if ci.state != :na do %>
                       <.ci_evidence_chip state={ci.state} />
                     <% end %>

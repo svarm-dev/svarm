@@ -67,6 +67,32 @@ defmodule Svarm.BoardReviewEvidenceTest do
     assert {:ok, _} = Coordination.upsert(task.id, %{ci_last_conclusion: "unknown"})
     card = Board.list_tasks() |> Enum.find(&(&1.id == task.id))
     assert Board.review_evidence(card).ci.state == :unknown
+    # Column chip path — must not need Usage.for_task/1
+    assert Board.review_ci(card).state == :unknown
+  end
+
+  test "review_ci reads attached fields without a usage row" do
+    task =
+      KanbanBridge.create_task(%{
+        title: "Chip only",
+        status: "review",
+        assignee: "demo"
+      })
+
+    assert {:ok, _} =
+             Coordination.upsert(task.id, %{
+               ci_last_conclusion: "failed",
+               ci_context_summary: "CI failed (1 checks)",
+               ci_checked_at: DateTime.utc_now() |> DateTime.truncate(:second)
+             })
+
+    card = Board.list_tasks() |> Enum.find(&(&1.id == task.id))
+    ci = Board.review_ci(card)
+
+    assert ci.state == :fail
+    assert ci.summary =~ "CI failed"
+    assert %DateTime{} = ci.checked_at
+    assert Usage.for_task(task.id) == []
   end
 
   test "review_evidence populated from coordination PR, meta, cost, usage" do

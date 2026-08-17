@@ -357,6 +357,14 @@ defmodule Svarm.Board do
     if pr_url(task, meta), do: :has_pr, else: :no_pr
   end
 
+  @doc """
+  CI chip from preloaded task fields (`ci_conclusion` / summary / checked_at).
+
+  Does **not** query the usage ledger — review-column cards should call this,
+  not `review_evidence/1`.
+  """
+  def review_ci(task) when is_map(task), do: evidence_ci(task)
+
   defp coord_pr_url_fallback(task) do
     # Only hit Repo when list_tasks did not preload pr_url.
     case map_get(task, :pr_url) do

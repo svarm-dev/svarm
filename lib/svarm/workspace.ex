@@ -88,10 +88,37 @@ defmodule Svarm.Workspace do
         {:error, {:not_a_git_repo, repo}}
 
       File.dir?(abs) ->
-        {:ok, {abs, false}}
+        reuse_worktree(repo, abs)
 
       true ->
         add_worktree(repo, abs, key)
+    end
+  end
+
+  defp reuse_worktree(repo, abs) do
+    if linked_worktree?(repo, abs) do
+      {:ok, {abs, false}}
+    else
+      {:error, {:not_a_worktree, abs}}
+    end
+  end
+
+  # `git worktree list` from the configured repo — path-mode leftovers and
+  # foreign checkouts must not count as isolation.
+  defp linked_worktree?(repo, abs) do
+    case System.cmd("git", ["-C", repo, "worktree", "list", "--porcelain"],
+           stderr_to_stdout: true
+         ) do
+      {out, 0} ->
+        out
+        |> String.split("\n", trim: true)
+        |> Enum.any?(fn
+          "worktree " <> path -> Path.expand(path) == abs
+          _ -> false
+        end)
+
+      _ ->
+        false
     end
   end
 
