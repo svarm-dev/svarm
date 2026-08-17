@@ -765,11 +765,28 @@ defmodule Svarm.Orchestrator do
     else
       caps = state.ci_resume_caps || %{enabled: false, max_attempts: 3, skip_draft: true}
 
-      Coordination.list_with_pr(limit: @ci_resume_max_per_tick * 2)
+      state
+      |> ci_poll_pr_rows()
       |> Enum.take(@ci_resume_max_per_tick)
       |> Enum.reduce(state, fn coord, acc ->
         maybe_ci_poll_one(acc, coord, caps)
       end)
+    end
+  end
+
+  # Checks poll is review-scoped. Done+PR rows stay oldest and would starve
+  # the 3-slot window if we scanned list_with_pr unbounded. Empty/missing
+  # review ids → no poll (do not copy review-resume's unbounded fallback).
+  defp ci_poll_pr_rows(state) do
+    case review_task_ids(state) do
+      [_ | _] = ids ->
+        Coordination.list_with_pr(
+          limit: @ci_resume_max_per_tick * 2,
+          task_ids: ids
+        )
+
+      _ ->
+        []
     end
   end
 
@@ -828,9 +845,11 @@ defmodule Svarm.Orchestrator do
             :evidence_only
           end
 
-        # Do not fingerprint head_sha before a successful resume reopen — that
-        # would make the next tick :noop forever (CiResume sha match).
-        store_ci_evidence(coord.task_id, summary, fingerprint?: decision != :resume)
+        # Persist conclusion / summary / checked_at on every successful poll.
+        # Never write ci_last_head_sha here — that fingerprint is only set
+        # after a successful resume reopen (commit_ci_resume). Writing it on
+        # :wait / :evidence_only would make a later same-SHA failure :noop.
+        store_ci_evidence(coord.task_id, summary)
 
         case decision do
           :evidence_only -> state
@@ -844,7 +863,7 @@ defmodule Svarm.Orchestrator do
     end
   end
 
-  defp store_ci_evidence(task_id, summary, opts) when is_map(summary) and is_list(opts) do
+  defp store_ci_evidence(task_id, summary) when is_map(summary) do
     conclusion =
       case Map.get(summary, :conclusion) do
         c when is_atom(c) -> Atom.to_string(c)
@@ -853,20 +872,12 @@ defmodule Svarm.Orchestrator do
       end
 
     checked_at = DateTime.utc_now() |> DateTime.truncate(:second)
-    fingerprint? = Keyword.get(opts, :fingerprint?, true)
 
     attrs = %{
       ci_last_conclusion: conclusion,
       ci_checked_at: checked_at,
       ci_context_summary: Map.get(summary, :summary)
     }
-
-    attrs =
-      if fingerprint? do
-        Map.put(attrs, :ci_last_head_sha, Map.get(summary, :head_sha))
-      else
-        attrs
-      end
 
     case Coordination.upsert(task_id, attrs) do
       {:ok, updated} ->
