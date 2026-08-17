@@ -709,6 +709,41 @@ defmodule SvarmWeb.BoardLiveTest do
     assert html =~ ~s(title="PR linked)
   end
 
+  test "review Evidence shows CI chip from coordination", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "CI chip review",
+        status: "review",
+        assignee: "demo",
+        attempts: 1
+      })
+
+    assert {:ok, _} =
+             Svarm.Coordination.record_pr(
+               task.id,
+               "https://github.com/example/repo/pull/3",
+               []
+             )
+
+    assert {:ok, _} =
+             Svarm.Coordination.upsert(task.id, %{
+               ci_last_conclusion: "failed",
+               ci_context_summary: "CI failed: mix",
+               ci_checked_at: DateTime.utc_now() |> DateTime.truncate(:second)
+             })
+
+    {:ok, view, html} = live(conn, ~p"/board")
+    assert html =~ "fail"
+
+    render_click(view, "select_task", %{"id" => task.id})
+    html = render(view)
+    assert html =~ "Evidence"
+    assert html =~ "CI failed: mix"
+    assert html =~ ~s(data-ci="fail")
+  end
+
   test "review column shows PR glance chip from coordination", %{conn: conn} do
     KanbanBridge.delete_all_tasks()
 

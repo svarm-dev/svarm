@@ -25,6 +25,7 @@ defmodule Svarm.Coordination do
     field(:ci_last_conclusion, :string)
     field(:ci_circuit_open, :boolean, default: false)
     field(:ci_context_summary, :string)
+    field(:ci_checked_at, :utc_datetime)
     field(:review_decision, :string)
     field(:review_last_head_sha, :string)
     field(:review_context_summary, :string)
@@ -46,6 +47,7 @@ defmodule Svarm.Coordination do
     :ci_last_conclusion,
     :ci_circuit_open,
     :ci_context_summary,
+    :ci_checked_at,
     :review_decision,
     :review_last_head_sha,
     :review_context_summary,

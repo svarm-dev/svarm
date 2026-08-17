@@ -109,7 +109,7 @@ Default **`approval.mode: untrusted`**: real agents will **not** run until you a
 1. Open **http://localhost:4000/approvals** (Basic Auth from `.env`) and approve.  
 2. Open **http://localhost:4000/board**. Logs stream on the task card.  
 3. On GitHub: labels move to in-progress / review; a **cost receipt** comment appears when the run finishes.  
-4. Open the card in **`review`**: the **Evidence** pack shows PR (when known), attempts, agent/model, cost (estimated labeled), and age. It is **informational** — Svärm does not merge; you still merge on GitHub (or **Mark done** on the local board). Review-column cards also show a glanceable **PR** / **no PR** chip.  
+4. Open the card in **`review`**: the **Evidence** pack shows PR (when known), attempts, agent/model, cost (estimated labeled), age, and a **CI** chip (`pass` / `fail` / `pending` / `unknown`, or **N/A** on the local tracker). It is **informational** — Svärm does not merge; you still merge on GitHub (or **Mark done** on the local board). Review-column cards also show glanceable **PR** / **no PR** (and CI when known).  
 5. Review the PR yourself. Agents do **not** merge.
 
 Poll interval defaults to ~30s (see `polling.interval_ms` in WORKFLOW.md).

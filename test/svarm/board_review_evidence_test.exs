@@ -27,7 +27,46 @@ defmodule Svarm.BoardReviewEvidenceTest do
     assert evidence.cost == nil
     assert evidence.age.label == "since created"
     assert is_integer(evidence.age.seconds)
+    assert evidence.ci.state == :na
     assert Board.review_glance(card) == :no_pr
+  end
+
+  test "review_evidence CI states from coordination" do
+    task =
+      KanbanBridge.create_task(%{
+        title: "CI evidence",
+        status: "review",
+        assignee: "demo"
+      })
+
+    assert {:ok, _} =
+             Coordination.record_pr(task.id, "https://github.com/example/repo/pull/7", [])
+
+    assert {:ok, _} =
+             Coordination.upsert(task.id, %{
+               ci_last_conclusion: "passed",
+               ci_context_summary: "CI passed (2 checks)",
+               ci_checked_at: DateTime.utc_now() |> DateTime.truncate(:second)
+             })
+
+    card = Board.list_tasks() |> Enum.find(&(&1.id == task.id))
+    evidence = Board.review_evidence(card)
+
+    assert evidence.ci.state == :pass
+    assert evidence.ci.summary =~ "CI passed"
+    assert %DateTime{} = evidence.ci.checked_at
+
+    assert {:ok, _} = Coordination.upsert(task.id, %{ci_last_conclusion: "failed"})
+    card = Board.list_tasks() |> Enum.find(&(&1.id == task.id))
+    assert Board.review_evidence(card).ci.state == :fail
+
+    assert {:ok, _} = Coordination.upsert(task.id, %{ci_last_conclusion: "in_progress"})
+    card = Board.list_tasks() |> Enum.find(&(&1.id == task.id))
+    assert Board.review_evidence(card).ci.state == :pending
+
+    assert {:ok, _} = Coordination.upsert(task.id, %{ci_last_conclusion: "unknown"})
+    card = Board.list_tasks() |> Enum.find(&(&1.id == task.id))
+    assert Board.review_evidence(card).ci.state == :unknown
   end
 
   test "review_evidence populated from coordination PR, meta, cost, usage" do

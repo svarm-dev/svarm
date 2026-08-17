@@ -2,7 +2,8 @@ defmodule Svarm.Orchestrator do
   @moduledoc """
   Orchestrator: Symphony-compatible poll loop. Plain GenServer.
 
-  Tick:     reconcile (stall + tracker state sync §8.5–8.6) → maybe_ci_resume →
+  Tick:     reconcile (stall + tracker state sync §8.5–8.6) → maybe_ci_resume
+            (GitHub CI Evidence for review+PR; optional resume spawn) →
             maybe_review_resume → preflight (§6.3) → fetch eligible → dispatch.
   Dispatch: claim → spawn an agent runner task under the Task.Supervisor → monitor.
   Exit:     normal exit → completed (force `review` if tracker still active);
@@ -10,9 +11,10 @@ defmodule Svarm.Orchestrator do
   another turn should return an explicit continue signal in a future revision.
   Retry:    `delay = min(10_000 * 2^(attempt-1), max_retry_backoff_ms)`.
 
-  CI resume (optional): when `ci_resume.enabled`, poll GitHub Checks for managed
-  PRs in review and re-open for a fresh agent run with failure context until the
-  circuit opens after N attempts. See `Svarm.CiResume`.
+  CI poll: on GitHub, refresh Checks summary onto coordination for Review Station
+  Evidence (pass/fail/pending/unknown). When `ci_resume.enabled`, also re-open for
+  a fresh agent run with failure context until the circuit opens after N attempts.
+  See `Svarm.CiResume` / issue #156.
 
   Review-resume: poll GitHub PR reviews for managed PRs in review and record
   changes-requested state (board chip). When `review_resume.enabled`, the first
@@ -747,26 +749,25 @@ defmodule Svarm.Orchestrator do
 
   defp slots_available?(%{running: running, max_concurrent: mc}), do: map_size(running) < mc
 
-  ## CI resume (poll Checks → re-open or open circuit)
+  ## CI poll (board Evidence always; optional resume spawn)
 
-  defp maybe_ci_resume(%{ci_resume_caps: %{enabled: true}} = state) do
-    # Local tracker has no Checks API. GitHub adapter (or test doubles) may run.
+  # Always refresh CI summary for GitHub review+PR cards (Review Station #156).
+  # When `ci_resume.enabled`, also evaluate spawn / circuit (issue #44).
+  defp maybe_ci_resume(state) do
     if state.tracker == Tracker.Local do
       state
     else
-      caps = state.ci_resume_caps
+      caps = state.ci_resume_caps || %{enabled: false, max_attempts: 3, skip_draft: true}
 
       Coordination.list_with_pr(limit: @ci_resume_max_per_tick * 2)
       |> Enum.take(@ci_resume_max_per_tick)
       |> Enum.reduce(state, fn coord, acc ->
-        maybe_ci_resume_one(acc, coord, caps)
+        maybe_ci_poll_one(acc, coord, caps)
       end)
     end
   end
 
-  defp maybe_ci_resume(state), do: state
-
-  defp maybe_ci_resume_one(state, coord, caps) do
+  defp maybe_ci_poll_one(state, coord, caps) do
     task_id = coord.task_id
 
     cond do
@@ -774,7 +775,7 @@ defmodule Svarm.Orchestrator do
         state
 
       not pr_matches_tracker?(coord, state.tracker_config) ->
-        Logger.debug("ci_resume: skip #{task_id} — PR repo does not match tracker")
+        Logger.debug("ci_poll: skip #{task_id} — PR repo does not match tracker")
         state
 
       not review_status?(state, task_id) ->
@@ -811,21 +812,100 @@ defmodule Svarm.Orchestrator do
            coord.pr_repo,
            coord.pr_number,
            state.tracker_config,
-           skip_draft: caps.skip_draft
+           skip_draft: Map.get(caps, :skip_draft, true)
          ) do
       {:ok, summary} ->
-        apply_ci_decision(state, coord, summary, caps, CiResume.evaluate(coord, summary, caps))
+        decision =
+          if Map.get(caps, :enabled, false) do
+            CiResume.evaluate(coord, summary, caps)
+          else
+            :evidence_only
+          end
+
+        # Do not fingerprint head_sha before a successful resume reopen — that
+        # would make the next tick :noop forever (CiResume sha match).
+        store_ci_evidence(coord.task_id, summary, fingerprint?: decision != :resume)
+
+        case decision do
+          :evidence_only -> state
+          other -> apply_ci_decision(state, coord, summary, caps, other)
+        end
 
       {:error, reason} ->
-        Logger.debug("ci_resume checks error for #{coord.task_id}: #{inspect(reason)}")
+        Logger.debug("ci_poll checks error for #{coord.task_id}: #{inspect(reason)}")
+        store_ci_evidence_unknown(coord.task_id)
         state
     end
   end
 
-  defp apply_ci_decision(state, coord, summary, _caps, :noop) do
-    maybe_store_conclusion(coord, summary)
-    state
+  defp store_ci_evidence(task_id, summary, opts) when is_map(summary) and is_list(opts) do
+    conclusion =
+      case Map.get(summary, :conclusion) do
+        c when is_atom(c) -> Atom.to_string(c)
+        c when is_binary(c) and c != "" -> c
+        _ -> "unknown"
+      end
+
+    checked_at = DateTime.utc_now() |> DateTime.truncate(:second)
+    fingerprint? = Keyword.get(opts, :fingerprint?, true)
+
+    attrs = %{
+      ci_last_conclusion: conclusion,
+      ci_checked_at: checked_at,
+      ci_context_summary: Map.get(summary, :summary)
+    }
+
+    attrs =
+      if fingerprint? do
+        Map.put(attrs, :ci_last_head_sha, Map.get(summary, :head_sha))
+      else
+        attrs
+      end
+
+    case Coordination.upsert(task_id, attrs) do
+      {:ok, updated} ->
+        # Omit status so Events does not spam "[board] status → review" every poll.
+        Events.broadcast_task_updated(%{
+          id: task_id,
+          reason: :ci_evidence,
+          ci_conclusion: updated.ci_last_conclusion,
+          ci_summary: updated.ci_context_summary,
+          ci_checked_at: updated.ci_checked_at
+        })
+
+        :ok
+
+      {:error, reason} ->
+        Logger.debug("ci_evidence upsert failed for #{task_id}: #{inspect(reason)}")
+        :error
+    end
   end
+
+  defp store_ci_evidence_unknown(task_id) when is_binary(task_id) do
+    checked_at = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    case Coordination.upsert(task_id, %{
+           ci_last_conclusion: "unknown",
+           ci_checked_at: checked_at,
+           ci_context_summary: "CI status unavailable"
+         }) do
+      {:ok, updated} ->
+        Events.broadcast_task_updated(%{
+          id: task_id,
+          reason: :ci_evidence,
+          ci_conclusion: updated.ci_last_conclusion,
+          ci_summary: updated.ci_context_summary,
+          ci_checked_at: updated.ci_checked_at
+        })
+
+        :ok
+
+      {:error, _} ->
+        :error
+    end
+  end
+
+  defp apply_ci_decision(state, _coord, _summary, _caps, :noop), do: state
 
   defp apply_ci_decision(state, _coord, _summary, _caps, :wait), do: state
 
@@ -850,7 +930,8 @@ defmodule Svarm.Orchestrator do
            ci_circuit_open: true,
            ci_last_conclusion: "failure",
            ci_last_head_sha: summary.head_sha || coord.ci_last_head_sha,
-           ci_context_summary: summary.summary || coord.ci_context_summary
+           ci_context_summary: summary.summary || coord.ci_context_summary,
+           ci_checked_at: DateTime.utc_now() |> DateTime.truncate(:second)
          }) do
       {:ok, _} ->
         Logger.warning("ci_resume: circuit open for #{coord.task_id} (CI retries exhausted)")
@@ -898,7 +979,8 @@ defmodule Svarm.Orchestrator do
            ci_last_head_sha: summary.head_sha,
            ci_last_conclusion: "failure",
            ci_context_summary: context,
-           ci_circuit_open: false
+           ci_circuit_open: false,
+           ci_checked_at: DateTime.utc_now() |> DateTime.truncate(:second)
          }) do
       {:ok, _} ->
         Logger.info(
@@ -926,20 +1008,6 @@ defmodule Svarm.Orchestrator do
         state
     end
   end
-
-  defp maybe_store_conclusion(coord, %{conclusion: conclusion} = summary)
-       when conclusion in [:passed, :failed] do
-    atom_str = Atom.to_string(conclusion)
-
-    if coord.ci_last_conclusion != atom_str do
-      Coordination.upsert(coord.task_id, %{
-        ci_last_conclusion: atom_str,
-        ci_last_head_sha: summary.head_sha || coord.ci_last_head_sha
-      })
-    end
-  end
-
-  defp maybe_store_conclusion(_coord, _summary), do: :ok
 
   ## Review-resume (poll reviews → record state; optional spawn)
 

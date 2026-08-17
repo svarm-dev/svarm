@@ -331,6 +331,8 @@ defmodule Svarm.Board do
   - `:cost` — `%{total_cost_usd, estimated, record_count}` or nil
   - `:age` — `%{seconds, label, at}` or nil (`label` is `"since last usage"` or
     `"since created"`)
+  - `:ci` — `%{state, summary, checked_at}` where `state` is
+    `:pass | :fail | :pending | :unknown | :na` (local / no data → `:na`)
   """
   def review_evidence(task, meta \\ %{}, cost \\ nil) when is_map(task) do
     latest = latest_usage_hint(map_get(task, :id))
@@ -341,7 +343,8 @@ defmodule Svarm.Board do
       agent: evidence_agent(task, meta),
       model: evidence_model(meta, latest),
       cost: evidence_cost(cost),
-      age: evidence_age(task, latest)
+      age: evidence_age(task, latest),
+      ci: evidence_ci(task)
     }
   end
 
@@ -460,6 +463,23 @@ defmodule Svarm.Board do
 
   defp evidence_cost(_), do: nil
 
+  defp evidence_ci(task) do
+    state =
+      case map_get(task, :ci_conclusion) do
+        c when c in ["passed", :passed] -> :pass
+        c when c in ["failed", :failed, "failure", :failure] -> :fail
+        c when c in ["pending", :pending, "in_progress", :in_progress] -> :pending
+        c when c in ["unknown", :unknown] -> :unknown
+        _ -> :na
+      end
+
+    %{
+      state: state,
+      summary: map_get(task, :ci_summary),
+      checked_at: map_get(task, :ci_checked_at)
+    }
+  end
+
   defp evidence_age(task, latest) do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
 
@@ -549,12 +569,18 @@ defmodule Svarm.Board do
     task
     |> Map.put(:ci_circuit_open, false)
     |> Map.put(:review_decision, nil)
+    |> Map.put(:ci_conclusion, nil)
+    |> Map.put(:ci_summary, nil)
+    |> Map.put(:ci_checked_at, nil)
   end
 
   defp merge_coord(task, %Svarm.Coordination{} = c) do
     task
     |> Map.put(:ci_circuit_open, c.ci_circuit_open == true)
     |> Map.put(:review_decision, c.review_decision)
+    |> Map.put(:ci_conclusion, c.ci_last_conclusion)
+    |> Map.put(:ci_summary, c.ci_context_summary)
+    |> Map.put(:ci_checked_at, c.ci_checked_at)
     |> then(fn t ->
       if is_binary(c.pr_url) and c.pr_url != "" do
         Map.put(t, :pr_url, c.pr_url)

@@ -1091,6 +1091,10 @@ defmodule SvarmWeb.BoardLive do
                     >
                       {if glance == :has_pr, do: "PR", else: "no PR"}
                     </span>
+                    <% ci = Board.review_evidence(task).ci %>
+                    <%= if ci.state != :na do %>
+                      <.ci_evidence_chip state={ci.state} />
+                    <% end %>
                   <% end %>
                   <span class="text-[10px] opacity-50">{type_label(task.type)}</span>
                 </div>
@@ -1437,6 +1441,16 @@ defmodule SvarmWeb.BoardLive do
           <% end %>
         </dd>
 
+        <dt class="opacity-60">CI</dt>
+        <dd class="flex flex-wrap items-center gap-1.5">
+          <.ci_evidence_chip state={@evidence.ci.state} />
+          <%= if @evidence.ci.summary do %>
+            <span class="opacity-70 min-w-0 truncate" title={@evidence.ci.summary}>
+              {@evidence.ci.summary}
+            </span>
+          <% end %>
+        </dd>
+
         <dt class="opacity-60">Age</dt>
         <dd>
           <%= if @evidence.age do %>
@@ -1450,6 +1464,31 @@ defmodule SvarmWeb.BoardLive do
         </dd>
       </dl>
     </div>
+    """
+  end
+
+  attr :state, :atom, required: true
+
+  defp ci_evidence_chip(assigns) do
+    {label, cls} =
+      case assigns.state do
+        :pass -> {"pass", "bg-success/20 text-success"}
+        :fail -> {"fail", "bg-error/20 text-error"}
+        :pending -> {"pending", "bg-warning/20 text-warning"}
+        :unknown -> {"unknown", "bg-base-300/80 opacity-80"}
+        _ -> {"N/A", "bg-base-300/60 opacity-60"}
+      end
+
+    assigns = assign(assigns, label: label, cls: cls)
+
+    ~H"""
+    <span
+      class={["inline-block text-[10px] font-mono px-1.5 py-0.5 rounded uppercase", @cls]}
+      data-testid="ci-chip"
+      data-ci={@state}
+    >
+      {@label}
+    </span>
     """
   end
 
