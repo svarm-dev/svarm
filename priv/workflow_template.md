@@ -36,6 +36,9 @@ approval:
   trusted_assignees: ["default", "demo_research", "demo_docs"]
 workspace:
   root: ~/svarm_workspaces
+  # isolation: path              # default — directory under root
+  # isolation: worktree          # git worktree per ticket (requires git_repo)
+  # git_repo: ~/src/my-app       # source repo for worktree mode
 # Optional spend caps (unset = no stop). Mode hard skips spawn; hold parks for overage approval.
 # budget:
 #   max_usd_per_ticket: 5

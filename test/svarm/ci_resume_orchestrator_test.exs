@@ -46,6 +46,13 @@ defmodule Svarm.CiResumeOrchestratorTest do
   defmodule ReviewTracker do
     def list_eligible(_config), do: {:ok, []}
 
+    def list_issues(_config, filters \\ []) do
+      issues = Application.get_env(:svarm, :ci_resume_test_issues, %{}) |> Map.values()
+      status = Keyword.get(filters, :status)
+      issues = if status, do: Enum.filter(issues, &(&1.status == status)), else: issues
+      {:ok, issues}
+    end
+
     def get_issue(_config, id) do
       issues = Application.get_env(:svarm, :ci_resume_test_issues, %{})
 
@@ -80,6 +87,13 @@ defmodule Svarm.CiResumeOrchestratorTest do
   # Simulates old GitHub bug: update_status("todo") leaves status as review
   defmodule StickyReviewTracker do
     def list_eligible(_config), do: {:ok, []}
+
+    def list_issues(_config, filters \\ []) do
+      issues = Application.get_env(:svarm, :ci_resume_test_issues, %{}) |> Map.values()
+      status = Keyword.get(filters, :status)
+      issues = if status, do: Enum.filter(issues, &(&1.status == status)), else: issues
+      {:ok, issues}
+    end
 
     def get_issue(_config, id) do
       issues = Application.get_env(:svarm, :ci_resume_test_issues, %{})
