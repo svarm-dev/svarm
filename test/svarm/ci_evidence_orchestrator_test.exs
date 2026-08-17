@@ -4,11 +4,6 @@ defmodule Svarm.CiEvidenceOrchestratorTest do
   alias Svarm.{Coordination, KanbanBridge, Orchestrator, Repo}
   alias Svarm.Test.Wait
 
-  defp flush_orchestrator do
-    _ = :sys.get_state(Orchestrator)
-    :ok
-  end
-
   defp wait_until(fun, opts \\ []), do: Wait.until(fun, opts)
 
   defmodule StubChecks do
@@ -58,6 +53,7 @@ defmodule Svarm.CiEvidenceOrchestratorTest do
     Application.put_env(:svarm, :ci_evidence_issues, %{})
     Application.put_env(:svarm, :ci_evidence_checks_result, nil)
 
+    original = :sys.get_state(Orchestrator)
     prev_checks = Application.get_env(:svarm, :github_checks_module)
     Application.put_env(:svarm, :github_checks_module, StubChecks)
 
@@ -83,7 +79,9 @@ defmodule Svarm.CiEvidenceOrchestratorTest do
         Application.delete_env(:svarm, :github_checks_module)
       end
 
-      flush_orchestrator()
+      if Process.whereis(Orchestrator) do
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
     end)
 
     :ok
