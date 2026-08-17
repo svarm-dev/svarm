@@ -316,6 +316,44 @@ defmodule Svarm.Board do
     |> Enum.find(&(is_binary(&1) and &1 != ""))
   end
 
+  @doc """
+  Structured **Evidence** pack for a task in `review` (run console).
+
+  Informational only — does not gate merge. Humans still merge on GitHub (or
+  mark done on the local board). Reuses task/run metadata + optional usage
+  ledger hints; does not invent CI chips or StreamEvent kinds.
+
+  Returns a plain map:
+
+  - `:pr_url` — string or nil
+  - `:attempts` — non-neg integer or nil
+  - `:agent` / `:model` — strings or nil
+  - `:cost` — `%{total_cost_usd, estimated, record_count}` or nil
+  - `:age` — `%{seconds, label, at}` or nil (`label` is `"since last usage"` or
+    `"since created"`)
+  """
+  def review_evidence(task, meta \\ %{}, cost \\ nil) when is_map(task) do
+    latest = latest_usage_hint(map_get(task, :id))
+
+    %{
+      pr_url: pr_url(task, meta),
+      attempts: evidence_attempts(task, meta),
+      agent: evidence_agent(task, meta),
+      model: evidence_model(meta, latest),
+      cost: evidence_cost(cost),
+      age: evidence_age(task, latest)
+    }
+  end
+
+  @doc """
+  Glanceable review-column signal: `:has_pr` | `:no_pr`.
+
+  Uses known PR URL only (coordination / task / meta). Does not invent links.
+  """
+  def review_glance(task, meta \\ %{}) when is_map(task) do
+    if pr_url(task, meta), do: :has_pr, else: :no_pr
+  end
+
   defp coord_pr_url_fallback(task) do
     # Only hit Repo when list_tasks did not preload pr_url.
     case map_get(task, :pr_url) do
@@ -372,6 +410,84 @@ defmodule Svarm.Board do
   end
 
   defp map_get(_, _), do: nil
+
+  defp evidence_attempts(task, meta) do
+    case map_get(task, :attempts) || meta_get(meta, :attempt) do
+      n when is_integer(n) and n >= 0 ->
+        n
+
+      n when is_binary(n) ->
+        case Integer.parse(n) do
+          {i, ""} when i >= 0 -> i
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp evidence_agent(task, meta) do
+    [
+      meta_get(meta, :display_name),
+      meta_get(meta, :assignee),
+      map_get(task, :assignee)
+    ]
+    |> Enum.find(&(is_binary(&1) and &1 != ""))
+  end
+
+  defp evidence_model(meta, latest) do
+    case meta_get(meta, :model) do
+      m when is_binary(m) and m != "" ->
+        m
+
+      _ ->
+        case latest do
+          %{model_id: m} when is_binary(m) and m != "" -> m
+          _ -> nil
+        end
+    end
+  end
+
+  defp evidence_cost(%{record_count: n, total_cost_usd: usd} = cost)
+       when is_integer(n) and n > 0 and is_number(usd) do
+    %{
+      total_cost_usd: usd,
+      estimated: Map.get(cost, :estimated, true),
+      record_count: n
+    }
+  end
+
+  defp evidence_cost(_), do: nil
+
+  defp evidence_age(task, latest) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    cond do
+      match?(%{inserted_at: %DateTime{}}, latest) ->
+        at = DateTime.truncate(latest.inserted_at, :second)
+        %{seconds: max(DateTime.diff(now, at, :second), 0), label: "since last usage", at: at}
+
+      is_integer(map_get(task, :created_at)) and map_get(task, :created_at) > 0 ->
+        at = DateTime.from_unix!(map_get(task, :created_at))
+        %{seconds: max(DateTime.diff(now, at, :second), 0), label: "since created", at: at}
+
+      true ->
+        nil
+    end
+  end
+
+  defp latest_usage_hint(task_id) when is_binary(task_id) do
+    case Svarm.Usage.for_task(task_id) do
+      [%{model_id: model_id, inserted_at: inserted_at} | _] ->
+        %{model_id: model_id, inserted_at: inserted_at}
+
+      _ ->
+        nil
+    end
+  end
+
+  defp latest_usage_hint(_), do: nil
 
   def refresh_snapshot do
     tasks = list_tasks()

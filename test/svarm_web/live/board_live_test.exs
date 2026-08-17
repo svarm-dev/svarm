@@ -665,6 +665,10 @@ defmodule SvarmWeb.BoardLiveTest do
     assert html =~ "Mark done"
     assert html =~ "No PR on the local board"
     refute html =~ "Open PR"
+    assert html =~ "Evidence"
+    assert html =~ "N/A"
+    assert html =~ "Informational — merge on GitHub"
+    assert html =~ "no PR"
   end
 
   test "review run panel links Open PR when meta has pr_url", %{conn: conn} do
@@ -688,6 +692,7 @@ defmodule SvarmWeb.BoardLiveTest do
          assignee: "demo",
          display_name: "Demo",
          attempt: 1,
+         model: "test/model",
          pr_url: "https://github.com/example/repo/pull/9"
        }}
     )
@@ -699,6 +704,41 @@ defmodule SvarmWeb.BoardLiveTest do
     assert html =~ "Awaiting human review"
     assert html =~ "Open PR"
     assert html =~ "https://github.com/example/repo/pull/9"
+    assert html =~ "Evidence"
+    assert html =~ "test/model"
+    assert html =~ ~s(title="PR linked)
+  end
+
+  test "review column shows PR glance chip from coordination", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    with_pr =
+      KanbanBridge.create_task(%{
+        title: "Has PR",
+        status: "review",
+        assignee: "demo"
+      })
+
+    _no_pr =
+      KanbanBridge.create_task(%{
+        title: "No PR yet",
+        status: "review",
+        assignee: "demo"
+      })
+
+    assert {:ok, _} =
+             Svarm.Coordination.record_pr(
+               with_pr.id,
+               "https://github.com/example/repo/pull/99",
+               []
+             )
+
+    {:ok, _view, html} = live(conn, ~p"/board")
+    assert html =~ "Has PR"
+    assert html =~ "No PR yet"
+    assert html =~ "no PR"
+    # has-PR chip text "PR" appears; coordination-backed glance
+    assert html =~ ~s(title="PR linked)
   end
 
   test "review column empty hint names human review", %{conn: conn} do
