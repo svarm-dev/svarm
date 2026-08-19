@@ -100,6 +100,9 @@ const BoardTick = {
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
+  // Default 500ms flashes the stock reconnect banner on the first /live join
+  // when GET /board is already ~1s. Hide sub-2.5s blips.
+  disconnectedTimeout: 2500,
   params: {_csrf_token: csrfToken},
   hooks: {...colocatedHooks, RunLogScroll, CopyLog, BoardTick},
 })
