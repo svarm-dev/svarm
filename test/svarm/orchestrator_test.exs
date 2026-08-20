@@ -1176,4 +1176,90 @@ defmodule Svarm.OrchestratorTest do
       refute task.id in status.running_ids
     end
   end
+
+  describe "invalid workspace isolation fail-closed" do
+    setup do
+      KanbanBridge.delete_all_tasks()
+      original = :sys.get_state(Orchestrator)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | running: %{},
+            claimed: MapSet.new(),
+            completed: MapSet.new(),
+            approved_once: MapSet.new(),
+            overage_once: MapSet.new(),
+            retry_attempts: %{},
+            last_budget_block: nil
+        }
+      end)
+
+      on_exit(fn ->
+        if Process.whereis(Orchestrator) do
+          :sys.replace_state(Orchestrator, fn _ -> original end)
+        end
+      end)
+
+      :ok
+    end
+
+    test "retry does not spawn after hot-reload with invalid isolation" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "retry after bad isolation",
+          status: "todo",
+          assignee: "demo"
+        })
+
+      demo_agent = %{
+        command: "true",
+        args: [],
+        env: %{},
+        adapter: "cli",
+        display_name: "Demo",
+        name: "demo"
+      }
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | tracker: Svarm.Tracker.Local,
+            agents: Map.put(state.agents, "demo", demo_agent),
+            workspace_isolation: :worktree,
+            claimed: MapSet.delete(state.claimed, task.id),
+            running: Map.delete(state.running, task.id),
+            completed: MapSet.delete(state.completed, task.id),
+            retry_attempts: %{
+              task.id => %{attempt: 1, identifier: task.id, due_at_mono: 0, timer: nil}
+            }
+        }
+      end)
+
+      wf = %Svarm.Workflow{
+        config: %{"workspace" => %{"isolation" => "container"}},
+        prompt_template: "Do {{issue.id}}",
+        path: "WORKFLOW.md"
+      }
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          send(Orchestrator, {:workflow_reloaded, wf})
+          flush_orchestrator()
+        end)
+
+      state = :sys.get_state(Orchestrator)
+      assert state.workspace_isolation == :worktree
+      refute match?({:error, _}, state.workspace_isolation)
+      assert log =~ "workflow reloaded"
+
+      send(Orchestrator, {:retry, task.id})
+      flush_orchestrator()
+
+      status = Orchestrator.status()
+      refute task.id in status.running_ids
+      assert task.id in status.retry_ids
+      assert KanbanBridge.get_task(task.id).status == "todo"
+    end
+  end
 end
