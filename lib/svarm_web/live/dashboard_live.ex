@@ -26,6 +26,7 @@ defmodule SvarmWeb.DashboardLive do
             snapshot: empty_snapshot(),
             time_window: "session",
             window_cost: empty_window_cost(),
+            roi: empty_roi("session"),
             error: nil,
             connected: false,
             now_mono: System.monotonic_time(:millisecond)
@@ -39,11 +40,14 @@ defmodule SvarmWeb.DashboardLive do
   @impl true
   def handle_event("set_window", %{"window" => window}, socket) do
     cost = Dashboard.cost_for_window(window)
+    tasks = get_in(socket.assigns, [:snapshot, :tasks]) || []
+    roi = Dashboard.roi_for_window(window, tasks)
 
     {:noreply,
      socket
      |> assign(:time_window, window)
-     |> assign(:window_cost, cost)}
+     |> assign(:window_cost, cost)
+     |> assign(:roi, roi)}
   end
 
   def handle_event("refresh", _params, socket) do
@@ -140,6 +144,8 @@ defmodule SvarmWeb.DashboardLive do
             <.human_wait_strip summary={@snapshot.human_wait} />
 
             <.spend_card cost={@window_cost} window={@time_window} />
+
+            <.roi_card roi={@roi} window={@time_window} />
 
             <.queue_strip
               task_distribution={@snapshot.task_distribution}
@@ -325,6 +331,97 @@ defmodule SvarmWeb.DashboardLive do
   defp window_caption("24h"), do: "Wall-clock last 24 hours"
   defp window_caption("7d"), do: "Wall-clock last 7 days"
   defp window_caption(_), do: "Window applies to cost and tokens only"
+
+  attr :roi, :map, required: true
+  attr :window, :string, required: true
+
+  defp roi_card(assigns) do
+    overall = assigns.roi[:overall] || empty_roi_metrics()
+    by_agent = assigns.roi[:by_agent] || []
+
+    assigns =
+      assign(assigns,
+        overall: overall,
+        by_agent: by_agent,
+        empty?: overall.tasks_with_spend == 0
+      )
+
+    ~H"""
+    <section class="rounded-lg border border-base-300 bg-base-200/60 p-4" data-testid="roi-card">
+      <div class="mb-3">
+        <h2 class="text-sm font-semibold">Outcomes</h2>
+        <p class="text-xs opacity-60 mt-0.5">
+          Merge rate and cost per merged task for the Spend window ({@window}).
+          Status-based (`done` = merged). Estimated spend labeled.
+        </p>
+      </div>
+
+      <%= if @empty? do %>
+        <p class="text-sm opacity-50">No ledger spend in this window yet.</p>
+      <% else %>
+        <div class="flex flex-wrap items-baseline gap-x-6 gap-y-2 mb-3">
+          <div>
+            <p class="text-xs opacity-60">Merge rate</p>
+            <p class="text-xl font-semibold font-mono mt-0.5">
+              {format_merge_rate(@overall.merge_rate)}
+            </p>
+            <p class="text-[11px] opacity-50">
+              {@overall.merged_tasks}/{@overall.tasks_with_spend} tasks with spend
+            </p>
+          </div>
+          <div>
+            <p class="text-xs opacity-60">$/merged</p>
+            <p class="text-xl font-semibold font-mono mt-0.5">
+              <%= if @overall.cost_per_merged_usd do %>
+                {if @overall.estimated, do: "est. ", else: ""}${@overall.cost_per_merged_usd}
+              <% else %>
+                <span class="opacity-50">—</span>
+              <% end %>
+            </p>
+          </div>
+        </div>
+
+        <%= if @by_agent != [] do %>
+          <div class="overflow-x-auto">
+            <table class="table table-sm">
+              <thead>
+                <tr class="text-xs opacity-60">
+                  <th>Agent</th>
+                  <th class="text-right">Merge rate</th>
+                  <th class="text-right">$/merged</th>
+                </tr>
+              </thead>
+              <tbody>
+                <%= for row <- @by_agent do %>
+                  <tr>
+                    <td class="text-sm">{row.display_name}</td>
+                    <td class="text-right font-mono text-xs">
+                      {format_merge_rate(row.metrics.merge_rate)}
+                      <span class="opacity-50">
+                        ({row.metrics.merged_tasks}/{row.metrics.tasks_with_spend})
+                      </span>
+                    </td>
+                    <td class="text-right font-mono text-xs">
+                      <%= if row.metrics.cost_per_merged_usd do %>
+                        {if row.metrics.estimated, do: "est. ", else: ""}${row.metrics.cost_per_merged_usd}
+                      <% else %>
+                        <span class="opacity-40">—</span>
+                      <% end %>
+                    </td>
+                  </tr>
+                <% end %>
+              </tbody>
+            </table>
+          </div>
+        <% end %>
+      <% end %>
+    </section>
+    """
+  end
+
+  defp format_merge_rate(nil), do: "—"
+  defp format_merge_rate(rate) when is_float(rate), do: "#{Float.round(rate * 100, 1)}%"
+  defp format_merge_rate(rate) when is_number(rate), do: "#{Float.round(rate * 1.0 * 100, 1)}%"
 
   attr :window, :string, required: true
 
@@ -577,12 +674,15 @@ defmodule SvarmWeb.DashboardLive do
 
   defp load_dashboard(socket) do
     snapshot = Dashboard.snapshot()
-    cost = Dashboard.cost_for_window(socket.assigns[:time_window] || "session")
+    window = socket.assigns[:time_window] || "session"
+    cost = Dashboard.cost_for_window(window)
+    roi = Dashboard.roi_for_window(window, snapshot.tasks)
 
     assign(socket,
       snapshot: snapshot,
       window_cost: cost,
-      time_window: socket.assigns[:time_window] || "session",
+      roi: roi,
+      time_window: window,
       error: nil,
       connected: true,
       now_mono: System.monotonic_time(:millisecond),
@@ -591,15 +691,39 @@ defmodule SvarmWeb.DashboardLive do
     )
   rescue
     e in [DBConnection.ConnectionError, ErlangError, ArgumentError] ->
+      window = socket.assigns[:time_window] || "session"
+
       assign(socket,
         snapshot: empty_snapshot(),
         window_cost: empty_window_cost(),
-        time_window: socket.assigns[:time_window] || "session",
+        roi: empty_roi(window),
+        time_window: window,
         error: Exception.message(e),
         connected: true,
         now_mono: System.monotonic_time(:millisecond),
         page_title: "Dashboard"
       )
+  end
+
+  defp empty_roi(window) do
+    %{
+      window: window,
+      since: nil,
+      overall: empty_roi_metrics(),
+      by_agent: []
+    }
+  end
+
+  defp empty_roi_metrics do
+    %{
+      merge_rate: nil,
+      cost_per_merged_usd: nil,
+      merged_tasks: 0,
+      in_review_tasks: 0,
+      other_tasks: 0,
+      tasks_with_spend: 0,
+      estimated: false
+    }
   end
 
   defp empty_snapshot do

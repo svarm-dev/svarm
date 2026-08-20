@@ -1,0 +1,115 @@
+defmodule Svarm.WorkspaceTest do
+  use ExUnit.Case, async: false
+
+  alias Svarm.Workspace
+
+  setup do
+    root = Path.join(System.tmp_dir!(), "svarm_ws_#{System.unique_integer([:positive])}")
+    File.mkdir_p!(root)
+
+    on_exit(fn -> File.rm_rf(root) end)
+
+    %{root: root}
+  end
+
+  test "path mode creates directory under root", %{root: root} do
+    assert {:ok, {path, true}} = Workspace.ensure("ticket-1", root, isolation: :path)
+    assert String.starts_with?(path, root)
+    assert File.dir?(path)
+
+    assert {:ok, {^path, false}} = Workspace.ensure("ticket-1", root, isolation: :path)
+  end
+
+  test "path escape rejected", %{root: root} do
+    assert {:error, {:path_escape, _, _}} = Workspace.ensure("..", root)
+  end
+
+  test "worktree requires git_repo", %{root: root} do
+    assert {:error, :git_repo_required} =
+             Workspace.ensure("t1", root, isolation: :worktree)
+  end
+
+  test "worktree rejects non-git directory", %{root: root} do
+    bare = Path.join(root, "notgit")
+    File.mkdir_p!(bare)
+
+    assert {:error, {:not_a_git_repo, _}} =
+             Workspace.ensure("t1", root, isolation: :worktree, git_repo: bare)
+  end
+
+  test "worktree creates linked working tree", %{root: root} do
+    repo = Path.join(root, "repo")
+    File.mkdir_p!(repo)
+
+    {_, 0} = System.cmd("git", ["-C", repo, "init", "-b", "main"], stderr_to_stdout: true)
+    {_, 0} = System.cmd("git", ["-C", repo, "config", "user.email", "t@example.com"])
+    {_, 0} = System.cmd("git", ["-C", repo, "config", "user.name", "Test"])
+    File.write!(Path.join(repo, "README"), "hi\n")
+    {_, 0} = System.cmd("git", ["-C", repo, "add", "README"])
+    {_, 0} = System.cmd("git", ["-C", repo, "commit", "-m", "init"], stderr_to_stdout: true)
+
+    wt_root = Path.join(root, "trees")
+    File.mkdir_p!(wt_root)
+
+    assert {:ok, {path, true}} =
+             Workspace.ensure("issue-42", wt_root,
+               isolation: :worktree,
+               git_repo: repo
+             )
+
+    assert File.dir?(path)
+    assert File.exists?(Path.join(path, "README"))
+
+    assert {:ok, {^path, false}} =
+             Workspace.ensure("issue-42", wt_root,
+               isolation: :worktree,
+               git_repo: repo
+             )
+  end
+
+  test "worktree rejects leftover path-mode directory", %{root: root} do
+    repo = init_git_repo(Path.join(root, "repo"))
+    wt_root = Path.join(root, "trees")
+    File.mkdir_p!(wt_root)
+
+    leftover = Path.join(wt_root, "issue-99")
+    File.mkdir_p!(leftover)
+    File.write!(Path.join(leftover, "not-a-checkout"), "x\n")
+
+    assert {:error, {:not_a_worktree, ^leftover}} =
+             Workspace.ensure("issue-99", wt_root,
+               isolation: :worktree,
+               git_repo: repo
+             )
+  end
+
+  test "worktree rejects directory linked to a different repo", %{root: root} do
+    repo = init_git_repo(Path.join(root, "repo"))
+    other = init_git_repo(Path.join(root, "other"))
+    wt_root = Path.join(root, "trees")
+    File.mkdir_p!(wt_root)
+    dest = Path.join(wt_root, "issue-7")
+
+    {_, 0} =
+      System.cmd("git", ["-C", other, "worktree", "add", "-B", "svarm/issue-7", dest],
+        stderr_to_stdout: true
+      )
+
+    assert {:error, {:not_a_worktree, ^dest}} =
+             Workspace.ensure("issue-7", wt_root,
+               isolation: :worktree,
+               git_repo: repo
+             )
+  end
+
+  defp init_git_repo(repo) do
+    File.mkdir_p!(repo)
+    {_, 0} = System.cmd("git", ["-C", repo, "init", "-b", "main"], stderr_to_stdout: true)
+    {_, 0} = System.cmd("git", ["-C", repo, "config", "user.email", "t@example.com"])
+    {_, 0} = System.cmd("git", ["-C", repo, "config", "user.name", "Test"])
+    File.write!(Path.join(repo, "README"), "hi\n")
+    {_, 0} = System.cmd("git", ["-C", repo, "add", "README"])
+    {_, 0} = System.cmd("git", ["-C", repo, "commit", "-m", "init"], stderr_to_stdout: true)
+    repo
+  end
+end

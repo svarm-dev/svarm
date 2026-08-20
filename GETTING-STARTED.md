@@ -109,7 +109,8 @@ Default **`approval.mode: untrusted`**: real agents will **not** run until you a
 1. Open **http://localhost:4000/approvals** (Basic Auth from `.env`) and approve.  
 2. Open **http://localhost:4000/board**. Logs stream on the task card.  
 3. On GitHub: labels move to in-progress / review; a **cost receipt** comment appears when the run finishes.  
-4. Review the PR yourself. Agents do **not** merge.
+4. Open the card in **`review`**: the **Evidence** pack shows PR (when known), attempts, agent/model, cost (estimated labeled), age, and a **CI** chip (`pass` / `fail` / `pending` / `unknown`, or **N/A** on the local tracker). It is **informational** — Svärm does not merge; you still merge on GitHub (or **Mark done** on the local board). Review-column cards also show glanceable **PR** / **no PR** (and CI when known).  
+5. Review the PR yourself. Agents do **not** merge.
 
 Poll interval defaults to ~30s (see `polling.interval_ms` in WORKFLOW.md).
 
@@ -270,4 +271,5 @@ rm -rf ~/svarm_workspaces/ && mix phx.server
 | Bot identity on comments | [docs/github-app.md](docs/github-app.md) |
 | Other trackers (Linear/Jira) | Not in OSS yet. GitHub + local only today |
 | Export costs to CSV/JSON | `mix svarm.export_usage --format csv` (or `json`; optional `--out path`). Costs also on the board and in GitHub comments |
+| Spend by outcome (API) | `Svarm.Usage.by_outcome(task_statuses: …)` — buckets `:merged` (`done`), `:in_review`, `:other`. Query-time only (ledger stays append-only). Does **not** call GitHub for PR merge state; status map comes from the board/tracker. See `Svarm.Usage.Outcomes` |
 | Per-agent 24h cost / retry | [`/dashboard`](http://localhost:4000/dashboard) roster — wall-clock last 24 hours; estimated spend labeled; retry is n/a when attempts are not recorded (GitHub today) |

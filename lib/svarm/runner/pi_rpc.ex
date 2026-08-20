@@ -63,11 +63,18 @@ defmodule Svarm.Runner.PiRPC do
     )
 
     workspace_root = Keyword.get(opts, :workspace_root, Workspace.default_root())
+    isolation = Keyword.get(opts, :workspace_isolation, :path)
+    git_repo = Keyword.get(opts, :workspace_git_repo)
     tracker = Keyword.get(opts, :tracker, Tracker.Local)
     tracker_config = Keyword.get(opts, :tracker_config, %{})
 
     workspace_key = Workspace.key_for_issue(task)
-    {workspace_path, _created_now} = Workspace.ensure(workspace_key, workspace_root)
+
+    {workspace_path, _created_now} =
+      Workspace.ensure!(workspace_key, workspace_root,
+        isolation: isolation,
+        git_repo: git_repo
+      )
 
     attempt = (task.attempts || 0) + 1
     log_path = Path.join(workspace_path, "run.log")
