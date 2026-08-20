@@ -109,7 +109,8 @@ Default **`approval.mode: untrusted`**: real agents will **not** run until you a
 1. Open **http://localhost:4000/approvals** (Basic Auth from `.env`) and approve.  
 2. Open **http://localhost:4000/board**. Logs stream on the task card.  
 3. On GitHub: labels move to in-progress / review; a **cost receipt** comment appears when the run finishes.  
-4. Review the PR yourself. Agents do **not** merge.
+4. Open the card in **`review`**: the **Evidence** pack shows PR (when known), attempts, agent/model, cost (estimated labeled), age, and a **CI** chip (`pass` / `fail` / `pending` / `unknown`, or **N/A** on the local tracker). It is **informational** — Svärm does not merge; you still merge on GitHub (or **Mark done** on the local board). Review-column cards also show glanceable **PR** / **no PR** (and CI when known).  
+5. Review the PR yourself. Agents do **not** merge.
 
 Poll interval defaults to ~30s (see `polling.interval_ms` in WORKFLOW.md).
 
@@ -219,6 +220,16 @@ Answering uses the same board auth as approve/reject (`APPROVALS_*` + `board_aut
 
 ---
 
+## Steer a live run
+
+While a **PiRPC** run is `in_progress` (and not waiting on a question), the console has a **Steer** field. That queues a pi `steer` message: after the current tool calls finish, the agent sees your note before the next model call.
+
+- Same board auth as approve / answer.
+- **CLI** runs show the control disabled — steer is Pi RPC only.
+- Spend stays on the same run (`message_end` usage). This is not a new ticket.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Check |
@@ -226,7 +237,7 @@ Answering uses the same board auth as approve/reject (`APPROVALS_*` + `board_aut
 | Container exits immediately | Check `docker compose logs`. `SECRET_KEY_BASE` is generated if unset; set it in `.env` only for stable sessions |
 | Config is a directory named `WORKFLOW.md` | Old file mounts. Use directory mount `./svarm-config:/app/config` (current compose) and delete the bogus dirs |
 | `/approvals` 404 text about APPROVALS_* | Set `APPROVALS_USER` and `APPROVALS_PASSWORD` in `.env` |
-| Board approve/reject/mark-done/answer blocked without auth flash | Production needs `APPROVALS_*`; sign in via `/approvals` then return to the board. Local Mix without credentials is open only when `dev_routes` is on. Sticky proof expires after 8h by default (`BOARD_AUTH_TTL_SECONDS`) — re-sign in if mid-session mutations start failing |
+| Board approve/reject/mark-done/answer/steer blocked without auth flash | Production needs `APPROVALS_*`; sign in via `/approvals` then return to the board. Local Mix without credentials is open only when `dev_routes` is on. Sticky proof expires after 8h by default (`BOARD_AUTH_TTL_SECONDS`) — re-sign in if mid-session mutations start failing |
 | `/approvals` 401 | Wrong Basic Auth credentials |
 | Nothing happens | `docker compose logs -f` (polling / eligibility) |
 | Stuck before agent runs | `/approvals` (default is untrusted) |
@@ -260,4 +271,5 @@ rm -rf ~/svarm_workspaces/ && mix phx.server
 | Bot identity on comments | [docs/github-app.md](docs/github-app.md) |
 | Other trackers (Linear/Jira) | Not in OSS yet. GitHub + local only today |
 | Export costs to CSV/JSON | `mix svarm.export_usage --format csv` (or `json`; optional `--out path`). Costs also on the board and in GitHub comments |
+| Spend by outcome (API) | `Svarm.Usage.by_outcome(task_statuses: …)` — buckets `:merged` (`done`), `:in_review`, `:other`. Query-time only (ledger stays append-only). Does **not** call GitHub for PR merge state; status map comes from the board/tracker. See `Svarm.Usage.Outcomes` |
 | Per-agent 24h cost / retry | [`/dashboard`](http://localhost:4000/dashboard) roster — wall-clock last 24 hours; estimated spend labeled; retry is n/a when attempts are not recorded (GitHub today) |

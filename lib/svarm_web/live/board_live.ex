@@ -2,7 +2,18 @@ defmodule SvarmWeb.BoardLive do
   @moduledoc "Real-time board and agent run log (agent work · human judgment)."
   use SvarmWeb, :live_view
 
-  alias Svarm.{AgentQuestion, AgentRegistry, Approval, Board, Budget, Events, StreamEvent, Usage}
+  alias Svarm.{
+    AgentQuestion,
+    AgentRegistry,
+    Approval,
+    Board,
+    Budget,
+    Events,
+    RunSteer,
+    StreamEvent,
+    Usage
+  }
+
   alias SvarmWeb.Plugs.ApprovalsAuth
 
   @max_log_lines 400
@@ -202,6 +213,24 @@ defmodule SvarmWeb.BoardLive do
     end
   end
 
+  def handle_event("steer_run", params, socket) do
+    case authorize_board_mutation(socket) do
+      {:error, :unauthorized} ->
+        {:noreply, put_flash(socket, :error, unauthorized_mutation_flash("steer"))}
+
+      :ok ->
+        id = params["id"] || params["task_id"]
+
+        case RunSteer.inject(id, params["message"] || "") do
+          {:ok, :injected} ->
+            {:noreply, put_flash(socket, :info, "Steer sent")}
+
+          {:error, reason} ->
+            {:noreply, put_flash(socket, :error, RunSteer.flash_error(reason))}
+        end
+    end
+  end
+
   def handle_event("complete_review", %{"id" => id}, socket) do
     case authorize_board_mutation(socket) do
       {:error, :unauthorized} ->
@@ -332,6 +361,8 @@ defmodule SvarmWeb.BoardLive do
       socket
       |> assign(:run_meta, Map.put(socket.assigns.run_meta, task_id, meta))
       |> assign(:running_started, Map.put(socket.assigns.running_started, task_id, started_mono))
+      # Stream cards freeze DOM; restream so review glance can read PR from run_meta.
+      |> restream_task(task_id)
 
     # The preceding :run_marker stream event owns display. Auto-select hydrates
     # that persisted marker from RunLog.
@@ -404,7 +435,9 @@ defmodule SvarmWeb.BoardLive do
         <div class="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h1 class="text-2xl font-semibold tracking-tight">Board</h1>
-            <p class="text-sm opacity-70">Agent work · human judgment</p>
+            <p class="text-sm opacity-70">
+              Agent work · human judgment · review Evidence is informational (merge on GitHub)
+            </p>
           </div>
           <div class="flex gap-2 items-center text-sm">
             <button type="button" phx-click="refresh" class="btn btn-sm btn-ghost">
@@ -463,6 +496,7 @@ defmodule SvarmWeb.BoardLive do
                   workload={@workload}
                   agents={@agents}
                   costs={@costs}
+                  run_meta={@run_meta}
                 />
               <% end %>
             </div>
@@ -797,6 +831,9 @@ defmodule SvarmWeb.BoardLive do
       <p class="mt-2 max-w-2xl text-sm opacity-80">
         Live view of agent work and human wait states. Cards move as agents claim work;
         open a card for streamed output and per-ticket cost. Approvals and review are the human steps.
+        On <span class="font-medium">review</span>
+        cards, Evidence (PR, attempts, cost, age) is informational —
+        humans still merge on GitHub.
       </p>
 
       <ul class="mt-5 max-w-2xl space-y-2 text-sm" aria-label="First-run checklist">
@@ -992,6 +1029,7 @@ defmodule SvarmWeb.BoardLive do
   attr :workload, :map, default: %{}
   attr :agents, :map, default: %{}
   attr :costs, :map, default: %{}
+  attr :run_meta, :map, default: %{}
 
   defp column(assigns) do
     ~H"""
@@ -1063,8 +1101,29 @@ defmodule SvarmWeb.BoardLive do
                   workload={Map.get(@workload, task.assignee || "default")}
                 />
                 <div class="flex items-center gap-1 shrink-0">
-                  <%= if reviewer = Board.reviewer(task) do %>
-                    <span class="text-[10px] opacity-60" title="Reviewer">{reviewer}</span>
+                  <%= if Board.reviewer(task) do %>
+                    <span class="text-[10px] opacity-60" title="Reviewer">{Board.reviewer(task)}</span>
+                  <% end %>
+                  <%= if @status_id == "review" do %>
+                    <% glance = Board.review_glance(task, Map.get(@run_meta, task.id, %{})) %>
+                    <span
+                      class={[
+                        "text-[10px] font-mono px-1 py-0.5 rounded",
+                        glance == :has_pr && "bg-success/15 text-success",
+                        glance == :no_pr && "bg-base-300/60 opacity-70"
+                      ]}
+                      title={
+                        if glance == :has_pr,
+                          do: "PR linked — open the card for Evidence",
+                          else: "No PR linked yet"
+                      }
+                    >
+                      {if glance == :has_pr, do: "PR", else: "no PR"}
+                    </span>
+                    <% ci = Board.review_ci(task) %>
+                    <%= if ci.state != :na do %>
+                      <.ci_evidence_chip state={ci.state} />
+                    <% end %>
                   <% end %>
                   <span class="text-[10px] opacity-50">{type_label(task.type)}</span>
                 </div>
@@ -1186,11 +1245,18 @@ defmodule SvarmWeb.BoardLive do
 
           <%= if q = Board.pending_question(@task) do %>
             <.agent_question_panel task={@task} question={q} />
+          <% else %>
+            <.steer_panel
+              :if={@task.status == "in_progress"}
+              task={@task}
+              adapter={@meta[:adapter] || @identity.adapter}
+            />
           <% end %>
 
           <%= if @task.status == "review" do %>
             <% wait = Board.wait_reason(@task) %>
             <% changes_requested? = wait == :changes_requested %>
+            <% evidence = Board.review_evidence(@task, @meta, @cost) %>
             <div class={[
               "rounded-md px-3 py-2 text-sm border",
               if(changes_requested?,
@@ -1205,20 +1271,21 @@ defmodule SvarmWeb.BoardLive do
                 <%= if changes_requested? do %>
                   A reviewer asked for changes on the PR. A follow-up run starts when review-resume is enabled; circuit shared with CI resume.
                 <% else %>
-                  <%= if Board.pr_url(@task, @meta) do %>
+                  <%= if evidence.pr_url do %>
                     Agent finished. Review the PR before merge, then mark done here.
                   <% else %>
-                    Agent finished. No PR on the local board — check the log/cost, then mark done.
+                    Agent finished. No PR on the local board — check Evidence and the log/cost, then mark done.
                   <% end %>
                 <% end %>
               </p>
               <%= if Board.reviewer(@task) do %>
                 <p class="mt-1 text-xs opacity-70">Reviewer: {Board.reviewer(@task)}</p>
               <% end %>
+              <.review_evidence_pack evidence={evidence} />
               <div class="mt-2 flex flex-wrap gap-2">
-                <%= if pr = Board.pr_url(@task, @meta) do %>
+                <%= if evidence.pr_url do %>
                   <a
-                    href={pr}
+                    href={evidence.pr_url}
                     target="_blank"
                     rel="noopener noreferrer"
                     class="btn btn-sm btn-outline"
@@ -1341,6 +1408,122 @@ defmodule SvarmWeb.BoardLive do
         <% end %>
       </div>
     </div>
+    """
+  end
+
+  attr :evidence, :map, required: true
+
+  defp review_evidence_pack(assigns) do
+    ~H"""
+    <div
+      class="mt-2 rounded border border-base-300/70 bg-base-100/50 px-2.5 py-2"
+      data-testid="review-evidence"
+    >
+      <div class="flex items-baseline justify-between gap-2">
+        <p class="text-[11px] font-medium uppercase tracking-wide opacity-70">Evidence</p>
+        <p class="text-[10px] opacity-50">Informational — merge on GitHub</p>
+      </div>
+      <dl class="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+        <dt class="opacity-60">PR</dt>
+        <dd class="min-w-0 font-mono break-all">
+          <%= if @evidence.pr_url do %>
+            <a
+              href={@evidence.pr_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="link link-hover"
+            >
+              {@evidence.pr_url}
+            </a>
+          <% else %>
+            <span class="opacity-50">N/A</span>
+          <% end %>
+        </dd>
+
+        <dt class="opacity-60">Attempts</dt>
+        <dd>
+          <%= if is_integer(@evidence.attempts) do %>
+            {@evidence.attempts}
+          <% else %>
+            <span class="opacity-50">—</span>
+          <% end %>
+        </dd>
+
+        <dt class="opacity-60">Agent</dt>
+        <dd class="min-w-0 truncate">
+          <%= if @evidence.agent do %>
+            {@evidence.agent}
+          <% else %>
+            <span class="opacity-50">—</span>
+          <% end %>
+        </dd>
+
+        <dt class="opacity-60">Model</dt>
+        <dd class="min-w-0 truncate font-mono">
+          <%= if @evidence.model do %>
+            {@evidence.model}
+          <% else %>
+            <span class="opacity-50">—</span>
+          <% end %>
+        </dd>
+
+        <dt class="opacity-60">Cost</dt>
+        <dd class="font-mono">
+          <%= if @evidence.cost do %>
+            {if @evidence.cost.estimated, do: "est. ", else: ""}${@evidence.cost.total_cost_usd}
+          <% else %>
+            <span class="opacity-50">no usage yet</span>
+          <% end %>
+        </dd>
+
+        <dt class="opacity-60">CI</dt>
+        <dd class="flex flex-wrap items-center gap-1.5">
+          <.ci_evidence_chip state={@evidence.ci.state} />
+          <%= if @evidence.ci.summary do %>
+            <span class="opacity-70 min-w-0 truncate" title={@evidence.ci.summary}>
+              {@evidence.ci.summary}
+            </span>
+          <% end %>
+        </dd>
+
+        <dt class="opacity-60">Age</dt>
+        <dd>
+          <%= if @evidence.age do %>
+            <span title={DateTime.to_iso8601(@evidence.age.at)}>
+              {format_evidence_age(@evidence.age.seconds)}
+              <span class="opacity-50">({@evidence.age.label})</span>
+            </span>
+          <% else %>
+            <span class="opacity-50">—</span>
+          <% end %>
+        </dd>
+      </dl>
+    </div>
+    """
+  end
+
+  attr :state, :atom, required: true
+
+  defp ci_evidence_chip(assigns) do
+    {label, cls} =
+      case assigns.state do
+        :pass -> {"pass", "bg-success/20 text-success"}
+        :fail -> {"fail", "bg-error/20 text-error"}
+        :pending -> {"pending", "bg-warning/20 text-warning"}
+        :unknown -> {"unknown", "bg-base-300/80 opacity-80"}
+        _ -> {"N/A", "bg-base-300/60 opacity-60"}
+      end
+
+    assigns = assign(assigns, label: label, cls: cls)
+
+    ~H"""
+    <span
+      class={["inline-block text-[10px] font-mono px-1.5 py-0.5 rounded uppercase", @cls]}
+      data-testid="ci-chip"
+      data-ci={@state}
+    >
+      {@label}
+    </span>
     """
   end
 
@@ -1615,6 +1798,36 @@ defmodule SvarmWeb.BoardLive do
         </button>
       </div>
       <p class="mt-1 text-[11px] opacity-60">One question at a time. Dismiss continues the run.</p>
+    </div>
+    """
+  end
+
+  attr :task, :map, required: true
+  attr :adapter, :string, default: nil
+
+  defp steer_panel(assigns) do
+    enabled? = assigns.adapter == "pi_rpc"
+    assigns = assign(assigns, :enabled?, enabled?)
+
+    ~H"""
+    <div id={"steer-run-#{@task.id}"} class="rounded-md border border-base-300 px-3 py-2 text-sm">
+      <form phx-submit="steer_run" class="flex flex-wrap items-center gap-2">
+        <input type="hidden" name="task_id" value={@task.id} />
+        <input
+          type="text"
+          name="message"
+          required={@enabled?}
+          disabled={not @enabled?}
+          placeholder={if @enabled?, do: "Steer this run…", else: "Steer is Pi RPC on a live run"}
+          class="input input-sm input-bordered min-w-[12rem] flex-1"
+        />
+        <button type="submit" class="btn btn-sm btn-outline" disabled={not @enabled?}>
+          Steer
+        </button>
+      </form>
+      <p :if={not @enabled?} class="mt-1 text-[11px] opacity-60">
+        Steer is Pi RPC on a live run.
+      </p>
     </div>
     """
   end
@@ -1911,6 +2124,12 @@ defmodule SvarmWeb.BoardLive do
   end
 
   defp duration_label(_, _, _), do: nil
+
+  defp format_evidence_age(sec) when is_integer(sec) and sec >= 0 do
+    format_duration(sec)
+  end
+
+  defp format_evidence_age(_), do: "—"
 
   defp classify_log(log) when is_binary(log) do
     # ponytail: stable projection prefixes are the restore boundary while RunLog is text-only.

@@ -1,7 +1,7 @@
 defmodule Svarm.Runner.PiRPCTest do
   use ExUnit.Case, async: false
 
-  alias Svarm.{AgentQuestion, Events, Issue, KanbanBridge}
+  alias Svarm.{AgentQuestion, Events, Issue, KanbanBridge, RunSteer}
   alias Svarm.Runner.PiRPC
 
   @fake Path.expand("../../support/fake_pi_rpc.sh", __DIR__)
@@ -84,6 +84,21 @@ defmodule Svarm.Runner.PiRPCTest do
       line
     else
       assert_agent_line(task_id, pattern, timeout)
+    end
+  end
+
+  defp assert_agent_line_without(task_id, pattern, forbidden, timeout \\ 2_000) do
+    assert_receive {:agent_line, ^task_id, line}, timeout
+
+    cond do
+      line =~ forbidden ->
+        flunk("unexpected agent line matching #{inspect(forbidden)}: #{inspect(line)}")
+
+      line =~ pattern ->
+        line
+
+      true ->
+        assert_agent_line_without(task_id, pattern, forbidden, timeout)
     end
   end
 
@@ -224,6 +239,44 @@ defmodule Svarm.Runner.PiRPCTest do
     assert_agent_line(id, "got answer")
   end
 
+  test "mailbox steer during parked dialog is not written to pi", %{
+    workspace_root: root,
+    statuses: statuses
+  } do
+    kb =
+      KanbanBridge.create_task(%{
+        title: "steer during wait",
+        status: "in_progress",
+        assignee: "demo"
+      })
+
+    id = kb.id
+
+    runner =
+      Task.async(fn ->
+        PiRPC.run(task(id), agent_config("ui"), run_opts(root, statuses))
+      end)
+
+    assert_agent_line(id, "waiting for answer")
+    assert_pending_question(id, "proceed?")
+    assert_steer_inbox(id)
+
+    # inject/2 already refuses once parked; send the leftover mailbox race.
+    [{pid, _}] = Registry.lookup(RunSteer.inbox(), id)
+    send(pid, {:steer, "nudge mid-dialog"})
+
+    assert_agent_line_without(
+      id,
+      "steer ignored: answer the question first",
+      "got steer during wait"
+    )
+
+    assert {:ok, :injected} = AgentQuestion.answer(id, %{confirmed: true})
+    assert :ok = Task.await(runner, 5_000)
+    assert last_status(statuses, id) == "review"
+    assert_agent_line_without(id, "got answer", "got steer during wait")
+  end
+
   test "question wait deadline sends cancelled and continues", %{
     workspace_root: root,
     statuses: statuses
@@ -298,6 +351,41 @@ defmodule Svarm.Runner.PiRPCTest do
     assert_agent_line("sva_notify", "UI notify (no response)")
   end
 
+  test "steer injects JSONL and continues to review", %{workspace_root: root, statuses: statuses} do
+    kb = KanbanBridge.create_task(%{title: "steer me", status: "in_progress", assignee: "demo"})
+    id = kb.id
+
+    runner =
+      Task.async(fn ->
+        PiRPC.run(task(id), agent_config("steer"), run_opts(root, statuses))
+      end)
+
+    assert_steer_inbox(id)
+    assert {:ok, :injected} = RunSteer.inject(id, "try the other approach")
+    assert :ok = Task.await(runner, 5_000)
+    assert last_status(statuses, id) == "review"
+    assert_agent_line(id, "[board] steered: try the other approach")
+    assert_agent_line(id, "got steer")
+  end
+
+  test "rejected steer does not fail the run", %{workspace_root: root, statuses: statuses} do
+    kb =
+      KanbanBridge.create_task(%{title: "steer reject", status: "in_progress", assignee: "demo"})
+
+    id = kb.id
+
+    runner =
+      Task.async(fn ->
+        PiRPC.run(task(id), agent_config("steer_reject"), run_opts(root, statuses))
+      end)
+
+    assert_steer_inbox(id)
+    assert {:ok, :injected} = RunSteer.inject(id, "nudge")
+    assert :ok = Task.await(runner, 5_000)
+    assert last_status(statuses, id) == "review"
+    assert_agent_line(id, "steer rejected")
+  end
+
   test "protocol response success:false → failed + board line", %{
     workspace_root: root,
     statuses: statuses
@@ -329,6 +417,28 @@ defmodule Svarm.Runner.PiRPCTest do
 
     assert last_status(statuses, "sva_missing") == "failed"
     assert_agent_line("sva_missing", "pi not found on PATH")
+  end
+
+  defp assert_steer_inbox(id, timeout_ms \\ 2_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+
+    Stream.repeatedly(fn ->
+      found = Registry.lookup(RunSteer.inbox(), id) != []
+      Process.sleep(20)
+      found
+    end)
+    |> Enum.reduce_while(false, fn found, _ ->
+      cond do
+        found ->
+          {:halt, true}
+
+        System.monotonic_time(:millisecond) >= deadline ->
+          flunk("RunSteer inbox never registered for #{id}")
+
+        true ->
+          {:cont, false}
+      end
+    end)
   end
 
   defp assert_pending_question(id, prompt, timeout_ms \\ 2_000) do
