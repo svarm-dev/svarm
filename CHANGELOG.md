@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **WORKFLOW `workspace.isolation` fail closed** ([#160](https://github.com/svarm-dev/svarm/issues/160)): unknown values (`container`, typos) return `{:error, :invalid_workspace_isolation}` from `validate_workflow/1` instead of silently becoming `path`. Default remains **`path`**. GETTING-STARTED names `workspace.isolation` / `workspace.git_repo` and adds a path vs worktree vs container=later honesty row.
 - **Board / dashboard first paint** ([#163](https://github.com/svarm-dev/svarm/issues/163)): dead GET `/board` and `/dashboard` render real cards instead of a skeleton, so the stock LiveView "Attempting to reconnect" banner no longer flashes on every visit. `instance_status/1` can reuse already-loaded agents/task count.
 - **Budget hold unlocks**: trust `/approvals` Approve on an over-budget ticket now grants the overage permit; Reject clears the hold; raising the cap no longer resurrects rejected cards; overage permit is recorded before `todo` so a concurrent tick cannot re-park.
 

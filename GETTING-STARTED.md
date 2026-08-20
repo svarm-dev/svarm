@@ -149,6 +149,25 @@ Svärm tracks GitHub work with **labels**. Your eligibility label (e.g. `ai-task
 | Smoke-only off | Never leave `approval.mode: off` on a shared repo; do not leave `SVARM_DEMO_ROUTES` / `SVARM_SEED_DEMO` on production |
 | Base URL | Point `SVARM_BASE_URL` at the deployed host |
 | HTTPS + host | Terminate TLS at a reverse proxy; set `PHX_HOST` to the public hostname (origin checks). Compose **app** leaves session cookies Secure by default; only set `PHX_SECURE_COOKIES=false` for plain-HTTP localhost. See [SECURITY.md](SECURITY.md) |
+| Workspace isolation | Optional: `workspace.isolation` `path` (default) or `worktree`. Not a container. Unknown values fail closed (see below). |
+
+### Workspace isolation
+
+Per-ticket cwd lives under `workspace.root`. Isolation is a WORKFLOW switch, not an OS sandbox. Default stays **`path`**.
+
+| Key | Values | Default |
+|-----|--------|---------|
+| `workspace.root` | Directory for per-ticket workspaces | template uses `~/svarm_workspaces` |
+| `workspace.isolation` | `path` or `worktree` | **`path`** |
+| `workspace.git_repo` | Source git repo path (needed for `worktree`) | unset |
+
+Unknown `workspace.isolation` values (`container`, `sandbox`, typos) **fail closed**: `validate_workflow/1` returns `{:error, :invalid_workspace_isolation}` and the orchestrator will not dispatch until the key is `path`, `worktree`, or omitted.
+
+| Isolation | What it is | What it is not |
+|-----------|------------|----------------|
+| `path` (default) | Per-ticket directory under `workspace.root` with a path-escape guard | OS sandbox, chroot, container |
+| `worktree` | `git worktree` per ticket from `workspace.git_repo` | OS sandbox, container |
+| `container` | Later | — |
 
 ### CI resume (optional)
 
@@ -240,6 +259,7 @@ While a **PiRPC** run is `in_progress` (and not waiting on a question), the cons
 | Board approve/reject/mark-done/answer/steer blocked without auth flash | Production needs `APPROVALS_*`; sign in via `/approvals` then return to the board. Local Mix without credentials is open only when `dev_routes` is on. Sticky proof expires after 8h by default (`BOARD_AUTH_TTL_SECONDS`) — re-sign in if mid-session mutations start failing |
 | `/approvals` 401 | Wrong Basic Auth credentials |
 | Nothing happens | `docker compose logs -f` (polling / eligibility) |
+| Tick never dispatches after a WORKFLOW edit | Invalid `workspace.isolation` fails closed (expected `path` or `worktree`); logs include the rejected value |
 | Stuck before agent runs | `/approvals` (default is untrusted) |
 | 401/403 from GitHub | PAT `repo` scope; token in `.env` |
 | No eligible issues | Issue has `ai-task`; `required_labels` matches |

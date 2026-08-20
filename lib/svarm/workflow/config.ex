@@ -1,6 +1,8 @@
 defmodule Svarm.Workflow.Config do
   @moduledoc "Typed getters from workflow front matter (Symphony config layer)."
 
+  require Logger
+
   alias Svarm.Workflow.Render
   alias Svarm.Workspace
 
@@ -47,6 +49,13 @@ defmodule Svarm.Workflow.Config do
       cfg.poll_interval_ms < 1_000 ->
         {:error, :poll_interval_too_low}
 
+      match?({:error, :invalid_workspace_isolation}, cfg.workspace_isolation) ->
+        Logger.warning(
+          "workflow: invalid workspace.isolation #{inspect(isolation_raw(wf))}; expected path or worktree"
+        )
+
+        {:error, :invalid_workspace_isolation}
+
       true ->
         validate_tracker_config(cfg.tracker_config)
     end
@@ -75,12 +84,20 @@ defmodule Svarm.Workflow.Config do
   defp blank?(""), do: true
   defp blank?(_), do: false
 
+  # Omitted → :path. Only the exact strings "path" and "worktree" are valid.
   defp workspace_isolation(config) do
-    case get_string(config, ["workspace", "isolation"], "path") do
+    case get_in_path(config, ["workspace", "isolation"]) do
+      nil -> :path
+      "path" -> :path
       "worktree" -> :worktree
-      _ -> :path
+      _other -> {:error, :invalid_workspace_isolation}
     end
   end
+
+  defp isolation_raw(%{config: config}) when is_map(config),
+    do: get_in_path(config, ["workspace", "isolation"])
+
+  defp isolation_raw(_), do: nil
 
   defp workspace_git_repo(config) do
     case get_string(config, ["workspace", "git_repo"], nil) do

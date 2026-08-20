@@ -77,6 +77,76 @@ defmodule Svarm.WorkflowTest do
     end
   end
 
+  describe "Config.from_map/1 workspace isolation" do
+    test "defaults to path when omitted" do
+      assert Config.from_map(%{}).workspace_isolation == :path
+      assert Config.from_map(%{"workspace" => %{}}).workspace_isolation == :path
+    end
+
+    test "parses path" do
+      cfg = Config.from_map(%{"workspace" => %{"isolation" => "path"}})
+      assert cfg.workspace_isolation == :path
+    end
+
+    test "parses worktree" do
+      cfg = Config.from_map(%{"workspace" => %{"isolation" => "worktree"}})
+      assert cfg.workspace_isolation == :worktree
+    end
+
+    test "does not coerce invalid values to path" do
+      for value <- ["container", "sandbox", "Worktree", "worktrees", ""] do
+        cfg = Config.from_map(%{"workspace" => %{"isolation" => value}})
+
+        assert cfg.workspace_isolation == {:error, :invalid_workspace_isolation},
+               "expected error for #{inspect(value)}, got #{inspect(cfg.workspace_isolation)}"
+      end
+    end
+  end
+
+  describe "Config.validate_workflow/1 workspace isolation" do
+    test "accepts omitted isolation (default path)" do
+      wf = %Workflow{config: %{}, prompt_template: "Do {{issue.id}}", path: "x"}
+      assert :ok = Config.validate_workflow(wf)
+    end
+
+    test "accepts path" do
+      wf = %Workflow{
+        config: %{"workspace" => %{"isolation" => "path"}},
+        prompt_template: "Do {{issue.id}}",
+        path: "x"
+      }
+
+      assert :ok = Config.validate_workflow(wf)
+    end
+
+    test "accepts worktree" do
+      wf = %Workflow{
+        config: %{"workspace" => %{"isolation" => "worktree"}},
+        prompt_template: "Do {{issue.id}}",
+        path: "x"
+      }
+
+      assert :ok = Config.validate_workflow(wf)
+    end
+
+    test "rejects unknown isolation with a tagged error" do
+      for value <- ["container", "sandbox", "garbage"] do
+        wf = %Workflow{
+          config: %{"workspace" => %{"isolation" => value}},
+          prompt_template: "Do {{issue.id}}",
+          path: "x"
+        }
+
+        log =
+          ExUnit.CaptureLog.capture_log(fn ->
+            assert {:error, :invalid_workspace_isolation} = Config.validate_workflow(wf)
+          end)
+
+        assert log =~ inspect(value)
+      end
+    end
+  end
+
   describe "Config.validate_workflow/1 (strict render)" do
     test "rejects unknown placeholders in prompt_template" do
       wf = %Workflow{
