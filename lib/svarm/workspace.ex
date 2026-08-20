@@ -11,8 +11,8 @@ defmodule Svarm.Workspace do
   See SECURITY.md.
 
   Git add/list/remove share a bounded helper (`:git_timeout_ms`, default 30s).
-  Overtime returns `{:error, :git_timeout}`. `cleanup/3` runs `git worktree remove`
-  so trees do not leak in `git worktree list`.
+  Overtime returns `{:error, :git_timeout}` after best-effort leftover cleanup.
+  `cleanup/3` runs `git worktree remove` so trees do not leak in `git worktree list`.
   """
   @default_root Path.join([System.tmp_dir!(), "svarm_workspaces"])
   @default_git_timeout_ms 30_000
@@ -35,10 +35,10 @@ defmodule Svarm.Workspace do
   def ensure(identifier, root, opts) when is_binary(identifier) and is_list(opts) do
     isolation = isolation_mode(Keyword.get(opts, :isolation, :path))
 
-    with {:ok, abs, _root_abs, key} <- resolve_path(identifier, root) do
+    with {:ok, abs, root_abs, key} <- resolve_path(identifier, root) do
       case isolation do
         :path -> ensure_path(abs)
-        :worktree -> ensure_worktree(abs, key, opts)
+        :worktree -> ensure_worktree(abs, root_abs, key, opts)
       end
     end
   end
@@ -110,7 +110,7 @@ defmodule Svarm.Workspace do
     end
   end
 
-  defp ensure_worktree(abs, key, opts) do
+  defp ensure_worktree(abs, root_abs, key, opts) do
     repo = opts |> Keyword.get(:git_repo) |> normalize_repo()
 
     cond do
@@ -124,18 +124,34 @@ defmodule Svarm.Workspace do
         {:error, {:not_a_git_repo, repo}}
 
       File.dir?(abs) ->
-        reuse_worktree(repo, abs, opts)
+        reuse_or_recreate_worktree(repo, abs, root_abs, key, opts)
 
       true ->
-        add_worktree(repo, abs, key, opts)
+        add_worktree(repo, abs, root_abs, key, opts)
     end
   end
 
-  defp reuse_worktree(repo, abs, opts) do
+  defp reuse_or_recreate_worktree(repo, abs, root_abs, key, opts) do
     case linked_worktree?(repo, abs, opts) do
-      {:ok, true} -> {:ok, {abs, false}}
-      {:ok, false} -> {:error, {:not_a_worktree, abs}}
-      {:error, reason} -> {:error, reason}
+      {:ok, true} ->
+        {:ok, {abs, false}}
+
+      {:ok, false} ->
+        case foreign_worktree?(repo, abs, opts) do
+          {:ok, true} ->
+            {:error, {:not_a_worktree, abs}}
+
+          {:ok, false} ->
+            with :ok <- clear_leftover_worktree_path(repo, abs, root_abs, opts) do
+              add_worktree(repo, abs, root_abs, key, opts)
+            end
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -223,18 +239,72 @@ defmodule Svarm.Workspace do
   defp normalize_repo(path) when is_binary(path), do: Path.expand(path)
   defp normalize_repo(_), do: nil
 
-  defp add_worktree(repo, abs, key, opts) do
+  defp add_worktree(repo, abs, root_abs, key, opts) do
     branch = "svarm/" <> key
 
     case git_cmd(repo, ["worktree", "add", "-B", branch, abs], opts) do
       {:ok, _} ->
         {:ok, {abs, true}}
 
-      {:error, :git_timeout} = timeout ->
-        timeout
-
       {:error, {:git_failed, code, out}} ->
+        _ = clear_leftover_worktree_path(repo, abs, root_abs, opts)
         {:error, {:git_worktree_failed, code, out}}
+
+      {:error, reason} ->
+        _ = clear_leftover_worktree_path(repo, abs, root_abs, opts)
+        {:error, reason}
+    end
+  end
+
+  # Best-effort: drop a partial `git worktree add` so the next `ensure` is not
+  # stuck on `{:not_a_worktree, abs}`. Never deletes outside `root_abs`.
+  defp clear_leftover_worktree_path(repo, abs, root_abs, opts) do
+    _ = git_cmd(repo, ["worktree", "remove", "--force", abs], opts)
+    _ = git_cmd(repo, ["worktree", "prune"], opts)
+    bounded_rm_rf(abs, root_abs)
+  end
+
+  defp bounded_rm_rf(abs, root_abs) do
+    cond do
+      not (String.starts_with?(abs, root_abs <> "/") and abs != root_abs) ->
+        {:error, {:path_escape, abs, root_abs}}
+
+      not File.exists?(abs) ->
+        :ok
+
+      true ->
+        case File.rm_rf(abs) do
+          {:ok, _} -> :ok
+          {:error, reason, _file} -> {:error, {:rm, reason}}
+        end
+    end
+  end
+
+  # Linked to a different repo (or a non-worktree checkout with its own `.git`).
+  defp foreign_worktree?(repo, abs, opts) do
+    if File.exists?(Path.join(abs, ".git")) do
+      with {:ok, abs_common} <- git_common_dir(abs, opts),
+           {:ok, repo_common} <- git_common_dir(repo, opts) do
+        {:ok, abs_common != repo_common}
+      else
+        {:error, :git_timeout} = timeout -> timeout
+        {:error, _} -> {:ok, false}
+      end
+    else
+      {:ok, false}
+    end
+  end
+
+  defp git_common_dir(dir, opts) do
+    case git_cmd(dir, ["rev-parse", "--git-common-dir"], opts) do
+      {:ok, out} ->
+        common =
+          out
+          |> String.trim()
+          |> Path.expand(dir)
+          |> String.trim_trailing("/")
+
+        {:ok, common}
 
       {:error, reason} ->
         {:error, reason}
