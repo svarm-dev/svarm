@@ -137,17 +137,21 @@ defmodule Svarm.Workspace do
         {:ok, {abs, false}}
 
       {:ok, false} ->
-        case foreign_worktree?(repo, abs, opts) do
-          {:ok, true} ->
-            {:error, {:not_a_worktree, abs}}
+        recreate_if_not_foreign(repo, abs, root_abs, key, opts)
 
-          {:ok, false} ->
-            with :ok <- clear_leftover_worktree_path(repo, abs, root_abs, opts) do
-              add_worktree(repo, abs, root_abs, key, opts)
-            end
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
 
-          {:error, reason} ->
-            {:error, reason}
+  defp recreate_if_not_foreign(repo, abs, root_abs, key, opts) do
+    case foreign_worktree?(repo, abs, opts) do
+      {:ok, true} ->
+        {:error, {:not_a_worktree, abs}}
+
+      {:ok, false} ->
+        with :ok <- clear_leftover_worktree_path(repo, abs, root_abs, opts) do
+          add_worktree(repo, abs, root_abs, key, opts)
         end
 
       {:error, reason} ->
