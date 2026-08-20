@@ -59,13 +59,15 @@ defmodule SvarmWeb.BoardLive do
       |> assign(:board_auth_at, board_auth_at)
       |> assign(:last_status_cost_mono, 0)
       |> reset_column_streams(column_ids)
-      |> load_board()
 
-    # Dead GET must already include cards. Subscribe only after the socket is up.
+    # Dead GET still loads cards below without subscribing. On the connected
+    # remount, subscribe first so PubSub during load_board is not dropped.
     if connected?(socket) do
       Events.subscribe()
       Phoenix.PubSub.subscribe(Svarm.PubSub, "approvals")
     end
+
+    socket = load_board(socket)
 
     {:ok,
      assign(
