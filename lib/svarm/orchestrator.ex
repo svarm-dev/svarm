@@ -24,8 +24,9 @@ defmodule Svarm.Orchestrator do
   Reconcile now syncs running/claimed tasks against the tracker adapter (external
   terminal states stop workers). Workspace keys use issue source_id per §4.2.
 
-  Issues are fetched via the Svarm.Tracker behaviour, resolved from
-  WORKFLOW.md config at boot.
+  Issues are fetched via the Svarm.Tracker behaviour. `Svarm.Tracker.Resolve`
+  maps kind → `{adapter, config}` at boot; CI/review poll is a capability, not
+  a Local-module identity check.
   """
   use GenServer
 
@@ -536,21 +537,12 @@ defmodule Svarm.Orchestrator do
   end
 
   defp resolve_tracker(state) do
-    tc = state.tracker_config
-
     {adapter, config} =
-      case tc[:kind] || :local do
-        :github ->
-          {Tracker.GitHub, tc}
-
-        _ ->
-          {Tracker.Local,
-           %{
-             active_states: tc[:active_states] || state.active_states,
-             terminal_states: tc[:terminal_states] || state.terminal_states,
-             ignored_assignees: Map.get(tc, :ignored_assignees, [])
-           }}
-      end
+      Tracker.Resolve.adapter_and_config(
+        config: state.tracker_config || %{},
+        active_states: state.active_states,
+        terminal_states: state.terminal_states
+      )
 
     %{state | tracker: adapter, tracker_config: config}
   end
@@ -760,9 +752,7 @@ defmodule Svarm.Orchestrator do
   # Always refresh CI summary for GitHub review+PR cards (Review Station #156).
   # When `ci_resume.enabled`, also evaluate spawn / circuit (issue #44).
   defp maybe_ci_resume(state) do
-    if state.tracker == Tracker.Local do
-      state
-    else
+    if Tracker.Resolve.supports?(state.tracker, :ci_poll) do
       caps = state.ci_resume_caps || %{enabled: false, max_attempts: 3, skip_draft: true}
 
       state
@@ -771,6 +761,8 @@ defmodule Svarm.Orchestrator do
       |> Enum.reduce(state, fn coord, acc ->
         maybe_ci_poll_one(acc, coord, caps)
       end)
+    else
+      state
     end
   end
 
@@ -1029,11 +1021,10 @@ defmodule Svarm.Orchestrator do
   ## Review-resume (poll reviews → record state; optional spawn)
 
   defp maybe_review_resume(state) do
-    # Local tracker has no Reviews API. GitHub adapter (or test doubles) may run.
-    if state.tracker == Tracker.Local do
-      state
-    else
+    if Tracker.Resolve.supports?(state.tracker, :review_poll) do
       poll_review_resume(state)
+    else
+      state
     end
   end
 
@@ -1431,12 +1422,9 @@ defmodule Svarm.Orchestrator do
   defp post_run_summary(state, task_id, result) do
     maybe_capture_pr(state, task_id)
 
-    if state.tracker == Tracker.Local do
-      :ok
-    else
-      entry = state.last_run_entries[task_id]
-      if entry, do: build_and_post(state, task_id, result, entry)
-    end
+    entry = state.last_run_entries[task_id]
+    if entry, do: build_and_post(state, task_id, result, entry)
+    :ok
   end
 
   # Best-effort: parse PR URL from run log (agent stdout) into Coordination.

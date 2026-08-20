@@ -4,13 +4,18 @@ defmodule Svarm.Tracker do
   never on specific implementations. Adapter modules implement these callbacks
   to bridge Svärm's internal model to external trackers (GitHub, Linear, etc.).
 
-  Iron Law #1: Adding a second tracker = one adapter module + config + tests,
-  never a fork of the orchestrator.
+  Iron Law #1: Adding a second tracker = one adapter module + a kind entry in
+  `Svarm.Tracker.Resolve` + tests, never a fork of the orchestrator. Kind →
+  module mapping lives only in Resolve — not in Orchestrator, Board, Approval,
+  Demo, or Settings.
 
   All callbacks receive a `config` map as the first argument. Fallible
   callbacks return tagged tuples: `{:ok, value}` | `{:error, reason}`.
   """
   alias Svarm.Issue
+
+  @typedoc "Optional extras beyond the core issue callbacks."
+  @type capability :: :ci_poll | :review_poll | :connectivity_probe
 
   @doc """
   Returns eligible issues for dispatch.
@@ -71,4 +76,14 @@ defmodule Svarm.Tracker do
   """
   @callback post_run_summary(config :: map(), id :: String.t(), summary :: map()) ::
               :ok | {:error, term()}
+
+  @doc """
+  Optional extras this adapter supports (`:ci_poll`, `:review_poll`,
+  `:connectivity_probe`). Local returns `[]`. GitHub returns all three.
+  Adapters that omit this callback are treated as supporting CI/review poll
+  (test doubles). See `Svarm.Tracker.Resolve.supports?/2`.
+  """
+  @callback capabilities() :: [capability()]
+
+  @optional_callbacks capabilities: 0
 end

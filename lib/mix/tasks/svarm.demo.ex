@@ -13,8 +13,6 @@ defmodule Mix.Tasks.Svarm.Demo do
   @watch_timeout_ms 90_000
   @poll_interval_ms 500
 
-  alias Svarm.Tracker
-
   def run(args) do
     {opts, remaining, _} =
       OptionParser.parse(args,
@@ -132,16 +130,21 @@ defmodule Mix.Tasks.Svarm.Demo do
   end
 
   defp board_settled?(terminal) do
-    {:ok, tasks} = Tracker.Local.list_issues(%{}, [])
+    {:ok, tasks} = list_issues()
 
     tasks != [] and Enum.all?(tasks, fn t -> t.status in terminal end)
   end
 
   defp print_board(shell) do
-    {:ok, issues} = Tracker.Local.list_issues(%{}, [])
+    {:ok, issues} = list_issues()
 
     Enum.each(issues, fn t ->
       shell.info("  #{String.pad_trailing(t.status, 14)} [#{t.assignee}] #{t.title}")
     end)
+  end
+
+  defp list_issues do
+    {adapter, config} = Svarm.Tracker.Resolve.adapter_and_config()
+    adapter.list_issues(config, [])
   end
 end

@@ -38,9 +38,8 @@ defmodule Mix.Tasks.Svarm.Run do
 
         Mix.shell().info("\nTasks created:")
 
-        alias Svarm.Tracker
-
-        {:ok, issues} = Tracker.Local.list_issues(%{}, [])
+        {adapter, config} = Svarm.Tracker.Resolve.adapter_and_config()
+        {:ok, issues} = adapter.list_issues(config, [])
 
         Enum.each(issues, fn t ->
           Mix.shell().info("  [#{t.assignee}] (#{t.type}) #{t.title} (#{t.status})")

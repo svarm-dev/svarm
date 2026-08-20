@@ -16,8 +16,7 @@ defmodule Svarm.Demo do
   WORKFLOW `mode: all` base. Non-demo boots clear any leftover overlay.
   """
 
-  alias Svarm.{KanbanBridge, Settings, Workflow}
-  alias Svarm.Workflow.Config, as: WorkflowConfig
+  alias Svarm.{KanbanBridge, Tracker}
 
   @default_goal "Showcase the Svärm orchestrator loop"
 
@@ -116,9 +115,12 @@ defmodule Svarm.Demo do
   def truthy?(_), do: false
 
   defp preflight_seed do
-    case active_tracker_kind() do
-      :github -> {:error, :github_tracker}
-      _ -> check_non_demo_tasks()
+    {adapter, _config} = Tracker.Resolve.adapter_and_config()
+
+    if Tracker.Resolve.supports?(adapter, :connectivity_probe) do
+      {:error, :github_tracker}
+    else
+      check_non_demo_tasks()
     end
   end
 
@@ -157,7 +159,8 @@ defmodule Svarm.Demo do
   end
 
   defp wipe_local_board do
-    Svarm.Tracker.Local.delete_all(%{})
+    {adapter, config} = Tracker.Resolve.adapter_and_config()
+    adapter.delete_all(config)
     :ok
   end
 
@@ -172,15 +175,6 @@ defmodule Svarm.Demo do
     end
 
     :ok
-  end
-
-  # Same settings/workflow resolve path as Approval / Board.
-  defp active_tracker_kind do
-    workflow = Workflow.Store.get()
-    cfg = if workflow, do: WorkflowConfig.from(workflow), else: %{}
-    base = cfg[:tracker_config] || %{}
-    tc = Settings.Resolve.tracker_overlay(base)
-    tc[:kind] || :local
   end
 
   # Seed synthetic usage records for demo tasks so cost receipts show real amounts.

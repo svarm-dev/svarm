@@ -36,6 +36,9 @@ defmodule Svarm.Tracker.GitHub do
   }
 
   @impl true
+  def capabilities, do: [:ci_poll, :review_poll, :connectivity_probe]
+
+  @impl true
   def list_eligible(config) do
     owner = Map.fetch!(config, :owner)
     repo = Map.fetch!(config, :repo)

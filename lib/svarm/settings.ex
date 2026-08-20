@@ -137,11 +137,12 @@ defmodule Svarm.Settings do
   end
 
   def tracker_ready? do
-    tc = Resolve.tracker_overlay(workflow_tracker_config())
+    {adapter, tc} = Tracker.Resolve.adapter_and_config()
 
-    case tc[:kind] || :local do
-      :github -> present?(tc[:owner]) and present?(tc[:repo]) and present?(tc[:api_key])
-      _ -> true
+    if Tracker.Resolve.supports?(adapter, :connectivity_probe) do
+      present?(tc[:owner]) and present?(tc[:repo]) and present?(tc[:api_key])
+    else
+      true
     end
   end
 
@@ -176,8 +177,7 @@ defmodule Svarm.Settings do
   (blank PAT keeps the stored/env secret for the probe only).
   """
   def test_tracker do
-    tc = Resolve.tracker_overlay(workflow_tracker_config())
-    test_tracker_config(tc)
+    test_tracker_config(Tracker.Resolve.active_config())
   end
 
   def test_tracker(form_attrs) when is_map(form_attrs) do
@@ -187,17 +187,21 @@ defmodule Svarm.Settings do
     |> test_tracker_config()
   end
 
-  defp test_tracker_config(%{kind: :local}), do: {:ok, :local}
-  defp test_tracker_config(%{kind: kind}) when kind != :github, do: {:ok, :local}
-
   defp test_tracker_config(tc) do
-    if present?(tc[:owner]) and present?(tc[:repo]) and present?(tc[:api_key]) do
-      case Tracker.GitHub.list_eligible(tc) do
-        {:ok, issues} -> {:ok, length(issues)}
-        {:error, reason} -> {:error, format_error(reason)}
-      end
-    else
-      {:error, "GitHub tracker needs owner, repo, and a PAT"}
+    {adapter, config} = Tracker.Resolve.adapter_and_config(config: tc)
+
+    cond do
+      not Tracker.Resolve.supports?(adapter, :connectivity_probe) ->
+        {:ok, :local}
+
+      present?(config[:owner]) and present?(config[:repo]) and present?(config[:api_key]) ->
+        case adapter.list_eligible(config) do
+          {:ok, issues} -> {:ok, length(issues)}
+          {:error, reason} -> {:error, format_error(reason)}
+        end
+
+      true ->
+        {:error, "GitHub tracker needs owner, repo, and a PAT"}
     end
   end
 

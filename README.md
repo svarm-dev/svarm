@@ -102,7 +102,7 @@ Svarm.Orchestrator (GenServer poll loop)
         Svarm.Usage.Ledger (append-only cost tracking)
 ```
 
-Adapters are the extension point. A new tracker, runner, or provider is one module plus config, not a fork of the orchestrator. Shipped adapters are listed under Status.
+Adapters are the extension point. A new tracker is: implement `Svarm.Tracker`, register the kind in `Svarm.Tracker.Resolve`, add tests — not a fork of the orchestrator. Same idea for runners and providers. Shipped adapters are listed under Status.
 
 ## Configuration
 

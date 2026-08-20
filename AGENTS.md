@@ -23,6 +23,8 @@ svarm/
 ├── lib/
 │   ├── svarm/                    # Orchestration backend
 │   │   ├── orchestrator.ex       # GenServer poll loop (the brain)
+│   │   ├── tracker.ex            # Tracker behaviour
+│   │   ├── tracker/resolve.ex    # kind → {adapter, config} (only kind→module map)
 │   │   ├── agent_runner.ex       # Runner facade: load agents, resolve adapter, dispatch
 │   │   ├── runner.ex             # Runner helpers (env, GitHub token)
 │   │   ├── runner/cli.ex         # CLI runner — Port.open / process kill tree
@@ -97,7 +99,7 @@ The web layer is mostly a **read-only observer** of orchestration. Exception: `A
 ```
 
 **Rules:**
-- **Orchestrator calls adapters, not implementations** — depends on `Svarm.Tracker` (behaviour), never `Svarm.Tracker.GitHub`.
+- **Orchestrator calls adapters, not implementations** — depends on `Svarm.Tracker` (behaviour), never `Svarm.Tracker.GitHub`. Kind → module lives only in `Svarm.Tracker.Resolve` (register a new adapter there + implement the behaviour). Capability extras (`:ci_poll`, `:review_poll`) are adapter flags, not `== Tracker.Local` branches.
 - **Web layer never calls AgentRunner or Workspace** — reads state through `Board` and `Orchestrator.status/0`. **Exception:** approve/reject via `Approval` (ApprovalsController + BoardLive).
 - **Shell-out lives in Runner adapters** — `Port.open`, process kill tree, and related `System.cmd` for agent processes live in `Runner.Cli` / `Runner.PiRPC`. `AgentRunner` is the facade (load agents, resolve adapter, dispatch).
 - **KanbanBridge is the task DB path** — all task Ecto queries go through `KanbanBridge`. Other Repo-backed contexts are allowed for their own domains: `Usage`/`RunLog`/`Settings` (not task state).
@@ -330,7 +332,7 @@ mix test --only <tag>
 ## What not to do
 
 - **Do not add Postgres** — SQLite via Ecto is the project standard. Postgres is a managed-tier option for the distant future, not now.
-- **Do not replace KanbanBridge with an external tracker** without going through the adapter behaviour (`Svarm.Tracker`).
+- **Do not replace KanbanBridge with an external tracker** without going through the adapter behaviour (`Svarm.Tracker`). Register the kind in `Svarm.Tracker.Resolve`; do not map `kind` → module in Orchestrator, Board, Approval, Demo, or Settings.
 - **Do not add Ecto queries for tasks outside KanbanBridge** — task CRUD stays on `KanbanBridge`. `Usage`/`RunLog`/`Settings` own their tables.
 - **Do not shell out from anywhere except Runner adapters** — `Port.open` / agent process kill tree live in `Runner.Cli` and `Runner.PiRPC` only (AgentRunner is the facade).
 - **Do not expand scope to Symphony Codex app-server streaming** unless explicitly asked — v1 is poll/reconcile + WORKFLOW.md, not Codex app-server.

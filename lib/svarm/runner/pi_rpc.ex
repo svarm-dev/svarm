@@ -66,8 +66,7 @@ defmodule Svarm.Runner.PiRPC do
     workspace_root = Keyword.get(opts, :workspace_root, Workspace.default_root())
     isolation = Keyword.get(opts, :workspace_isolation, :path)
     git_repo = Keyword.get(opts, :workspace_git_repo)
-    tracker = Keyword.get(opts, :tracker, Tracker.Local)
-    tracker_config = Keyword.get(opts, :tracker_config, %{})
+    {tracker, tracker_config} = Tracker.Resolve.from_opts(opts)
 
     workspace_key = Workspace.key_for_issue(task)
 
