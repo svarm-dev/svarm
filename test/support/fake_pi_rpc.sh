@@ -68,6 +68,9 @@ case "$mode" in
     printf '%s\n' '{"type":"extension_ui_request","id":"ui-1","method":"confirm","message":"proceed?"}'
     while IFS= read -r line; do
       case "$line" in
+        *'"type":"steer"'*|*'"type": "steer"'*)
+          printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"got steer during wait\n"}}'
+          ;;
         *'"type":"extension_ui_response"'*|*'"type": "extension_ui_response"'*)
           printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"got answer\n"}}'
           printf '%s\n' '{"type":"agent_settled"}'

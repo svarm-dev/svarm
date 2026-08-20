@@ -39,6 +39,7 @@ defmodule Svarm.Runner.PiRPC do
   kernel/reaper). Keep **PiRPC timeout ≤ stall** so abort→kill_tree runs first.
 
   Operator **steer** (board → live session) uses pi RPC `type: steer`.
+  Mailbox steers are not written while a dialog is parked (`waiting_ui`).
   Follow-up-after-settle is not implemented.
   """
   @behaviour Svarm.Runner
@@ -360,8 +361,7 @@ defmodule Svarm.Runner.PiRPC do
         )
 
       {:steer, text} when is_binary(text) ->
-        send_json(port, %{type: "steer", message: text})
-        Events.broadcast_agent_line(task_id, "\n[board] steered: #{text}\n")
+        maybe_write_steer(port, task_id, session, text)
 
         drain_events(
           port,
@@ -426,6 +426,18 @@ defmodule Svarm.Runner.PiRPC do
   end
 
   defp effective_deadline(run_deadline, _), do: run_deadline
+
+  defp maybe_write_steer(_port, task_id, %{waiting_ui: waiting}, _text) when is_map(waiting) do
+    Events.broadcast_agent_line(
+      task_id,
+      "\n[board] steer ignored: answer the question first\n"
+    )
+  end
+
+  defp maybe_write_steer(port, task_id, _session, text) do
+    send_json(port, %{type: "steer", message: text})
+    Events.broadcast_agent_line(task_id, "\n[board] steered: #{text}\n")
+  end
 
   defp maybe_cancel_waiting(port, %{waiting_ui: %{request_id: id}}) when is_binary(id) do
     send_json(port, %{type: "extension_ui_response", id: id, cancelled: true})

@@ -4,7 +4,8 @@ defmodule Svarm.RunSteer do
 
   Web and tests call this module only — not `AgentRunner` or `Workspace`.
   The PiRPC worker registers in `Svarm.RunSteer.Inbox` for the whole run;
-  `inject/2` sends `{:steer, text}` and the worker writes JSONL `type: steer`.
+  `inject/2` sends `{:steer, text}` and the worker writes JSONL `type: steer`
+  unless a dialog is already parked (`waiting_ui`).
 
   CLI sessions never register. Mid-run Q&A must be answered first.
   """
@@ -42,6 +43,9 @@ defmodule Svarm.RunSteer do
   Queue a steer on the live PiRPC worker.
 
   Returns `{:ok, :injected}` after the message is sent to the worker.
+  Refuses when a question is already parked. A steer that races a park
+  still lands in the mailbox; the PiRPC loop drops it while `waiting_ui`
+  is set so it cannot flush mid-dialog.
   """
   @spec inject(String.t(), String.t()) :: {:ok, :injected} | {:error, error()}
   def inject(task_id, text) when is_binary(task_id) and is_binary(text) do

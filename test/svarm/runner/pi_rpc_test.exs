@@ -224,6 +224,42 @@ defmodule Svarm.Runner.PiRPCTest do
     assert_agent_line(id, "got answer")
   end
 
+  test "mailbox steer during parked dialog is not written to pi", %{
+    workspace_root: root,
+    statuses: statuses
+  } do
+    kb =
+      KanbanBridge.create_task(%{
+        title: "steer during wait",
+        status: "in_progress",
+        assignee: "demo"
+      })
+
+    id = kb.id
+
+    runner =
+      Task.async(fn ->
+        PiRPC.run(task(id), agent_config("ui"), run_opts(root, statuses))
+      end)
+
+    assert_agent_line(id, "waiting for answer")
+    assert_pending_question(id, "proceed?")
+    assert_steer_inbox(id)
+
+    # inject/2 already refuses once parked; send the leftover mailbox race.
+    [{pid, _}] = Registry.lookup(RunSteer.inbox(), id)
+    send(pid, {:steer, "nudge mid-dialog"})
+
+    assert_agent_line(id, "steer ignored: answer the question first")
+    refute_receive {:agent_line, ^id, line} when line =~ "got steer during wait", 200
+    refute_receive {:agent_line, ^id, line} when line =~ "[board] steered:", 50
+
+    assert {:ok, :injected} = AgentQuestion.answer(id, %{confirmed: true})
+    assert :ok = Task.await(runner, 5_000)
+    assert last_status(statuses, id) == "review"
+    assert_agent_line(id, "got answer")
+  end
+
   test "question wait deadline sends cancelled and continues", %{
     workspace_root: root,
     statuses: statuses
