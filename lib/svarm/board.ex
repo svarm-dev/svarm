@@ -83,13 +83,27 @@ defmodule Svarm.Board do
   Snapshot of this install for homepage and first-run checklist.
 
   Returns a plain map: tracker, workflow path, agents, tasks, approvals.
+
+  `opts` may pass already-loaded `:agents` (map) and/or `:task_count`
+  (non-negative integer) so a LiveView that just listed the board does not
+  fetch them again.
   """
-  def instance_status do
+  def instance_status(opts \\ []) when is_list(opts) do
     workflow = Workflow.Store.get()
     cfg = if workflow, do: WorkflowConfig.from(workflow), else: %{}
     tracker = Settings.Resolve.tracker_overlay(cfg[:tracker_config] || %{})
-    agents = list_agents()
-    tasks = safe_list_tasks()
+    agents = Keyword.get_lazy(opts, :agents, &list_agents/0)
+
+    {task_count, empty?} =
+      case Keyword.get(opts, :task_count) do
+        n when is_integer(n) and n >= 0 ->
+          {n, n == 0}
+
+        _ ->
+          tasks = safe_list_tasks()
+          {length(tasks), tasks == []}
+      end
+
     approval = approval_mode(workflow)
     setup = Settings.status()
 
@@ -100,11 +114,11 @@ defmodule Svarm.Board do
       workflow_path: workflow && workflow.path,
       workflow_loaded?: match?(%Workflow{}, workflow),
       agent_count: map_size(agents),
-      task_count: length(tasks),
+      task_count: task_count,
       approval_mode: approval,
       approvals_auth?: approvals_auth_configured?(),
       demo_routes: Svarm.Demo.routes_enabled?(),
-      empty?: tasks == [],
+      empty?: empty?,
       provider_configured?: setup.provider_configured?,
       tracker_ready?: setup.tracker_ready?,
       setup_complete?: setup.setup_complete?

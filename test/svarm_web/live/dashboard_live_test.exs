@@ -9,6 +9,20 @@ defmodule SvarmWeb.DashboardLiveTest do
     :ok
   end
 
+  test "dead GET /dashboard includes the body without waiting for the socket", %{conn: conn} do
+    KanbanBridge.create_task(%{
+      title: "Need gate",
+      status: Approval.pending_status(),
+      assignee: "demo"
+    })
+
+    conn = get(conn, ~p"/dashboard")
+    html = html_response(conn, 200)
+
+    assert html =~ "Waiting on humans"
+    assert html =~ "Approvals 1"
+  end
+
   test "shows waiting on humans strip with counts", %{conn: conn} do
     KanbanBridge.create_task(%{
       title: "Need gate",

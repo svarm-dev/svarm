@@ -13,28 +13,16 @@ defmodule SvarmWeb.DashboardLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    socket =
-      socket
-      |> assign(:page_title, "Dashboard")
-      |> assign(:reload_timer, nil)
-      |> then(fn s ->
-        if connected?(s) do
-          Events.subscribe()
-          load_dashboard(s)
-        else
-          assign(s,
-            snapshot: empty_snapshot(),
-            time_window: "session",
-            window_cost: empty_window_cost(),
-            roi: empty_roi("session"),
-            error: nil,
-            connected: false,
-            now_mono: System.monotonic_time(:millisecond)
-          )
-        end
-      end)
+    if connected?(socket) do
+      Events.subscribe()
+    end
 
-    {:ok, socket}
+    {:ok,
+     socket
+     |> assign(:page_title, "Dashboard")
+     |> assign(:reload_timer, nil)
+     |> assign(:time_window, "session")
+     |> load_dashboard()}
   end
 
   @impl true
@@ -132,33 +120,29 @@ defmodule SvarmWeb.DashboardLive do
         <%= if @error do %>
           <.error_card error={@error} />
         <% else %>
-          <%= if not @connected do %>
-            <.loading_skeleton />
-          <% else %>
-            <.system_status
-              orchestrator={@snapshot.orchestrator}
-              human_wait={@snapshot.human_wait}
-              now_mono={@now_mono}
-            />
+          <.system_status
+            orchestrator={@snapshot.orchestrator}
+            human_wait={@snapshot.human_wait}
+            now_mono={@now_mono}
+          />
 
-            <.human_wait_strip summary={@snapshot.human_wait} />
+          <.human_wait_strip summary={@snapshot.human_wait} />
 
-            <.spend_card cost={@window_cost} window={@time_window} />
+          <.spend_card cost={@window_cost} window={@time_window} />
 
-            <.roi_card roi={@roi} window={@time_window} />
+          <.roi_card roi={@roi} window={@time_window} />
 
-            <.queue_strip
-              task_distribution={@snapshot.task_distribution}
-              orchestrator={@snapshot.orchestrator}
-            />
+          <.queue_strip
+            task_distribution={@snapshot.task_distribution}
+            orchestrator={@snapshot.orchestrator}
+          />
 
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
-              <.agent_roster agents={@snapshot.agent_roster} />
-              <.task_breakdown distribution={@snapshot.task_distribution} />
-            </div>
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <.agent_roster agents={@snapshot.agent_roster} />
+            <.task_breakdown distribution={@snapshot.task_distribution} />
+          </div>
 
-            <.recent_runs runs={@snapshot.recent_runs} />
-          <% end %>
+          <.recent_runs runs={@snapshot.recent_runs} />
         <% end %>
       </div>
     </Layouts.app>
@@ -166,20 +150,6 @@ defmodule SvarmWeb.DashboardLive do
   end
 
   # -- Components --
-
-  defp loading_skeleton(assigns) do
-    ~H"""
-    <div class="space-y-5 animate-pulse">
-      <div class="h-5 w-64 rounded bg-base-300" />
-      <div class="rounded-lg border border-base-300 bg-base-200/60 h-16" />
-      <div class="rounded-lg border border-base-300 bg-base-200/60 h-24" />
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        <div class="rounded-lg border border-base-300 bg-base-200/60 p-4 h-48" />
-        <div class="rounded-lg border border-base-300 bg-base-200/60 p-4 h-48" />
-      </div>
-    </div>
-    """
-  end
 
   attr :error, :string, required: true
 

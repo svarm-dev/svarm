@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Board / dashboard first paint** ([#163](https://github.com/svarm-dev/svarm/issues/163)): dead GET `/board` and `/dashboard` render real cards instead of a skeleton, so the stock LiveView "Attempting to reconnect" banner no longer flashes on every visit. `instance_status/1` can reuse already-loaded agents/task count.
 - **Budget hold unlocks**: trust `/approvals` Approve on an over-budget ticket now grants the overage permit; Reject clears the hold; raising the cap no longer resurrects rejected cards; overage permit is recorded before `todo` so a concurrent tick cannot re-park.
 
 ## [0.1.5] - 2026-08-14

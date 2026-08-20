@@ -21,4 +21,11 @@ defmodule Svarm.BoardInstanceTest do
     assert map_size(agents) >= 1
     assert agents == Svarm.AgentRunner.load_agents()
   end
+
+  test "instance_status reuses passed agents and task_count" do
+    status = Svarm.Board.instance_status(agents: %{"only" => %{}}, task_count: 3)
+    assert status.agent_count == 1
+    assert status.task_count == 3
+    refute status.empty?
+  end
 end
