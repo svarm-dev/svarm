@@ -39,8 +39,14 @@ Svärm is self-hosted. The operator controls:
 - **API keys**: stored in `.env` or environment variables, never in config files or logs
 - **Agent commands**: agents run arbitrary commands in isolated workspace directories
 - **Approval gates**: `approval.mode: untrusted` holds tasks until a human approves (see sticky-approval note below)
-- **Workspace path isolation**: `Workspace.ensure/3` keeps per-ticket directories under a configured root (cwd + path-escape guard — not a chroot or container). Optional `workspace.isolation: worktree` uses `git worktree` for parallel working trees; that is still **not** OS/container sandboxing.
+- **Workspace path isolation**: `Workspace.ensure/3` keeps per-ticket directories under a configured root (cwd + path-escape guard — not a chroot or container). Optional `workspace.isolation: worktree` uses `git worktree` for parallel working trees; that is still **not** OS/container sandboxing. Unknown `workspace.isolation` values fail closed (`{:error, :invalid_workspace_isolation}`) — they do not silently become `path`.
 - **Secrets in transit**: never appear in task metadata, PubSub messages, or issue comments
+
+| `workspace.isolation` | What you get |
+|-----------------------|--------------|
+| `path` (default) | Directory under `workspace.root` + path-escape guard — not a chroot or container |
+| `worktree` | `git worktree` from `workspace.git_repo` — still not OS/container sandboxing |
+| `container` | Not shipped |
 
 The first-run approval gate (`approval.mode: untrusted`) prevents unattended execution until the operator explicitly approves. **One-shot sticky approval:** after a human approves, the orchestrator records the task id and the next poll may dispatch without re-entering `pending_approval`. The one-shot bit is cleared after the first spawn attempt — if the agent fails back to `todo`, a later poll can re-gate. Use `trusted_assignees` for agents that should skip the gate entirely. Under `mode: untrusted`, only assignees listed in `approval.trusted_assignees` skip the gate. The default template trusts `default`, `demo_research`, and `demo_docs`; **`demo_code` is gated** so the approval UX is visible during zero-key onboarding. Demo seed also applies a runtime overlay (trusts only `demo_research` and `demo_docs`) while a demo profile flag is active (`SVARM_SEED_DEMO` / `SVARM_DEMO_ROUTES` / dev routes). The overlay never weakens a WORKFLOW `mode: all` policy (everyone stays gated).
 
