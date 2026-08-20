@@ -31,7 +31,8 @@ defmodule Svarm.Usage do
   @doc """
   Attribute ledger spend to `:merged` / `:in_review` / `:other` buckets.
 
-  See `Svarm.Usage.Outcomes` for bucket definitions and honesty limits.
+  Query-time only — the ledger is append-only. See `Svarm.Usage.Outcomes`
+  for bucket definitions (status + GitHub PR `merged`) and honesty limits.
   """
   def by_outcome(opts \\ []), do: Outcomes.by_outcome(opts)
 
