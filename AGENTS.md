@@ -322,7 +322,7 @@ mix test --only <tag>
 
 - **Never commit API keys or auth tokens.** Agents expect credentials from the operator's environment (`GITHUB_TOKEN`, `OPENROUTER_API_KEY`, etc.).
 - **Secrets never appear in task metadata, logs, or PubSub messages.**
-- **Workspace paths are root-bounded** — `Workspace.ensure/2` validates paths stay within the configured root (directory isolation / path-escape guard, not OS sandbox). Never bypass this guard.
+- **Workspace paths are root-bounded** — `Workspace.ensure/3` validates paths stay within the configured root (directory isolation / path-escape guard, not OS sandbox). Optional `workspace.isolation: worktree` adds git worktrees — still not a container. Never bypass this guard.
 - **Agent shell commands are high trust** — agents run arbitrary commands in isolated workspace directories. The first-run approval gate (`approval.*` in WORKFLOW.md) prevents unattended execution until the operator explicitly approves.
 - **Production approvals** require Basic Auth: `config :svarm, approvals_auth: %{username: ..., password: ...}`. Dev mode uses `dev_routes: true` for unauthenticated access. Board high-trust mutations use a **TTL-bound** session stamp (`board_auth_at`, default 8h / `BOARD_AUTH_TTL_SECONDS`) — not a lifetime boolean.
 - **Config secrets** use `System.get_env/1` or `System.fetch_env!/1` in `runtime.exs` — never hardcoded in `.exs` files checked into git.

@@ -45,6 +45,92 @@ defmodule Svarm.Dashboard do
     Usage.Query.cost_since_inserted_at(since)
   end
 
+  @doc """
+  Outcome ROI strip for a spend window (`session` / `24h` / `7d`).
+
+  Uses `Usage.by_outcome/1` (query-time; ledger append-only). Merge rate is
+  `merged_tasks / tasks_with_spend` in the window. Cost per merged is
+  merged-bucket spend / merged task count (nil when no merges). Estimated
+  flag is true when any contributing spend is approximate.
+  """
+  def roi_for_window(window \\ "session", tasks \\ nil) do
+    tasks = tasks || Board.list_tasks()
+    agents = Board.list_agents()
+    since = window_since(window)
+    statuses = Map.new(tasks, &{&1.id, &1.status})
+
+    overall =
+      Usage.by_outcome(task_statuses: statuses, since: since)
+      |> metrics_from_outcome()
+
+    by_agent =
+      tasks
+      |> Enum.group_by(&AgentRegistry.normalize_assignee(&1.assignee))
+      |> Enum.map(fn {agent, agent_tasks} ->
+        ids = Enum.map(agent_tasks, & &1.id)
+        agent_statuses = Map.take(statuses, ids)
+
+        metrics =
+          Usage.by_outcome(task_statuses: agent_statuses, since: since, task_ids: ids)
+          |> metrics_from_outcome()
+
+        identity = AgentRegistry.identity(agent, agents)
+
+        %{
+          assignee: agent,
+          display_name: identity.display_name,
+          metrics: metrics
+        }
+      end)
+      |> Enum.reject(&(&1.metrics.tasks_with_spend == 0))
+      |> Enum.sort_by(& &1.display_name)
+
+    %{
+      window: window,
+      since: since,
+      overall: overall,
+      by_agent: by_agent
+    }
+  end
+
+  defp window_since("session"), do: nil
+
+  defp window_since(window) when window in ["24h", "7d"] do
+    seconds = if window == "24h", do: 86_400, else: 604_800
+    DateTime.add(DateTime.utc_now(), -seconds, :second)
+  end
+
+  defp window_since(_), do: nil
+
+  defp metrics_from_outcome(%{by_outcome: by, task_count: n}) do
+    merged = Map.fetch!(by, :merged)
+    estimated = Enum.any?([by.merged, by.in_review, by.other], & &1.estimated)
+
+    merge_rate =
+      if n > 0 do
+        Float.round(merged.task_count / n, 4)
+      else
+        nil
+      end
+
+    cost_per_merged =
+      if merged.task_count > 0 do
+        Float.round(merged.total_cost_usd / merged.task_count, 4)
+      else
+        nil
+      end
+
+    %{
+      merge_rate: merge_rate,
+      cost_per_merged_usd: cost_per_merged,
+      merged_tasks: merged.task_count,
+      in_review_tasks: by.in_review.task_count,
+      other_tasks: by.other.task_count,
+      tasks_with_spend: n,
+      estimated: estimated
+    }
+  end
+
   @window_seconds 86_400
 
   @doc """

@@ -3,7 +3,7 @@ defmodule Svarm.Usage do
   Public API for usage tracking. The orchestrator, AgentRunner, and
   Decompose call this module to record token consumption.
   """
-  alias Svarm.Usage.{Ledger, Query, Rates}
+  alias Svarm.Usage.{Ledger, Outcomes, Query, Rates}
 
   @doc """
   Append a usage ledger row.
@@ -25,6 +25,15 @@ defmodule Svarm.Usage do
   defdelegate session_cost_summary(), to: Query
   defdelegate session_totals(), to: Query
   defdelegate cost_usd(provider, model_id, prompt_tokens, completion_tokens), to: Rates
+  defdelegate classify_outcome_status(status), to: Outcomes, as: :classify_status
+  defdelegate outcome_buckets(), to: Outcomes, as: :outcomes
+
+  @doc """
+  Attribute ledger spend to `:merged` / `:in_review` / `:other` buckets.
+
+  See `Svarm.Usage.Outcomes` for bucket definitions and honesty limits.
+  """
+  def by_outcome(opts \\ []), do: Outcomes.by_outcome(opts)
 
   # Single construction site for ledger field contract (avoids repeated map shapes).
   defp normalize_attrs(attrs) do

@@ -21,7 +21,8 @@ defmodule Svarm.Runner.PiRPC do
       dialog (missing id/prompt) fails the run — same as pre-Q&A fail-fast.
     - fire-and-forget UI (`notify`, `setStatus`, `setWidget`, `setTitle`,
       `set_editor_text`) → log a short line and continue (no response)
-    - `response` with `success: false` → fail (protocol / rejected command)
+    - `response` with `success: false` → fail (protocol / rejected command),
+      except rejected **steer** (board line, run continues)
 
   `agent_end` fires per-run but does NOT end the session — pi may
   auto-retry or compact. Only `agent_settled` means "fully done."
@@ -37,8 +38,9 @@ defmodule Svarm.Runner.PiRPC do
   but does **not** run this module's `kill_tree/1` (grandchildren may need the
   kernel/reaper). Keep **PiRPC timeout ≤ stall** so abort→kill_tree runs first.
 
-  ## pony tail: follow_up/steer not yet implemented.
-  Add when Symphony §7.1 multi-turn continuation is prioritized.
+  Operator **steer** (board → live session) uses pi RPC `type: steer`.
+  Mailbox steers are not written while a dialog is parked (`waiting_ui`).
+  Follow-up-after-settle is not implemented.
   """
   @behaviour Svarm.Runner
 
@@ -46,7 +48,7 @@ defmodule Svarm.Runner.PiRPC do
 
   alias Svarm.Runner.LogFormat
 
-  alias Svarm.{AgentQuestion, Events, StreamEvent, Tracker, Workspace}
+  alias Svarm.{AgentQuestion, Events, RunSteer, StreamEvent, Tracker, Workspace}
 
   # 45 min wall-clock — long enough for real coding agents; keep ≤ orchestrator stall.
   @default_timeout_ms 45 * 60_000
@@ -62,11 +64,18 @@ defmodule Svarm.Runner.PiRPC do
     )
 
     workspace_root = Keyword.get(opts, :workspace_root, Workspace.default_root())
+    isolation = Keyword.get(opts, :workspace_isolation, :path)
+    git_repo = Keyword.get(opts, :workspace_git_repo)
     tracker = Keyword.get(opts, :tracker, Tracker.Local)
     tracker_config = Keyword.get(opts, :tracker_config, %{})
 
     workspace_key = Workspace.key_for_issue(task)
-    {workspace_path, _created_now} = Workspace.ensure(workspace_key, workspace_root)
+
+    {workspace_path, _created_now} =
+      Workspace.ensure!(workspace_key, workspace_root,
+        isolation: isolation,
+        git_repo: git_repo
+      )
 
     attempt = (task.attempts || 0) + 1
     log_path = Path.join(workspace_path, "run.log")
@@ -154,6 +163,7 @@ defmodule Svarm.Runner.PiRPC do
           "[pi_rpc] session started (#{agent_config[:model]})\n"
         )
 
+        RunSteer.register(task.id)
         send_json(port, %{id: "prompt-1", type: "prompt", message: prompt})
 
         session0 = %{
@@ -187,6 +197,7 @@ defmodule Svarm.Runner.PiRPC do
           finish(task, tracker, tracker_config, session)
         after
           AgentQuestion.clear(task.id)
+          RunSteer.unregister()
           ensure_dead(port)
         end
 
@@ -348,6 +359,20 @@ defmodule Svarm.Runner.PiRPC do
           deadline,
           grace
         )
+
+      {:steer, text} when is_binary(text) ->
+        maybe_write_steer(port, task_id, session, text)
+
+        drain_events(
+          port,
+          task_id,
+          log,
+          usage,
+          session,
+          buffer,
+          deadline,
+          grace
+        )
     after
       remaining_ms(effective_deadline(deadline, session)) ->
         now = System.monotonic_time(:millisecond)
@@ -401,6 +426,18 @@ defmodule Svarm.Runner.PiRPC do
   end
 
   defp effective_deadline(run_deadline, _), do: run_deadline
+
+  defp maybe_write_steer(_port, task_id, %{waiting_ui: waiting}, _text) when is_map(waiting) do
+    Events.broadcast_agent_line(
+      task_id,
+      "\n[board] steer ignored: answer the question first\n"
+    )
+  end
+
+  defp maybe_write_steer(port, task_id, _session, text) do
+    send_json(port, %{type: "steer", message: text})
+    Events.broadcast_agent_line(task_id, "\n[board] steered: #{text}\n")
+  end
 
   defp maybe_cancel_waiting(port, %{waiting_ui: %{request_id: id}}) when is_binary(id) do
     send_json(port, %{type: "extension_ui_response", id: id, cancelled: true})
@@ -502,6 +539,18 @@ defmodule Svarm.Runner.PiRPC do
 
   defp handle_event(%{"type" => "agent_settled"}, _task_id, log, usage, session) do
     {log, usage, %{session | settled: true}}
+  end
+
+  defp handle_event(
+         %{"type" => "response", "success" => false, "command" => "steer"} = event,
+         task_id,
+         log,
+         usage,
+         session
+       ) do
+    err = event["error"] || "steer rejected"
+    Events.broadcast_agent_line(task_id, "\n[board] steer rejected: #{inspect(err)}\n")
+    {log, usage, session}
   end
 
   defp handle_event(

@@ -49,6 +49,55 @@ defmodule SvarmWeb.DashboardLiveTest do
     assert html =~ "Review 0"
     assert html =~ "Total 0"
     assert html =~ "nothing waiting on humans"
+    assert html =~ "Outcomes"
+    assert html =~ "No ledger spend in this window yet."
+  end
+
+  test "outcomes ROI strip shows merge rate and cost per merged", %{conn: conn} do
+    done =
+      KanbanBridge.create_task(%{
+        title: "Merged spend",
+        status: "done",
+        assignee: "demo"
+      })
+
+    review =
+      KanbanBridge.create_task(%{
+        title: "Still review",
+        status: "review",
+        assignee: "demo"
+      })
+
+    Usage.append(%{
+      run_id: "run_roi_done",
+      task_id: done.id,
+      source: "worker",
+      provider: "openrouter",
+      model_id: "claude-sonnet-4-20250514",
+      prompt_tokens: 1_000,
+      completion_tokens: 500,
+      estimated: true
+    })
+
+    Usage.append(%{
+      run_id: "run_roi_review",
+      task_id: review.id,
+      source: "worker",
+      provider: "openrouter",
+      model_id: "claude-sonnet-4-20250514",
+      prompt_tokens: 100,
+      completion_tokens: 50,
+      estimated: true
+    })
+
+    {:ok, _view, html} = live(conn, ~p"/dashboard")
+
+    assert html =~ "Outcomes"
+    assert html =~ "Merge rate"
+    assert html =~ "50.0%"
+    assert html =~ "$/merged"
+    assert html =~ "1/2 tasks with spend"
+    assert html =~ "Demo" or html =~ "demo"
   end
 
   test "session spend shows cost and tokens from same window", %{conn: conn} do
