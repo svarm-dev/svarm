@@ -51,7 +51,7 @@ mix phx.server
 | Route | What it shows |
 |-------|---------------|
 | [`/board`](http://localhost:4000/board) | Board with demo tasks already moving |
-| [`/dashboard`](http://localhost:4000/dashboard) | Ops overview: agent roster, cost, waiting on humans |
+| [`/dashboard`](http://localhost:4000/dashboard) | Ops overview: agent roster, cost, outcomes ROI, waiting on humans |
 | [`/`](http://localhost:4000/) | Instance overview (tracker, agents, workflow) |
 | [`/approvals`](http://localhost:4000/approvals) | First-run gates (Basic Auth: `svarm` / `svarm` in demo) |
 | [`/setup`](http://localhost:4000/setup) | Optional in-app keys + default model (same auth as `/approvals` in Docker) |
@@ -155,14 +155,18 @@ GitHub App identity (bot comments): [docs/github-app.md](docs/github-app.md).
 - Local board + GitHub Issues + pi/CLI agents + OpenRouter
 - Approvals (one-shot after human approve); board mutations require `APPROVALS_*` in Docker/prod (**fail closed** if unset)
 - Per-ticket cost (estimated labeled); optional daily/per-ticket USD caps that block **new** spawns (`hard` skip, or `hold` for a one-shot overage approval)
+- **Per-agent 24h cost + retry share** — `/dashboard` roster: wall-clock 24h ledger spend (estimated labeled) and retry `retried/total` (n/a when attempts aren't recorded, e.g. GitHub today)
 - Allowlisted agent child env; usage ledger export (`mix svarm.export_usage`)
+- **Outcome ROI** — `/dashboard` strip with merge rate and `$/merged` over the Spend window (session/24h/7d), overall + per agent; estimated spend labeled
 - Optional **in-app `/setup`** (encrypted keys; file/env still work); human-wait visibility on board/dashboard
 - **Run console** on the ticket — typed narrative/tool/run chrome, late-join from durable log, deep link `/board?task=…&attach=1`
 - Optional **CI fail → fresh agent re-dispatch** with circuit breaker (default **off**; enable via WORKFLOW / `SVARM_CI_RESUME_*`)
 - **Review-resume** — Changes requested chip when GitHub reviews ask for changes; optional re-dispatch on first request (default **off**; `review_resume` / `SVARM_REVIEW_RESUME_ENABLED`; shares the CI resume circuit)
+- **Review Station** — structured Evidence (PR, attempts, agent/model, cost, age) on selected review cards; PR/no-PR glance chips and a CI `pass` / `fail` / `pending` / `unknown` summary chip (N/A on the local tracker). Informational only — humans still merge on GitHub.
 - **Mid-run Q&A** — a PiRPC agent can pause on a dialog; **Waiting for answer** chip + board form (confirm / select / input). CLI inject is unsupported. Dismiss or the 15-minute deadline **continues** the run.
+- **Git worktree isolation** — optional `workspace.isolation: worktree` (default `path`) gives each ticket a git worktree from `workspace.git_repo`; still directory-level isolation, not a container
 
-**Not shipped yet:** Linear/Jira trackers, multi-provider/multi-agent registry UI, managed hosting, mid-run budget kill of in-flight workers, steer / follow-up in the console. "Adapter-ready" means the behaviours exist; it does not mean every adapter is built.
+**Not shipped yet:** Linear/Jira trackers, multi-provider/multi-agent registry UI, managed hosting, mid-run budget kill of in-flight workers, follow-up in the console. "Adapter-ready" means the behaviours exist; it does not mean every adapter is built.
 
 Optional UI config after the demo: open `/setup` (same auth as `/approvals` in Docker). Details: [GETTING-STARTED.md](GETTING-STARTED.md).
 

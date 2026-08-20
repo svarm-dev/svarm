@@ -173,6 +173,13 @@ defmodule Svarm.Usage.Ledger do
     |> Repo.all()
   end
 
+  @doc """
+  SQL cost groups for the whole ledger, grouped by task + provider + model.
+  """
+  def task_cost_groups_all do
+    task_cost_groups_query(Record) |> Repo.all()
+  end
+
   # --- private: group-by aggregates for cost (provider bill + rate-table tokens) ---
 
   defp cost_groups_query(queryable) do

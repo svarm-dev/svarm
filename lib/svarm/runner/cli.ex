@@ -3,8 +3,8 @@ defmodule Svarm.Runner.Cli do
   CLI runner adapter. Executes an agent as a subprocess via System.cmd/Port.
   Implements `Svarm.Runner` behaviour.
 
-  Mid-run UI inject (`extension_ui_request`) is not supported here — that
-  path lives on `Svarm.Runner.PiRPC` via `Svarm.AgentQuestion`.
+  Mid-run UI inject (`extension_ui_request`) and operator steer are not
+  supported here — those paths live on `Svarm.Runner.PiRPC`.
   """
   @behaviour Svarm.Runner
 
@@ -21,12 +21,19 @@ defmodule Svarm.Runner.Cli do
     )
 
     workspace_root = Keyword.get(opts, :workspace_root, Workspace.default_root())
+    isolation = Keyword.get(opts, :workspace_isolation, :path)
+    git_repo = Keyword.get(opts, :workspace_git_repo)
     tracker = Keyword.get(opts, :tracker, Tracker.Local)
     tracker_config = Keyword.get(opts, :tracker_config, %{})
     assignee = task.assignee || ProfileRouter.assign("#{task.title} #{task.body}")
 
     workspace_key = Workspace.key_for_issue(task)
-    {workspace_path, _created_now} = Workspace.ensure(workspace_key, workspace_root)
+
+    {workspace_path, _created_now} =
+      Workspace.ensure!(workspace_key, workspace_root,
+        isolation: isolation,
+        git_repo: git_repo
+      )
 
     attempt = (task.attempts || 0) + 1
 

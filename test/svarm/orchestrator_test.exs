@@ -1074,14 +1074,16 @@ defmodule Svarm.OrchestratorTest do
     end
   end
 
-  describe "Workspace.ensure/2 escape guard" do
+  describe "Workspace.ensure escape guard" do
     test "rejects a path that climbs outside root" do
       # ".." slips past sanitize (dots are allowed by Symphony §9.5); the
       # path-stays-in-root guard (invariant 2) is the real backstop.
       root = Path.join(System.tmp_dir!(), "svarmguard_test_#{:rand.uniform(9999)}")
 
-      assert_raise RuntimeError, ~r/invalid_workspace_path/, fn ->
-        Workspace.ensure("..", root)
+      assert {:error, {:path_escape, _abs, _root}} = Workspace.ensure("..", root)
+
+      assert_raise RuntimeError, ~r/workspace_ensure_failed/, fn ->
+        Workspace.ensure!("..", root)
       end
     end
 
