@@ -2,7 +2,18 @@ defmodule SvarmWeb.BoardLive do
   @moduledoc "Real-time board and agent run log (agent work · human judgment)."
   use SvarmWeb, :live_view
 
-  alias Svarm.{AgentQuestion, AgentRegistry, Approval, Board, Budget, Events, StreamEvent, Usage}
+  alias Svarm.{
+    AgentQuestion,
+    AgentRegistry,
+    Approval,
+    Board,
+    Budget,
+    Events,
+    RunSteer,
+    StreamEvent,
+    Usage
+  }
+
   alias SvarmWeb.Plugs.ApprovalsAuth
 
   @max_log_lines 400
@@ -198,6 +209,24 @@ defmodule SvarmWeb.BoardLive do
 
           {:error, reason} ->
             {:noreply, put_flash(socket, :error, AgentQuestion.flash_error(reason))}
+        end
+    end
+  end
+
+  def handle_event("steer_run", params, socket) do
+    case authorize_board_mutation(socket) do
+      {:error, :unauthorized} ->
+        {:noreply, put_flash(socket, :error, unauthorized_mutation_flash("steer"))}
+
+      :ok ->
+        id = params["id"] || params["task_id"]
+
+        case RunSteer.inject(id, params["message"] || "") do
+          {:ok, :injected} ->
+            {:noreply, put_flash(socket, :info, "Steer sent")}
+
+          {:error, reason} ->
+            {:noreply, put_flash(socket, :error, RunSteer.flash_error(reason))}
         end
     end
   end
@@ -1216,6 +1245,12 @@ defmodule SvarmWeb.BoardLive do
 
           <%= if q = Board.pending_question(@task) do %>
             <.agent_question_panel task={@task} question={q} />
+          <% else %>
+            <.steer_panel
+              :if={@task.status == "in_progress"}
+              task={@task}
+              adapter={@meta[:adapter] || @identity.adapter}
+            />
           <% end %>
 
           <%= if @task.status == "review" do %>
@@ -1763,6 +1798,36 @@ defmodule SvarmWeb.BoardLive do
         </button>
       </div>
       <p class="mt-1 text-[11px] opacity-60">One question at a time. Dismiss continues the run.</p>
+    </div>
+    """
+  end
+
+  attr :task, :map, required: true
+  attr :adapter, :string, default: nil
+
+  defp steer_panel(assigns) do
+    enabled? = assigns.adapter == "pi_rpc"
+    assigns = assign(assigns, :enabled?, enabled?)
+
+    ~H"""
+    <div id={"steer-run-#{@task.id}"} class="rounded-md border border-base-300 px-3 py-2 text-sm">
+      <form phx-submit="steer_run" class="flex flex-wrap items-center gap-2">
+        <input type="hidden" name="task_id" value={@task.id} />
+        <input
+          type="text"
+          name="message"
+          required={@enabled?}
+          disabled={not @enabled?}
+          placeholder={if @enabled?, do: "Steer this run…", else: "Steer is Pi RPC on a live run"}
+          class="input input-sm input-bordered min-w-[12rem] flex-1"
+        />
+        <button type="submit" class="btn btn-sm btn-outline" disabled={not @enabled?}>
+          Steer
+        </button>
+      </form>
+      <p :if={not @enabled?} class="mt-1 text-[11px] opacity-60">
+        Steer is Pi RPC on a live run.
+      </p>
     </div>
     """
   end
