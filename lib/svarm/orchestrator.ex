@@ -539,7 +539,7 @@ defmodule Svarm.Orchestrator do
   defp resolve_tracker(state) do
     {adapter, config} =
       Tracker.Resolve.adapter_and_config(
-        config: state.tracker_config || %{},
+        config: state.tracker_config,
         active_states: state.active_states,
         terminal_states: state.terminal_states
       )
