@@ -3,13 +3,40 @@ defmodule Svarm.Usage.OutcomesTest do
 
   import Ecto.Query
 
-  alias Svarm.{KanbanBridge, Usage}
+  alias Svarm.{Coordination, KanbanBridge, Usage}
   alias Svarm.Repo
   alias Svarm.Usage.Record
+
+  @github_config %{kind: :github, owner: "acme", repo: "app", api_key: "t"}
+
+  defmodule StubReq do
+    def get(url, _opts) do
+      case Process.get(:github_pr_merged) do
+        :merged ->
+          {:ok, %{status: 200, body: %{"merged" => true, "state" => "closed"}}}
+
+        :closed_unmerged ->
+          {:ok, %{status: 200, body: %{"merged" => false, "state" => "closed"}}}
+
+        :http_error ->
+          {:ok, %{status: 500, body: %{}}}
+
+        :network ->
+          {:error, :timeout}
+
+        :flunk ->
+          flunk("unexpected GitHub call #{url}")
+
+        other ->
+          flunk("unexpected stub #{inspect(other)} for #{url}")
+      end
+    end
+  end
 
   setup do
     KanbanBridge.delete_all_tasks()
     Repo.delete_all(Record)
+    Repo.delete_all(Coordination)
     :ok
   end
 
@@ -136,5 +163,129 @@ defmodule Svarm.Usage.OutcomesTest do
     # Only the recent row should contribute tokens roughly 20 total
     assert result.by_outcome.merged.prompt_tokens == 10
     assert result.by_outcome.merged.completion_tokens == 10
+  end
+
+  test "merged GitHub PR with review status buckets as merged" do
+    task = review_task_with_pr(99)
+    Process.put(:github_pr_merged, :merged)
+
+    result = by_outcome_github(task)
+
+    assert result.by_outcome.merged.task_count == 1
+    assert result.by_outcome.in_review.task_count == 0
+    assert result.by_outcome.merged.estimated == true
+    assert result.by_outcome.merged.prompt_tokens == 8
+  end
+
+  test "closed unmerged PR with review status stays in_review" do
+    task = review_task_with_pr(100)
+    Process.put(:github_pr_merged, :closed_unmerged)
+
+    result = by_outcome_github(task)
+
+    assert result.by_outcome.merged.task_count == 0
+    assert result.by_outcome.in_review.task_count == 1
+  end
+
+  test "GitHub HTTP error does not invent a merge" do
+    task = review_task_with_pr(101)
+    Process.put(:github_pr_merged, :http_error)
+
+    result = by_outcome_github(task)
+
+    assert result.by_outcome.merged.task_count == 0
+    assert result.by_outcome.in_review.task_count == 1
+  end
+
+  test "GitHub network error does not invent a merge" do
+    task = review_task_with_pr(102)
+    Process.put(:github_pr_merged, :network)
+
+    result = by_outcome_github(task)
+
+    assert result.by_outcome.merged.task_count == 0
+    assert result.by_outcome.in_review.task_count == 1
+  end
+
+  test "local tracker ignores PR fields and stays status-based" do
+    task = review_task_with_pr(103)
+    Process.put(:github_pr_merged, :flunk)
+
+    result =
+      Usage.by_outcome(
+        task_statuses: %{task.id => "review"},
+        tracker_config: %{kind: :local},
+        req: StubReq
+      )
+
+    assert result.by_outcome.merged.task_count == 0
+    assert result.by_outcome.in_review.task_count == 1
+  end
+
+  test "done status does not call GitHub" do
+    task = KanbanBridge.create_task(%{title: "done", status: "done", assignee: "demo"})
+    append_spend(task.id, "run_done_nopr")
+    Process.put(:github_pr_merged, :flunk)
+
+    result =
+      Usage.by_outcome(
+        task_statuses: %{task.id => "done"},
+        tracker_config: @github_config,
+        req: StubReq
+      )
+
+    assert result.by_outcome.merged.task_count == 1
+    assert result.by_outcome.in_review.task_count == 0
+  end
+
+  test "review without PR fields does not call GitHub" do
+    task = KanbanBridge.create_task(%{title: "review", status: "review", assignee: "demo"})
+    append_spend(task.id, "run_review_nopr")
+    Process.put(:github_pr_merged, :flunk)
+
+    result =
+      Usage.by_outcome(
+        task_statuses: %{task.id => "review"},
+        tracker_config: @github_config,
+        req: StubReq
+      )
+
+    assert result.by_outcome.merged.task_count == 0
+    assert result.by_outcome.in_review.task_count == 1
+  end
+
+  defp review_task_with_pr(number) do
+    task = KanbanBridge.create_task(%{title: "review-pr", status: "review", assignee: "demo"})
+    append_spend(task.id, "run_pr_#{number}")
+
+    {:ok, _} =
+      Coordination.record_pr(task.id, %{
+        pr_owner: "acme",
+        pr_repo: "app",
+        pr_number: number
+      })
+
+    task
+  end
+
+  defp append_spend(task_id, run_id) do
+    Usage.append(
+      run_id: run_id,
+      task_id: task_id,
+      source: "agent",
+      provider: "openrouter",
+      model_id: "test/m",
+      prompt_tokens: 8,
+      completion_tokens: 4,
+      estimated: true
+    )
+  end
+
+  defp by_outcome_github(task) do
+    Usage.by_outcome(
+      task_statuses: %{task.id => "review"},
+      tracker_config: @github_config,
+      req: StubReq
+    )
   end
 end

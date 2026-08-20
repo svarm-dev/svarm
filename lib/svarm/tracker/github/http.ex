@@ -1,6 +1,6 @@
 defmodule Svarm.Tracker.GitHub.HTTP do
   @moduledoc false
-  # Shared GitHub REST helpers for Checks and Reviews pollers (Req only).
+  # Shared GitHub REST helpers for Checks, Reviews, and PR-merged lookups (Req only).
 
   require Logger
 
@@ -49,6 +49,26 @@ defmodule Svarm.Tracker.GitHub.HTTP do
   def fetch_pr(req, owner, repo, pr_number, headers, req_opts) do
     url = "#{@base_url}/repos/#{owner}/#{repo}/pulls/#{pr_number}"
     http_map(req.get(url, [headers: headers] ++ req_opts), "PR")
+  end
+
+  @doc """
+  Whether GitHub reports this pull request as merged.
+
+  `{:ok, true}` only when the PR JSON has `"merged" == true`.
+  Closed-unmerged PRs return `{:ok, false}`. HTTP and network errors
+  are tagged tuples — callers must not treat them as merges.
+  """
+  @spec pr_merged(module(), String.t(), String.t(), pos_integer(), keyword(), keyword()) ::
+          {:ok, boolean()} | {:error, term()}
+  def pr_merged(req, owner, repo, pr_number, headers, req_opts) do
+    case fetch_pr(req, owner, repo, pr_number, headers, req_opts) do
+      {:ok, body} -> {:ok, merged_flag(body)}
+      error -> error
+    end
+  end
+
+  defp merged_flag(body) when is_map(body) do
+    stringify_top_keys(body)["merged"] == true
   end
 
   def http_map({:ok, %{status: 200, body: body}}, _label) when is_map(body), do: {:ok, body}
