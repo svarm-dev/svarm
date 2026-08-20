@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Usage outcome GitHub merge signal** ([#157](https://github.com/svarm-dev/svarm/issues/157)): `Usage.by_outcome/1` buckets spend as `:merged` when coordination has a PR and GitHub reports `merged: true`, even if the ticket is still `review`. Local / no-PR stay status-based (`done` = success). Closed-unmerged PRs and API errors do not invent merges. Ledger stays append-only; estimated spend is flagged.
 - **Steer live PiRPC runs** ([#150](https://github.com/svarm-dev/svarm/issues/150), epic [#53](https://github.com/svarm-dev/svarm/issues/53)): run console **Steer** queues pi RPC `type: steer` on a live session (same `board_auth_at` as approve/answer). CLI disabled; hidden while a mid-run question is parked. Mailbox steers that race a park are not written during the wait. Follow-up-after-settle is not in this slice.
 - **Dashboard per-agent 24h cost + retry share** ([#54](https://github.com/svarm-dev/svarm/issues/54)): roster shows wall-clock 24h spend from the usage ledger (estimated rows labeled `est.`) and retry `retried/total` when any assigned task has `attempts > 0`, else **n/a**.
 - **Soft budget hold** ([#45](https://github.com/svarm-dev/svarm/issues/45)): WORKFLOW `budget.mode` / `SVARM_BUDGET_MODE` = `hard` (default, skip spawn) or `hold` (park ticket as **Over budget** until a one-shot board **Approve overage**, or until the cap is raised). Estimated usage still counts toward the cap.

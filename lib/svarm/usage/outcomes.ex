@@ -4,20 +4,25 @@ defmodule Svarm.Usage.Outcomes do
 
   The ledger stays append-only — this module never updates or deletes rows.
   Callers supply `%{task_id => status}` (from `Board.list_tasks/0` or a
-  tracker issue list). Classification is intentionally status-based:
+  tracker issue list). Classification is status-based, plus a GitHub PR
+  merge signal when coordination has a recorded PR:
 
   | Bucket | Meaning (v1) |
   |--------|----------------|
-  | `:merged` | Task status `done` (human accepted / closed) |
-  | `:in_review` | Task status `review` |
+  | `:merged` | Status `done`, **or** GitHub PR `merged: true` while the ticket is still `review` |
+  | `:in_review` | Status `review` and the PR is not known-merged |
   | `:other` | Any other status, or spend with no status map entry |
 
-  **Honesty limits:** v1 does **not** call GitHub to see if a PR is merged.
-  A GitHub issue still labeled `review` after merge counts as `:in_review`
-  until the tracker status moves. Local board **Mark done** → `:merged`.
+  **Honesty limits:** Local tracker and tickets without `pr_owner` /
+  `pr_repo` / `pr_number` stay status-based (`done` = success). Closed-unmerged
+  PRs, missing GitHub auth, and API/network errors do **not** invent a merge —
+  they keep the status bucket. Costs may be estimated (rate table / unbilled).
   """
 
+  alias Svarm.{Coordination, Settings, Workflow}
+  alias Svarm.Tracker.GitHub.HTTP
   alias Svarm.Usage.{Ledger, Rates}
+  alias Svarm.Workflow.Config, as: WorkflowConfig
 
   @outcomes [:merged, :in_review, :other]
 
@@ -38,6 +43,9 @@ defmodule Svarm.Usage.Outcomes do
   - `:since` — `%DateTime{}` wall-clock filter on `inserted_at` (nil = all rows)
   - `:task_statuses` — `%{task_id => status}` (required for meaningful buckets)
   - `:task_ids` — optional enumerable of task ids to include (scopes ledger + status)
+  - `:tracker_config` — GitHub tracker config for PR `merged` lookups (default:
+    workflow + Settings overlay). Local kind skips GitHub.
+  - `:req` — Req module override (tests)
 
   Returns:
 
@@ -78,10 +86,11 @@ defmodule Svarm.Usage.Outcomes do
       end)
 
     empty = empty_summary()
+    merged_flags = github_merged_flags(Map.keys(by_task), statuses, opts)
 
     by_outcome =
       Enum.reduce(by_task, Map.new(@outcomes, &{&1, empty}), fn {task_id, summary}, acc ->
-        outcome = classify_status(Map.get(statuses, task_id))
+        outcome = classify_task(task_id, Map.get(statuses, task_id), merged_flags)
         Map.update!(acc, outcome, &merge_summaries(&1, summary))
       end)
 
@@ -110,6 +119,98 @@ defmodule Svarm.Usage.Outcomes do
   end
 
   defp normalize_statuses(_), do: %{}
+
+  defp classify_task(task_id, status, flags) do
+    case Map.get(flags, task_id) do
+      true -> :merged
+      _ -> classify_status(status)
+    end
+  end
+
+  # Query-time GitHub `merged` for review tickets that recorded a PR.
+  # Fail closed: local / no PR / no auth / API error → status bucket.
+  defp github_merged_flags(task_ids, statuses, opts) do
+    candidates = pr_review_candidates(task_ids, statuses)
+
+    case github_client(candidates, opts) do
+      {:ok, req, headers, req_opts} ->
+        fetch_merged_flags(candidates, req, headers, req_opts)
+
+      :skip ->
+        %{}
+    end
+  end
+
+  defp pr_review_candidates(task_ids, statuses) do
+    review_ids =
+      Enum.filter(task_ids, &(classify_status(Map.get(statuses, &1)) == :in_review))
+
+    coords = Coordination.get_many(review_ids)
+
+    Enum.flat_map(review_ids, fn task_id ->
+      case pr_triple(Map.get(coords, task_id)) do
+        nil -> []
+        triple -> [{task_id, triple}]
+      end
+    end)
+  end
+
+  defp pr_triple(%{pr_owner: owner, pr_repo: repo, pr_number: number})
+       when is_binary(owner) and owner != "" and is_binary(repo) and repo != "" and
+              is_integer(number) and number > 0 do
+    {owner, repo, number}
+  end
+
+  defp pr_triple(_), do: nil
+
+  defp github_client([], _opts), do: :skip
+
+  defp github_client(_candidates, opts) do
+    config = tracker_config(opts)
+    headers = github_tracker?(config) && HTTP.headers(config)
+
+    cond do
+      not is_list(headers) -> :skip
+      not Keyword.has_key?(headers, :authorization) -> :skip
+      true -> {:ok, Keyword.get(opts, :req, Req), headers, HTTP.req_opts(opts)}
+    end
+  end
+
+  defp tracker_config(opts) do
+    case Keyword.get(opts, :tracker_config) do
+      %{} = config -> config
+      _ -> default_tracker_config()
+    end
+  end
+
+  defp default_tracker_config do
+    workflow = Workflow.Store.get()
+    cfg = if workflow, do: WorkflowConfig.from(workflow), else: %{}
+    Settings.Resolve.tracker_overlay(cfg[:tracker_config] || %{})
+  end
+
+  defp github_tracker?(%{kind: :github}), do: true
+  defp github_tracker?(_), do: false
+
+  defp fetch_merged_flags(candidates, req, headers, req_opts) do
+    merged_by_pr =
+      candidates
+      |> Enum.map(&elem(&1, 1))
+      |> Enum.uniq()
+      |> Map.new(fn {owner, repo, number} = key ->
+        merged? =
+          case HTTP.pr_merged(req, owner, repo, number, headers, req_opts) do
+            {:ok, true} -> true
+            _ -> false
+          end
+
+        {key, merged?}
+      end)
+
+    Map.new(candidates, fn {task_id, key} ->
+      {task_id, Map.get(merged_by_pr, key) == true}
+    end)
+  end
 
   defp empty_summary do
     %{
