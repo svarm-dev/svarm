@@ -87,6 +87,21 @@ defmodule Svarm.Runner.PiRPCTest do
     end
   end
 
+  defp assert_agent_line_without(task_id, pattern, forbidden, timeout \\ 2_000) do
+    assert_receive {:agent_line, ^task_id, line}, timeout
+
+    cond do
+      line =~ forbidden ->
+        flunk("unexpected agent line matching #{inspect(forbidden)}: #{inspect(line)}")
+
+      line =~ pattern ->
+        line
+
+      true ->
+        assert_agent_line_without(task_id, pattern, forbidden, timeout)
+    end
+  end
+
   test "fake peer is executable" do
     assert File.regular?(@fake)
     assert Bitwise.band(File.stat!(@fake).mode, 0o111) != 0
@@ -250,14 +265,16 @@ defmodule Svarm.Runner.PiRPCTest do
     [{pid, _}] = Registry.lookup(RunSteer.inbox(), id)
     send(pid, {:steer, "nudge mid-dialog"})
 
-    assert_agent_line(id, "steer ignored: answer the question first")
-    refute_receive {:agent_line, ^id, line} when line =~ "got steer during wait", 200
-    refute_receive {:agent_line, ^id, line} when line =~ "[board] steered:", 50
+    assert_agent_line_without(
+      id,
+      "steer ignored: answer the question first",
+      "got steer during wait"
+    )
 
     assert {:ok, :injected} = AgentQuestion.answer(id, %{confirmed: true})
     assert :ok = Task.await(runner, 5_000)
     assert last_status(statuses, id) == "review"
-    assert_agent_line(id, "got answer")
+    assert_agent_line_without(id, "got answer", "got steer during wait")
   end
 
   test "question wait deadline sends cancelled and continues", %{
