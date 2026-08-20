@@ -18,6 +18,9 @@ defmodule Svarm.WorkspaceTest do
     assert File.dir?(path)
 
     assert {:ok, {^path, false}} = Workspace.ensure("ticket-1", root, isolation: :path)
+
+    assert :ok = Workspace.cleanup("ticket-1", root, isolation: :path)
+    refute File.dir?(path)
   end
 
   test "path escape rejected", %{root: root} do
@@ -65,9 +68,86 @@ defmodule Svarm.WorkspaceTest do
                isolation: :worktree,
                git_repo: repo
              )
+
+    assert :ok =
+             Workspace.cleanup("issue-42", wt_root,
+               isolation: :worktree,
+               git_repo: repo
+             )
+
+    refute File.dir?(path)
+    {list, 0} = System.cmd("git", ["-C", repo, "worktree", "list", "--porcelain"])
+    refute list =~ path
   end
 
-  test "worktree rejects leftover path-mode directory", %{root: root} do
+  test "worktree git timeout returns tagged error", %{root: root} do
+    repo = init_git_repo(Path.join(root, "repo"))
+    wt_root = Path.join(root, "trees")
+    File.mkdir_p!(wt_root)
+
+    hang = Path.join(root, "hang.sh")
+    File.write!(hang, "#!/bin/sh\nexec sleep 30\n")
+    File.chmod!(hang, 0o755)
+
+    assert {:error, :git_timeout} =
+             Workspace.ensure("issue-timeout", wt_root,
+               isolation: :worktree,
+               git_repo: repo,
+               git: hang,
+               git_timeout_ms: 50
+             )
+
+    # Timed-out Port messages must not leak into the next git call.
+    assert {:ok, {_path, true}} =
+             Workspace.ensure("issue-timeout", wt_root,
+               isolation: :worktree,
+               git_repo: repo
+             )
+  end
+
+  test "worktree timeout leftover dir is recovered on next ensure", %{root: root} do
+    repo = init_git_repo(Path.join(root, "repo"))
+    wt_root = Path.join(root, "trees")
+    File.mkdir_p!(wt_root)
+
+    hang = Path.join(root, "hang_mkdir.sh")
+
+    File.write!(hang, """
+    #!/bin/sh
+    dest=""
+    for a in "$@"; do dest="$a"; done
+    case "$dest" in
+      /*)
+        mkdir -p "$dest"
+        echo partial > "$dest/partial"
+        ;;
+    esac
+    exec sleep 30
+    """)
+
+    File.chmod!(hang, 0o755)
+
+    assert {:error, :git_timeout} =
+             Workspace.ensure("issue-leftover", wt_root,
+               isolation: :worktree,
+               git_repo: repo,
+               git: hang,
+               git_timeout_ms: 50
+             )
+
+    leftover = Path.join(wt_root, "issue-leftover")
+
+    assert {:ok, {^leftover, true}} =
+             Workspace.ensure("issue-leftover", wt_root,
+               isolation: :worktree,
+               git_repo: repo
+             )
+
+    assert File.exists?(Path.join(leftover, "README"))
+    refute File.exists?(Path.join(leftover, "partial"))
+  end
+
+  test "worktree recreates leftover path-mode directory", %{root: root} do
     repo = init_git_repo(Path.join(root, "repo"))
     wt_root = Path.join(root, "trees")
     File.mkdir_p!(wt_root)
@@ -76,11 +156,14 @@ defmodule Svarm.WorkspaceTest do
     File.mkdir_p!(leftover)
     File.write!(Path.join(leftover, "not-a-checkout"), "x\n")
 
-    assert {:error, {:not_a_worktree, ^leftover}} =
+    assert {:ok, {^leftover, true}} =
              Workspace.ensure("issue-99", wt_root,
                isolation: :worktree,
                git_repo: repo
              )
+
+    assert File.exists?(Path.join(leftover, "README"))
+    refute File.exists?(Path.join(leftover, "not-a-checkout"))
   end
 
   test "worktree rejects directory linked to a different repo", %{root: root} do
@@ -100,6 +183,10 @@ defmodule Svarm.WorkspaceTest do
                isolation: :worktree,
                git_repo: repo
              )
+
+    assert File.dir?(dest)
+    {list, 0} = System.cmd("git", ["-C", other, "worktree", "list", "--porcelain"])
+    assert list =~ dest
   end
 
   defp init_git_repo(repo) do
