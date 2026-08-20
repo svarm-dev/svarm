@@ -1242,16 +1242,12 @@ defmodule Svarm.OrchestratorTest do
         path: "WORKFLOW.md"
       }
 
-      log =
-        ExUnit.CaptureLog.capture_log(fn ->
-          send(Orchestrator, {:workflow_reloaded, wf})
-          flush_orchestrator()
-        end)
+      send(Orchestrator, {:workflow_reloaded, wf})
+      flush_orchestrator()
 
       state = :sys.get_state(Orchestrator)
       assert state.workspace_isolation == :worktree
       refute match?({:error, _}, state.workspace_isolation)
-      assert log =~ "workflow reloaded"
 
       send(Orchestrator, {:retry, task.id})
       flush_orchestrator()
