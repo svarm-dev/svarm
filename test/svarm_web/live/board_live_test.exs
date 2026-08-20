@@ -34,6 +34,17 @@ defmodule SvarmWeb.BoardLiveTest do
     assert has_element?(view, "button", "Refresh")
   end
 
+  test "dead GET /board includes cards without waiting for the socket", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+    KanbanBridge.create_task(%{title: "Dead render card", status: "todo", assignee: "demo"})
+
+    conn = get(conn, ~p"/board")
+    html = html_response(conn, 200)
+
+    assert html =~ "Dead render card"
+    refute html =~ "All quiet"
+  end
+
   test "keyboard j/k and Escape select tasks", %{conn: conn} do
     KanbanBridge.delete_all_tasks()
     a = KanbanBridge.create_task(%{title: "Alpha", status: "todo", assignee: "demo"})

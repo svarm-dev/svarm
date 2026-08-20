@@ -56,25 +56,25 @@ defmodule SvarmWeb.BoardLive do
       |> assign(:console_focused?, false)
       |> assign(:dev_routes, Application.get_env(:svarm, :dev_routes, false))
       |> assign(:demo_routes, Svarm.Demo.routes_enabled?())
-      |> assign(:checklist, Svarm.Board.instance_status())
       |> assign(:board_auth_at, board_auth_at)
-      |> assign(:connected, false)
       |> assign(:last_status_cost_mono, 0)
       |> reset_column_streams(column_ids)
 
-    socket =
-      if connected?(socket) do
-        Events.subscribe()
-        Phoenix.PubSub.subscribe(Svarm.PubSub, "approvals")
+    # Dead GET still loads cards below without subscribing. On the connected
+    # remount, subscribe first so PubSub during load_board is not dropped.
+    if connected?(socket) do
+      Events.subscribe()
+      Phoenix.PubSub.subscribe(Svarm.PubSub, "approvals")
+    end
 
-        socket
-        |> load_board()
-        |> assign(:connected, true)
-      else
-        socket
-      end
+    socket = load_board(socket)
 
-    {:ok, socket}
+    {:ok,
+     assign(
+       socket,
+       :checklist,
+       Board.instance_status(agents: agents, task_count: socket.assigns.task_count)
+     )}
   end
 
   @impl true
@@ -457,8 +457,6 @@ defmodule SvarmWeb.BoardLive do
         </div>
 
         <%= cond do %>
-          <% not @connected -> %>
-            <.board_skeleton />
           <% @task_count == 0 -> %>
             <.board_empty demo_routes={@demo_routes} checklist={@checklist} />
           <% true -> %>
@@ -732,43 +730,6 @@ defmodule SvarmWeb.BoardLive do
 
   defp selected_task(_tasks_by_id, nil), do: nil
   defp selected_task(tasks_by_id, id), do: Map.get(tasks_by_id, id)
-
-  attr :demo_routes, :boolean, default: false
-  attr :checklist, :map, default: %{}
-
-  defp board_skeleton(assigns) do
-    ~H"""
-    <div class="space-y-6 animate-pulse">
-      <div class="rounded-lg border border-base-300 bg-base-200/60 px-4 py-3">
-        <div class="flex flex-wrap gap-4">
-          <div>
-            <div class="h-3 w-16 rounded bg-base-300 mb-1" />
-            <div class="h-5 w-8 rounded bg-base-300" />
-          </div>
-          <div>
-            <div class="h-3 w-16 rounded bg-base-300 mb-1" />
-            <div class="h-5 w-8 rounded bg-base-300" />
-          </div>
-          <div>
-            <div class="h-3 w-20 rounded bg-base-300 mb-1" />
-            <div class="h-5 w-12 rounded bg-base-300" />
-          </div>
-        </div>
-      </div>
-      <div class="flex gap-4 overflow-x-auto pb-4">
-        <%= for _ <- 1..5 do %>
-          <div class="flex-shrink-0 w-64 bg-base-200 rounded-lg p-3">
-            <div class="h-4 w-16 rounded bg-base-300 mb-3" />
-            <div class="space-y-2">
-              <div class="h-14 rounded-md bg-base-300/50" />
-              <div class="h-14 rounded-md bg-base-300/50" />
-            </div>
-          </div>
-        <% end %>
-      </div>
-    </div>
-    """
-  end
 
   attr :tasks_by_id, :map, required: true
   attr :checklist, :map, default: %{}
