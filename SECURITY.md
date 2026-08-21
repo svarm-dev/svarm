@@ -61,11 +61,11 @@ While any of `seed_demo_on_boot`, `demo_routes`, or `dev_routes` is active, a pr
 | `/approvals` | Basic Auth when `APPROVALS_USER` / `APPROVALS_PASSWORD` are set |
 | `/setup` | Same Basic Auth (or `dev_routes` in local Mix) |
 | `/board` LiveView **reads** | Open when the process is reachable (still firewall for real repos) |
-| `/board` approve / reject / mark done | Same `APPROVALS_*` credentials when configured; mutations fail closed without **fresh** proof. When credentials are **unset**: open only with local Mix `dev_routes`; **production / Docker fail closed** (no approve/reject/mark-done until credentials are set) |
+| `/board` approve / reject / mark done / answer / steer / approve overage | Same `APPROVALS_*` credentials when configured; mutations fail closed without **fresh** proof. When credentials are **unset**: open only with local Mix `dev_routes`; **production / Docker fail closed** (no high-trust board mutations until credentials are set) |
 
-**Board mutation auth approach (TTL):** a successful Basic Auth request (e.g. `/approvals` or any browser request with a valid `Authorization` header) stamps `session["board_auth_at"]` (unix seconds). High-trust LiveView events (approve / reject / mark done) re-check that stamp against wall clock on **every** mutation — not only at mount. Within the TTL, follow-up requests need **no** Authorization header (practical sticky session). After the TTL elapses, mutations fail closed until the operator re-authenticates (visit `/approvals` or send Basic Auth again). Default TTL is **8 hours** (`config :svarm, :board_auth_ttl_seconds`); override with `BOARD_AUTH_TTL_SECONDS` (positive integer seconds). Browsers that re-send Basic Auth after a challenge refresh the stamp and work as before. Legacy boolean `board_auth_ok` is ignored — upgrade forces a fresh proof.
+**Board mutation auth approach (TTL):** a successful Basic Auth request (e.g. `/approvals` or any browser request with a valid `Authorization` header) stamps `session["board_auth_at"]` (unix seconds). High-trust LiveView events (approve / reject / mark done / answer / steer / approve overage) re-check that stamp against wall clock on **every** mutation — not only at mount. Within the TTL, follow-up requests need **no** Authorization header (practical sticky session). After the TTL elapses, mutations fail closed until the operator re-authenticates (visit `/approvals` or send Basic Auth again). Default TTL is **8 hours** (`config :svarm, :board_auth_ttl_seconds`); override with `BOARD_AUTH_TTL_SECONDS` (positive integer seconds). Browsers that re-send Basic Auth after a challenge refresh the stamp and work as before. Legacy boolean `board_auth_ok` is ignored — upgrade forces a fresh proof.
 
-Local Mix (`dev_routes: true`) keeps board mutations open without Basic Auth so day-to-day development stays usable. **Production and Docker do not set `dev_routes`:** forgetting `APPROVALS_USER` / `APPROVALS_PASSWORD` must not leave approve/reject/mark-done open on an exposed port. Prefer app-level `APPROVALS_*`; a reverse proxy that authenticates all traffic is an additional layer, not a substitute for configuring credentials when you want the built-in gates.
+Local Mix (`dev_routes: true`) keeps board mutations open without Basic Auth so day-to-day development stays usable. **Production and Docker do not set `dev_routes`:** forgetting `APPROVALS_USER` / `APPROVALS_PASSWORD` must not leave high-trust board mutations open on an exposed port. Prefer app-level `APPROVALS_*`; a reverse proxy that authenticates all traffic is an additional layer, not a substitute for configuring credentials when you want the built-in gates.
 
 ### Agent child environment
 
@@ -81,7 +81,7 @@ Mode (`SVARM_BUDGET_MODE` / WORKFLOW `budget.mode`): **`hard`** (default) skips 
 
 For team/production deployments:
 
-- **Required before exposing the port:** set strong `APPROVALS_USER` and `APPROVALS_PASSWORD` in `.env`. Without them, production **fails closed** on board approve/reject/mark-done (and `/approvals` / `/setup` stay disabled). Set credentials before you open the UI to a network.
+- **Required before exposing the port:** set strong `APPROVALS_USER` and `APPROVALS_PASSWORD` in `.env`. Without them, production **fails closed** on high-trust board mutations (approve / reject / mark done / answer / steer / approve overage) and `/approvals` / `/setup` stay disabled. Set credentials before you open the UI to a network.
 - Bind or firewall the UI so only trusted operators reach the process (board **reads** are not Basic-Auth gated even when credentials are set)
 - Use a real `SECRET_KEY_BASE` (not the auto-generated one)
 - Keep `approval.mode: untrusted` (the default)

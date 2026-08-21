@@ -25,7 +25,7 @@ docker compose --profile demo up --build
 - Mock agents (`demo_*`) run without OpenRouter or GitHub.
 - **Seed demo** stays available if you clear the board.
 - Approvals UI: Basic Auth `svarm` / `svarm` by default in the demo profile.
-- Ops overview: [`/dashboard`](http://localhost:4000/dashboard) — 24h wall-clock cost per agent from the usage ledger (`est.` when any row is estimated) and retry share (`n/a` unless the tracker records attempts).
+- Ops overview: [`/dashboard`](http://localhost:4000/dashboard) — Outcomes ROI (merge rate / `$/merged` over the Spend window), 24h wall-clock cost per agent from the usage ledger (`est.` when any row is estimated), and retry share (`n/a` unless the tracker records attempts).
 
 **Local Elixir:** `mix setup && mix phx.server` → `/board` → **Seed demo**.  
 (`mix svarm.demo` is a separate CLI process with its own temp DB; use Seed demo for the UI board.)
@@ -56,7 +56,7 @@ cp .env.example .env
 | Variable | Required | Notes |
 |----------|----------|--------|
 | `SECRET_KEY_BASE` | **Yes** | `openssl rand -base64 48` |
-| `APPROVALS_USER` / `APPROVALS_PASSWORD` | **Yes** for Docker/prod (UI + board mutations) | Strong unique pair in `.env` (`.env.example` leaves them empty). **Demo** compose profile still defaults to `svarm`/`svarm` for the zero-key demo only. Without credentials, production board approve/reject/mark-done fail closed |
+| `APPROVALS_USER` / `APPROVALS_PASSWORD` | **Yes** for Docker/prod (UI + board mutations) | Strong unique pair in `.env` (`.env.example` leaves them empty). **Demo** compose profile still defaults to `svarm`/`svarm` for the zero-key demo only. Without credentials, production high-trust board mutations (approve/reject/mark-done/answer/steer/overage) fail closed |
 | `GITHUB_TOKEN` | For GitHub tracker | Classic PAT with `repo` scope |
 | `OPENROUTER_API_KEY` | For real agents | From [openrouter.ai/keys](https://openrouter.ai/keys) |
 | `SVARM_BASE_URL` | Recommended | `http://localhost:4000` so cost receipts link to the board |
@@ -141,7 +141,7 @@ Svärm tracks GitHub work with **labels**. Your eligibility label (e.g. `ai-task
 | Step | Do this |
 |------|---------|
 | Bot identity | [docs/github-app.md](docs/github-app.md); comments as `svarm[bot]` |
-| Approvals | **Required in production/Docker:** strong `APPROVALS_USER` / `APPROVALS_PASSWORD` before exposing the port. Gates `/approvals`, `/setup`, and board approve/reject/mark-done. Missing credentials → board mutations fail closed (local Mix `dev_routes` may stay open). Keep `approval.mode: untrusted`. Board **reads** stay open — still firewall the UI (see [SECURITY.md](SECURITY.md)) |
+| Approvals | **Required in production/Docker:** strong `APPROVALS_USER` / `APPROVALS_PASSWORD` before exposing the port. Gates `/approvals`, `/setup`, and board approve/reject/mark-done/answer/steer/overage. Missing credentials → board mutations fail closed (local Mix `dev_routes` may stay open). Keep `approval.mode: untrusted`. Board **reads** stay open — still firewall the UI (see [SECURITY.md](SECURITY.md)) |
 | Agents | Edit `svarm-config/agents.toml` models; list required API keys in each agent’s `env` (no full host inheritance). Optional `skills` paths attach packs — start Svärm from a CWD where those packs live. Optional `tools` / `tools_mode` declare PATH executables (fail or warn before spawn; Svärm does not install them) ([docs/agents.md](docs/agents.md)) |
 | Budgets | Optional: `SVARM_BUDGET_MAX_USD_PER_TICKET` / `SVARM_BUDGET_MAX_USD_PER_DAY` or WORKFLOW `budget.*` — block **new** spawns when spent ≥ cap. Mode `hard` (default) skips spawn; `hold` (`SVARM_BUDGET_MODE` / `budget.mode`) parks the ticket for a one-shot **Approve overage** on the board. Raising the cap also clears the hold. Estimated ledger rows count toward the cap. |
 | CI resume | Optional: re-dispatch when a managed PR’s Checks fail (see below). **Off by default.** |
@@ -166,7 +166,7 @@ Unknown `workspace.isolation` values (`container`, `sandbox`, typos) **fail clos
 | Isolation | What it is | What it is not |
 |-----------|------------|----------------|
 | `path` (default) | Per-ticket directory under `workspace.root` with a path-escape guard | OS sandbox, chroot, container |
-| `worktree` | `git worktree` per ticket from `workspace.git_repo` | OS sandbox, container |
+| `worktree` | `git worktree` per ticket from `workspace.git_repo`; cleanup removes the tree; git add/list/remove are time-bounded (default 30s) | OS sandbox, container |
 | `container` | Later | — |
 
 ### CI resume (optional)
@@ -256,7 +256,7 @@ While a **PiRPC** run is `in_progress` (and not waiting on a question), the cons
 | Container exits immediately | Check `docker compose logs`. `SECRET_KEY_BASE` is generated if unset; set it in `.env` only for stable sessions |
 | Config is a directory named `WORKFLOW.md` | Old file mounts. Use directory mount `./svarm-config:/app/config` (current compose) and delete the bogus dirs |
 | `/approvals` 404 text about APPROVALS_* | Set `APPROVALS_USER` and `APPROVALS_PASSWORD` in `.env` |
-| Board approve/reject/mark-done/answer/steer blocked without auth flash | Production needs `APPROVALS_*`; sign in via `/approvals` then return to the board. Local Mix without credentials is open only when `dev_routes` is on. Sticky proof expires after 8h by default (`BOARD_AUTH_TTL_SECONDS`) — re-sign in if mid-session mutations start failing |
+| Board approve/reject/mark-done/answer/steer/overage blocked without auth flash | Production needs `APPROVALS_*`; sign in via `/approvals` then return to the board. Local Mix without credentials is open only when `dev_routes` is on. Sticky proof expires after 8h by default (`BOARD_AUTH_TTL_SECONDS`) — re-sign in if mid-session mutations start failing |
 | `/approvals` 401 | Wrong Basic Auth credentials |
 | Nothing happens | `docker compose logs -f` (polling / eligibility) |
 | Tick never dispatches after a WORKFLOW edit | Invalid `workspace.isolation` fails closed (expected `path` or `worktree`); logs include the rejected value |
