@@ -25,10 +25,10 @@ If nothing material changed, **do not** edit this file.
 
 | Field | Value |
 |-------|--------|
-| **Updated** | 2026-08-16 |
-| **`main`** | v0.1.5 + soft budget hold (#45) |
+| **Updated** | 2026-08-21 |
+| **`main`** | v0.1.5 + Review Station / ROI / worktree + post-0.1.5 Unreleased |
 | **Latest tag** | **v0.1.5** (2026-08-14) |
-| **Unreleased** | soft budget hold (#45); dashboard agent 24h cost + retry share (#54); steer live PiRPC (#150) |
+| **Unreleased** | Review Station + Outcomes ROI + worktree (#161); GitHub merge outcome (#168); steer (#150); soft budget hold (#45); isolation fail-closed (#160) |
 | **Focus** | _(none — do not auto-claim #53 / #118)_ |
 | **Next** | do not auto-claim #53 / #118 |
 
@@ -45,6 +45,6 @@ Format: `YYYY-MM-DD · one sentence · issue/PR link`
 
 ## Session log (newest first, max 3)
 
+- 2026-08-21 · docs sync Unreleased (Review Station / ROI / worktree + post-#166 fixes)
 - 2026-08-16 · steer live PiRPC from console (#150)
 - 2026-08-16 · dashboard roster 24h cost + retry n/a (#54)
-- 2026-08-16 · soft budget hold (#45); Focus → #54
