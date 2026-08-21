@@ -281,14 +281,26 @@ defmodule Svarm.Orchestrator do
   end
 
   defp retry_or_spawn(state, task, task_id, entry) do
-    if slots_available?(state) do
-      # Same hard caps as first dispatch — retries are still new agent processes
-      maybe_budget_or_spawn(state, task)
-    else
-      timer = Process.send_after(self(), {:retry, task_id}, @continuation_retry_ms)
-      retry = Map.put(entry || %{}, :timer, timer)
-      %{state | retry_attempts: Map.put(state.retry_attempts, task_id, retry)}
+    cond do
+      not valid_preflight?(state) ->
+        # Same as no-slot: keep the retry so a later valid reload can resume.
+        # Tick dispatch is already gated; retries used to skip that check.
+        Logger.debug("retry: #{task_id} deferred; workflow preflight failed")
+        defer_retry(state, task_id, entry)
+
+      slots_available?(state) ->
+        # Same hard caps as first dispatch — retries are still new agent processes
+        maybe_budget_or_spawn(state, task)
+
+      true ->
+        defer_retry(state, task_id, entry)
     end
+  end
+
+  defp defer_retry(state, task_id, entry) do
+    timer = Process.send_after(self(), {:retry, task_id}, @continuation_retry_ms)
+    retry = Map.put(entry || %{}, :timer, timer)
+    %{state | retry_attempts: Map.put(state.retry_attempts, task_id, retry)}
   end
 
   @impl true
@@ -496,7 +508,8 @@ defmodule Svarm.Orchestrator do
         max_retry_backoff_ms: cfg.max_retry_backoff_ms,
         stall_timeout_ms: cfg.stall_timeout_ms,
         workspace_root: workspace_root,
-        workspace_isolation: Map.get(cfg, :workspace_isolation, :path),
+        workspace_isolation:
+          apply_workspace_isolation(cfg.workspace_isolation, state.workspace_isolation),
         workspace_git_repo: Map.get(cfg, :workspace_git_repo),
         active_states: cfg.active_states,
         terminal_states: cfg.terminal_states,
@@ -507,6 +520,16 @@ defmodule Svarm.Orchestrator do
         review_resume_caps: ReviewResume.load_caps(raw_config)
     }
   end
+
+  # from_map/1 stores {:error, :invalid_workspace_isolation} so validate_workflow/1
+  # can fail closed. Never copy that tuple into runner-facing state — it is
+  # truthy, so `|| :path` would leak it into Workspace.ensure/3.
+  defp apply_workspace_isolation(mode, _prev) when mode in [:path, :worktree], do: mode
+  defp apply_workspace_isolation(_invalid, prev) when prev in [:path, :worktree], do: prev
+  defp apply_workspace_isolation(_invalid, _prev), do: :path
+
+  defp isolation_opt(mode) when mode in [:path, :worktree], do: mode
+  defp isolation_opt(_), do: :path
 
   defp put_approval_config(%{workflow: nil} = state),
     do: %{state | approval: merge_approval_overlay(Approval.config_from_map(%{}))}
@@ -1293,6 +1316,16 @@ defmodule Svarm.Orchestrator do
   end
 
   defp spawn_worker(state, task) do
+    # CI/review-resume and retry also land here and skip the tick preflight gate.
+    if valid_preflight?(state) do
+      do_spawn_worker(state, task)
+    else
+      Logger.warning("orchestrator: refusing spawn for #{task.id}; workflow preflight failed")
+      state
+    end
+  end
+
+  defp do_spawn_worker(state, task) do
     # One-shot approval: clear after first spawn attempt (re-gate if agent fails back to todo)
     state = %{
       state
@@ -1307,7 +1340,7 @@ defmodule Svarm.Orchestrator do
     opts = [
       agents: state.agents,
       workspace_root: state.workspace_root,
-      workspace_isolation: state.workspace_isolation || :path,
+      workspace_isolation: isolation_opt(state.workspace_isolation),
       workspace_git_repo: state.workspace_git_repo,
       tracker: state.tracker,
       tracker_config: state.tracker_config,

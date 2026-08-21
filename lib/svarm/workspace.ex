@@ -33,9 +33,8 @@ defmodule Svarm.Workspace do
   def ensure(identifier, root \\ @default_root, opts \\ [])
 
   def ensure(identifier, root, opts) when is_binary(identifier) and is_list(opts) do
-    isolation = isolation_mode(Keyword.get(opts, :isolation, :path))
-
-    with {:ok, abs, root_abs, key} <- resolve_path(identifier, root) do
+    with {:ok, isolation} <- isolation_mode(Keyword.get(opts, :isolation, :path)),
+         {:ok, abs, root_abs, key} <- resolve_path(identifier, root) do
       case isolation do
         :path -> ensure_path(abs)
         :worktree -> ensure_worktree(abs, root_abs, key, opts)
@@ -55,9 +54,8 @@ defmodule Svarm.Workspace do
   def cleanup(identifier, root \\ @default_root, opts \\ [])
 
   def cleanup(identifier, root, opts) when is_binary(identifier) and is_list(opts) do
-    isolation = isolation_mode(Keyword.get(opts, :isolation, :path))
-
-    with {:ok, abs, _root_abs, _key} <- resolve_path(identifier, root) do
+    with {:ok, isolation} <- isolation_mode(Keyword.get(opts, :isolation, :path)),
+         {:ok, abs, _root_abs, _key} <- resolve_path(identifier, root) do
       case isolation do
         :path -> cleanup_path(abs)
         :worktree -> cleanup_worktree(abs, opts)
@@ -77,9 +75,12 @@ defmodule Svarm.Workspace do
     end
   end
 
-  defp isolation_mode(:worktree), do: :worktree
-  defp isolation_mode("worktree"), do: :worktree
-  defp isolation_mode(_), do: :path
+  defp isolation_mode(:worktree), do: {:ok, :worktree}
+  defp isolation_mode("worktree"), do: {:ok, :worktree}
+  defp isolation_mode(:path), do: {:ok, :path}
+  defp isolation_mode("path"), do: {:ok, :path}
+  defp isolation_mode(nil), do: {:ok, :path}
+  defp isolation_mode(_), do: {:error, :invalid_workspace_isolation}
 
   defp resolve_path(identifier, root) do
     key = sanitize(identifier)

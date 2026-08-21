@@ -27,6 +27,17 @@ defmodule Svarm.WorkspaceTest do
     assert {:error, {:path_escape, _, _}} = Workspace.ensure("..", root)
   end
 
+  test "unknown isolation fails closed", %{root: root} do
+    assert {:error, :invalid_workspace_isolation} =
+             Workspace.ensure("t1", root, isolation: {:error, :invalid_workspace_isolation})
+
+    assert {:error, :invalid_workspace_isolation} =
+             Workspace.ensure("t1", root, isolation: "container")
+
+    assert {:error, :invalid_workspace_isolation} =
+             Workspace.cleanup("t1", root, isolation: :sandbox)
+  end
+
   test "worktree requires git_repo", %{root: root} do
     assert {:error, :git_repo_required} =
              Workspace.ensure("t1", root, isolation: :worktree)
