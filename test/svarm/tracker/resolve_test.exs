@@ -57,6 +57,24 @@ defmodule Svarm.Tracker.ResolveTest do
       assert config.owner == "acme"
       assert config.repo == "widgets"
     end
+
+    test "explicit config skips Settings overlay" do
+      assert {:ok, _} =
+               Settings.put_tracker(%{
+                 "kind" => "github",
+                 "owner" => "acme",
+                 "repo" => "widgets",
+                 "api_key" => "ghp_test",
+                 "auth" => "token"
+               })
+
+      assert {Tracker.GitHub, _} = Resolve.adapter_and_config()
+
+      assert {Tracker.Local, config} =
+               Resolve.adapter_and_config(config: %{kind: :local})
+
+      assert config.kind == :local
+    end
   end
 
   describe "supports?/2" do

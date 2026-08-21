@@ -52,7 +52,14 @@ defmodule Mix.Tasks.Svarm.Demo do
     {:ok, %{tasks: tasks}} = Svarm.Decompose.run(%{goal: goal, research: research}, mock: true)
     shell.info("→ #{length(tasks)} tasks")
 
-    {:ok, %{created_count: count}} = Svarm.Dispatch.run(%{tasks: tasks, goal: goal})
+    {adapter, config} = local_tracker()
+
+    {:ok, %{created_count: count}} =
+      Svarm.Dispatch.run(%{tasks: tasks, goal: goal},
+        tracker: adapter,
+        tracker_config: config
+      )
+
     shell.info("Dispatched #{count} tasks. Orchestrator poll every #{@poll_interval_ms}ms.\n")
 
     print_board(shell)
@@ -143,8 +150,14 @@ defmodule Mix.Tasks.Svarm.Demo do
     end)
   end
 
-  defp list_issues do
-    {adapter, config} = Svarm.Tracker.Resolve.adapter_and_config()
+  @doc false
+  def list_issues do
+    {adapter, config} = local_tracker()
     adapter.list_issues(config, [])
+  end
+
+  # Isolated tmp SQLite board — ignore repo WORKFLOW.md / Settings GitHub overlay.
+  defp local_tracker do
+    Svarm.Tracker.Resolve.adapter_and_config(config: %{kind: :local})
   end
 end
