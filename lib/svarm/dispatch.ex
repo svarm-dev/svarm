@@ -9,7 +9,7 @@ defmodule Svarm.Dispatch do
   alias Svarm.Tracker
 
   def run(%{tasks: tasks, goal: goal}, opts \\ []) do
-    tracker = Keyword.get(opts, :tracker, Tracker.Local)
+    {tracker, _config} = Tracker.Resolve.from_opts(opts)
 
     # Create all tasks first (without depends_on)
     created =

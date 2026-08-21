@@ -67,4 +67,7 @@ defmodule Svarm.Tracker.Local do
 
   @impl true
   def post_run_summary(_config, _id, _summary), do: :ok
+
+  @impl true
+  def capabilities, do: []
 end

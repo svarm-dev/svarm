@@ -3,6 +3,12 @@ defmodule Svarm.Tracker.GitHubTest do
 
   alias Svarm.Tracker.GitHub
 
+  test "capabilities/0 includes CI poll, review poll, and connectivity probe" do
+    assert :ci_poll in GitHub.capabilities()
+    assert :review_poll in GitHub.capabilities()
+    assert :connectivity_probe in GitHub.capabilities()
+  end
+
   describe "build_comment/1" do
     test "renders success comment with agent name, cost, harness, and session" do
       summary = %{

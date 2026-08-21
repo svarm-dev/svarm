@@ -19,12 +19,8 @@ defmodule Svarm.Board do
   same as the orchestrator. Falls back to local kanban.
   """
   def tracker do
-    tc = tracker_config()
-
-    case tc[:kind] || :local do
-      :github -> Tracker.GitHub
-      _ -> Tracker.Local
-    end
+    {adapter, _config} = Tracker.Resolve.adapter_and_config()
+    adapter
   end
 
   @doc """
@@ -34,17 +30,17 @@ defmodule Svarm.Board do
   body is required (agent dispatch, approvals detail).
   """
   def list_tasks(filters \\ []) do
-    config = tracker_config()
+    {adapter, config} = Tracker.Resolve.adapter_and_config()
     filters = Keyword.put(filters, :include_body, false)
-    {:ok, issues} = tracker().list_issues(config, filters)
+    {:ok, issues} = adapter.list_issues(config, filters)
     tasks = Enum.map(issues, &issue_to_card_map/1)
     attach_coordination(tasks)
   end
 
   def get_task(id) do
-    config = tracker_config()
+    {adapter, config} = Tracker.Resolve.adapter_and_config()
 
-    case tracker().get_issue(config, id) do
+    case adapter.get_issue(config, id) do
       {:ok, issue} ->
         issue
         |> issue_to_map()
@@ -53,13 +49,6 @@ defmodule Svarm.Board do
       {:error, _} ->
         nil
     end
-  end
-
-  defp tracker_config do
-    workflow = Workflow.Store.get()
-    cfg = if workflow, do: WorkflowConfig.from(workflow), else: %{}
-    base = cfg[:tracker_config] || %{}
-    Settings.Resolve.tracker_overlay(base)
   end
 
   def orchestrator_status do
@@ -90,8 +79,7 @@ defmodule Svarm.Board do
   """
   def instance_status(opts \\ []) when is_list(opts) do
     workflow = Workflow.Store.get()
-    cfg = if workflow, do: WorkflowConfig.from(workflow), else: %{}
-    tracker = Settings.Resolve.tracker_overlay(cfg[:tracker_config] || %{})
+    {_adapter, tracker} = Tracker.Resolve.adapter_and_config()
     agents = Keyword.get_lazy(opts, :agents, &list_agents/0)
 
     {task_count, empty?} =
@@ -408,8 +396,7 @@ defmodule Svarm.Board do
   Used on the local board when there is no PR to open; also works after a GitHub PR review.
   """
   def complete_review(id) when is_binary(id) do
-    config = tracker_config()
-    adapter = tracker()
+    {adapter, config} = Tracker.Resolve.adapter_and_config()
 
     case adapter.get_issue(config, id) do
       {:ok, %{status: "review"}} ->

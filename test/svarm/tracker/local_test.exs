@@ -39,6 +39,10 @@ defmodule Svarm.Tracker.LocalTest do
     struct!(Issue, Map.merge(defaults, attrs))
   end
 
+  test "capabilities/0 is empty (no CI or review poll)" do
+    assert Local.capabilities() == []
+  end
+
   describe "Eligibility.eligible?/2" do
     test "accepts local tasks in active states with non-ignored assignees" do
       assert Eligibility.eligible?(issue(%{}), @config)

@@ -10,8 +10,7 @@ defmodule Svarm.Approval do
   orchestrator and board — not a hardcoded Local adapter.
   """
 
-  alias Svarm.{Budget, ProfileRouter, Settings, Tracker, Workflow}
-  alias Svarm.Workflow.Config, as: WorkflowConfig
+  alias Svarm.{Budget, ProfileRouter, Tracker}
 
   @status_pending "pending_approval"
   @tracker_override {__MODULE__, :tracker_override}
@@ -187,19 +186,7 @@ defmodule Svarm.Approval do
         {adapter, config}
 
       _ ->
-        tc = active_tracker_config()
-
-        case tc[:kind] || :local do
-          :github -> {Tracker.GitHub, tc}
-          _ -> {Tracker.Local, tc}
-        end
+        Tracker.Resolve.adapter_and_config()
     end
-  end
-
-  defp active_tracker_config do
-    workflow = Workflow.Store.get()
-    cfg = if workflow, do: WorkflowConfig.from(workflow), else: %{}
-    base = cfg[:tracker_config] || %{}
-    Settings.Resolve.tracker_overlay(base)
   end
 end

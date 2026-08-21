@@ -13,8 +13,6 @@ defmodule Mix.Tasks.Svarm.Demo do
   @watch_timeout_ms 90_000
   @poll_interval_ms 500
 
-  alias Svarm.Tracker
-
   def run(args) do
     {opts, remaining, _} =
       OptionParser.parse(args,
@@ -54,7 +52,14 @@ defmodule Mix.Tasks.Svarm.Demo do
     {:ok, %{tasks: tasks}} = Svarm.Decompose.run(%{goal: goal, research: research}, mock: true)
     shell.info("→ #{length(tasks)} tasks")
 
-    {:ok, %{created_count: count}} = Svarm.Dispatch.run(%{tasks: tasks, goal: goal})
+    {adapter, config} = local_tracker()
+
+    {:ok, %{created_count: count}} =
+      Svarm.Dispatch.run(%{tasks: tasks, goal: goal},
+        tracker: adapter,
+        tracker_config: config
+      )
+
     shell.info("Dispatched #{count} tasks. Orchestrator poll every #{@poll_interval_ms}ms.\n")
 
     print_board(shell)
@@ -132,16 +137,27 @@ defmodule Mix.Tasks.Svarm.Demo do
   end
 
   defp board_settled?(terminal) do
-    {:ok, tasks} = Tracker.Local.list_issues(%{}, [])
+    {:ok, tasks} = list_issues()
 
     tasks != [] and Enum.all?(tasks, fn t -> t.status in terminal end)
   end
 
   defp print_board(shell) do
-    {:ok, issues} = Tracker.Local.list_issues(%{}, [])
+    {:ok, issues} = list_issues()
 
     Enum.each(issues, fn t ->
       shell.info("  #{String.pad_trailing(t.status, 14)} [#{t.assignee}] #{t.title}")
     end)
+  end
+
+  @doc false
+  def list_issues do
+    {adapter, config} = local_tracker()
+    adapter.list_issues(config, [])
+  end
+
+  # Isolated tmp SQLite board — ignore repo WORKFLOW.md / Settings GitHub overlay.
+  defp local_tracker do
+    Svarm.Tracker.Resolve.adapter_and_config(config: %{kind: :local})
   end
 end
