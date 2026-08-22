@@ -24,6 +24,13 @@ config :svarm, SvarmWeb.Endpoint, http: [port: String.to_integer(System.get_env(
 
 config :svarm, :console_base_url, System.get_env("SVARM_BASE_URL")
 
+# Board/run-log URLs in GitHub comments stay off unless explicitly opted in.
+# Board reads are unauthenticated; posting the URL leaks the console to anyone
+# who can read the issue. See SECURITY.md.
+config :svarm,
+       :comment_console_links,
+       System.get_env("SVARM_COMMENT_CONSOLE_LINKS") in ~w(1 true TRUE yes YES on ON)
+
 # Approvals Basic Auth (Docker/prod). Local Mix uses dev_routes instead.
 approvals_user = System.get_env("APPROVALS_USER")
 approvals_pass = System.get_env("APPROVALS_PASSWORD")

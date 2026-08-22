@@ -11,7 +11,9 @@ config :svarm,
   generators: [timestamp_type: :utc_datetime, binary_id: true],
   ecto_repos: [Svarm.Repo],
   # Sticky board Basic Auth proof TTL (seconds). Override with BOARD_AUTH_TTL_SECONDS.
-  board_auth_ttl_seconds: 8 * 60 * 60
+  board_auth_ttl_seconds: 8 * 60 * 60,
+  # GitHub run comments omit board/run-log URLs unless SVARM_COMMENT_CONSOLE_LINKS=true.
+  comment_console_links: false
 
 config :svarm, Svarm.Repo,
   database: Path.join(System.user_home!(), ".svarm/kanban/kanban.db"),
