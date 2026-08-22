@@ -1115,6 +1115,48 @@ defmodule Svarm.OrchestratorTest do
   end
 
   describe "tracker reconcile (step 23)" do
+    # Configurable get_issue double. capabilities/0 is [] so CI/review poll
+    # does not run against this stub (Resolve treats omitted capabilities as poll-on).
+    defmodule ReconcileErrorTracker do
+      @table :svarm_reconcile_error_tracker
+
+      def capabilities, do: []
+
+      def ensure_table! do
+        case :ets.whereis(@table) do
+          :undefined ->
+            :ets.new(@table, [:named_table, :public, :set])
+
+          _ ->
+            :ok
+        end
+      end
+
+      def set_get_issue(result) do
+        ensure_table!()
+        :ets.insert(@table, {:result, result})
+        :ok
+      end
+
+      def get_issue(_config, _id) do
+        ensure_table!()
+
+        case :ets.lookup(@table, :result) do
+          [{:result, result}] -> result
+          [] -> {:error, :not_found}
+        end
+      end
+
+      def list_eligible(_config), do: {:ok, []}
+      def list_issues(_config, _filters \\ []), do: {:ok, []}
+      def create_issue(_config, attrs), do: {:ok, struct(Svarm.Issue, Map.to_list(attrs))}
+      def update_status(_config, _id, _status), do: :ok
+      def update_attempts(_config, _id, _n), do: :ok
+      def claim(_config, _id), do: :ok
+      def delete_all(_config), do: :ok
+      def post_run_summary(_config, _id, _s), do: :ok
+    end
+
     test "removes task from running/claimed when tracker reports terminal state" do
       task =
         KanbanBridge.create_task(%{
@@ -1148,6 +1190,7 @@ defmodule Svarm.OrchestratorTest do
 
       status = Orchestrator.status()
       refute task.id in status.running_ids
+      refute MapSet.member?(:sys.get_state(Orchestrator).claimed, task.id)
 
       # Worker should have been asked to exit (exit is async; poll briefly)
       assert wait_until(fn -> not Process.alive?(worker) end)
@@ -1176,6 +1219,201 @@ defmodule Svarm.OrchestratorTest do
       # Should no longer be claimed in internal state
       # (status/0 doesn't expose claimed directly, but running should be clean)
       refute task.id in status.running_ids
+      refute MapSet.member?(:sys.get_state(Orchestrator).claimed, task.id)
+    end
+
+    test "keeps running+claim on transient get_issue network_error" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "transient network blip",
+          status: "in_progress",
+          assignee: "cody"
+        })
+
+      worker = spawn(fn -> Process.sleep(:infinity) end)
+      ReconcileErrorTracker.set_get_issue({:error, :network_error})
+      original = :sys.get_state(Orchestrator)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        running =
+          Map.put(state.running, task.id, %{
+            task: task,
+            pid: worker,
+            mref: make_ref(),
+            started_mono_ms: System.monotonic_time(:millisecond),
+            started_at: System.system_time(:second)
+          })
+
+        %{
+          state
+          | tracker: ReconcileErrorTracker,
+            running: running,
+            claimed: MapSet.put(state.claimed, task.id),
+            stall_timeout_ms: 0
+        }
+      end)
+
+      try do
+        log =
+          ExUnit.CaptureLog.capture_log(fn ->
+            send(Orchestrator, :tick)
+            flush_orchestrator()
+          end)
+
+        state = :sys.get_state(Orchestrator)
+        assert Map.has_key?(state.running, task.id)
+        assert MapSet.member?(state.claimed, task.id)
+        assert Process.alive?(worker)
+        assert log =~ task.id
+        assert log =~ "network_error"
+        assert log =~ "keeping in-flight work"
+      after
+        if Process.alive?(worker), do: Process.exit(worker, :kill)
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "keeps running+claim on GitHub-shaped rate-limit get_issue error" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "transient rate limit",
+          status: "in_progress",
+          assignee: "cody"
+        })
+
+      worker = spawn(fn -> Process.sleep(:infinity) end)
+
+      ReconcileErrorTracker.set_get_issue(
+        {:error, %{type: :rate_limit, message: "rate limited", retry_after: 60}}
+      )
+
+      original = :sys.get_state(Orchestrator)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        running =
+          Map.put(state.running, task.id, %{
+            task: task,
+            pid: worker,
+            mref: make_ref(),
+            started_mono_ms: System.monotonic_time(:millisecond),
+            started_at: System.system_time(:second)
+          })
+
+        %{
+          state
+          | tracker: ReconcileErrorTracker,
+            running: running,
+            claimed: MapSet.put(state.claimed, task.id),
+            stall_timeout_ms: 0
+        }
+      end)
+
+      try do
+        log =
+          ExUnit.CaptureLog.capture_log(fn ->
+            send(Orchestrator, :tick)
+            flush_orchestrator()
+          end)
+
+        state = :sys.get_state(Orchestrator)
+        assert Map.has_key?(state.running, task.id)
+        assert MapSet.member?(state.claimed, task.id)
+        assert Process.alive?(worker)
+        assert log =~ "keeping in-flight work"
+      after
+        if Process.alive?(worker), do: Process.exit(worker, :kill)
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "releases running+claim when get_issue returns not_found" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "vanished issue",
+          status: "in_progress",
+          assignee: "cody"
+        })
+
+      worker = spawn(fn -> Process.sleep(:infinity) end)
+      ReconcileErrorTracker.set_get_issue({:error, :not_found})
+      original = :sys.get_state(Orchestrator)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        running =
+          Map.put(state.running, task.id, %{
+            task: task,
+            pid: worker,
+            mref: make_ref(),
+            started_mono_ms: System.monotonic_time(:millisecond),
+            started_at: System.system_time(:second)
+          })
+
+        %{
+          state
+          | tracker: ReconcileErrorTracker,
+            running: running,
+            claimed: MapSet.put(state.claimed, task.id),
+            stall_timeout_ms: 0
+        }
+      end)
+
+      try do
+        send(Orchestrator, :tick)
+        flush_orchestrator()
+
+        state = :sys.get_state(Orchestrator)
+        refute Map.has_key?(state.running, task.id)
+        refute MapSet.member?(state.claimed, task.id)
+        assert wait_until(fn -> not Process.alive?(worker) end)
+      after
+        if Process.alive?(worker), do: Process.exit(worker, :kill)
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "stops worker when fake tracker reports terminal status" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "fake tracker terminal",
+          status: "in_progress",
+          assignee: "cody"
+        })
+
+      worker = spawn(fn -> Process.sleep(:infinity) end)
+      ReconcileErrorTracker.set_get_issue({:ok, %{id: task.id, status: "done"}})
+      original = :sys.get_state(Orchestrator)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        running =
+          Map.put(state.running, task.id, %{
+            task: task,
+            pid: worker,
+            mref: make_ref(),
+            started_mono_ms: System.monotonic_time(:millisecond),
+            started_at: System.system_time(:second)
+          })
+
+        %{
+          state
+          | tracker: ReconcileErrorTracker,
+            running: running,
+            claimed: MapSet.put(state.claimed, task.id),
+            stall_timeout_ms: 0
+        }
+      end)
+
+      try do
+        send(Orchestrator, :tick)
+        flush_orchestrator()
+
+        state = :sys.get_state(Orchestrator)
+        refute Map.has_key?(state.running, task.id)
+        refute MapSet.member?(state.claimed, task.id)
+        assert wait_until(fn -> not Process.alive?(worker) end)
+      after
+        if Process.alive?(worker), do: Process.exit(worker, :kill)
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
     end
   end
 

@@ -10,9 +10,18 @@ defmodule Svarm.Dashboard do
 
   @doc """
   Full dashboard snapshot. One call gets everything the LiveView needs.
+
+  Returns `{:ok, snapshot}` or `{:error, reason}` when the tracker cannot
+  list issues (do not treat that as an idle empty dashboard).
   """
   def snapshot do
-    tasks = Board.list_tasks()
+    case Board.fetch_tasks() do
+      {:ok, tasks} -> {:ok, snapshot_from_tasks(tasks)}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp snapshot_from_tasks(tasks) do
     agents = AgentRunner.load_agents()
     orchestrator = Orchestrator.status()
     # Single session aggregate — derive token totals from the same summary.
@@ -59,7 +68,18 @@ defmodule Svarm.Dashboard do
   def roi_for_window(window \\ "session", tasks \\ nil, opts \\ [])
 
   def roi_for_window(window, tasks, opts) when is_list(opts) do
-    tasks = tasks || Board.list_tasks()
+    tasks =
+      case tasks do
+        list when is_list(list) ->
+          list
+
+        _ ->
+          case Board.fetch_tasks() do
+            {:ok, listed} -> listed
+            {:error, _} -> []
+          end
+      end
+
     agents = Board.list_agents()
     since = window_since(window)
     statuses = Map.new(tasks, &{&1.id, &1.status})

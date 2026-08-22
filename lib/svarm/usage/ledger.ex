@@ -162,6 +162,54 @@ defmodule Svarm.Usage.Ledger do
   end
 
   @doc """
+  SQL cost groups for one task, grouped by source + provider + model.
+
+  Bounded by distinct `{source, provider, model_id}`, not ledger row count.
+  Used for run-detail breakdown; totals still come from `cost_groups_for_tasks/1`.
+  """
+  def breakdown_groups_for_task(task_id) when is_binary(task_id) do
+    from(r in Record,
+      where: r.task_id == ^task_id,
+      group_by: [r.source, r.provider, r.model_id],
+      select: %{
+        source: r.source,
+        provider: r.provider,
+        model_id: r.model_id,
+        billed_usd:
+          sum(
+            fragment(
+              "CASE WHEN ? IS NOT NULL THEN ? ELSE 0.0 END",
+              r.provider_cost_usd,
+              r.provider_cost_usd
+            )
+          ),
+        rate_prompt:
+          sum(
+            fragment(
+              "CASE WHEN ? IS NULL THEN COALESCE(?, 0) ELSE 0 END",
+              r.provider_cost_usd,
+              r.prompt_tokens
+            )
+          ),
+        rate_completion:
+          sum(
+            fragment(
+              "CASE WHEN ? IS NULL THEN COALESCE(?, 0) ELSE 0 END",
+              r.provider_cost_usd,
+              r.completion_tokens
+            )
+          ),
+        prompt_tokens: sum(fragment("COALESCE(?, 0)", r.prompt_tokens)),
+        completion_tokens: sum(fragment("COALESCE(?, 0)", r.completion_tokens)),
+        record_count: count(r.id),
+        unbilled_count:
+          sum(fragment("CASE WHEN ? IS NULL THEN 1 ELSE 0 END", r.provider_cost_usd))
+      }
+    )
+    |> Repo.all()
+  end
+
+  @doc """
   SQL cost groups for records with wall-clock `inserted_at >= since`,
   grouped by task + provider + model. Nil `inserted_at` excluded.
   """

@@ -395,8 +395,10 @@ defmodule Svarm.Orchestrator do
   end
 
   # Tracker reconcile (P0 for v1 correctness): pull current status for active
-  # tasks. External terminal states (or missing issue) → stop worker + release claim.
-  # Safe: tracker errors are logged and ignored so one bad tick doesn't kill loop.
+  # tasks. External terminal states (or documented gone / :not_found) → stop
+  # worker + release claim. Transient tracker errors (network, 5xx, rate-limit,
+  # and other non-gone failures) are logged and left in-flight so one bad tick
+  # does not kill a healthy run.
   defp reconcile_tracker_states(state) do
     ids =
       (Map.keys(state.running) ++ MapSet.to_list(state.claimed) ++ Map.keys(state.retry_attempts))
@@ -405,10 +407,29 @@ defmodule Svarm.Orchestrator do
     Enum.reduce(ids, state, fn task_id, acc ->
       case safe_get_issue(acc.tracker, acc.tracker_config, task_id) do
         {:ok, issue} -> maybe_release_if_terminal(acc, task_id, issue)
-        {:error, _} -> release_task(acc, task_id)
+        {:error, reason} -> reconcile_get_issue_error(acc, task_id, reason)
       end
     end)
   end
+
+  defp reconcile_get_issue_error(acc, task_id, reason) do
+    if gone_issue?(reason) do
+      Logger.info("tracker reconcile: #{task_id} missing (#{inspect(reason)}), releasing")
+      release_task(acc, task_id)
+    else
+      Logger.warning(
+        "tracker reconcile: get_issue failed for #{task_id} (#{inspect(reason)}); keeping in-flight work"
+      )
+
+      acc
+    end
+  end
+
+  # Documented gone / missing issue. GitHub get_issue uses the atom; other
+  # adapter callbacks use %{type: :not_found} maps — treat both as vanished.
+  defp gone_issue?(:not_found), do: true
+  defp gone_issue?(%{type: :not_found}), do: true
+  defp gone_issue?(_reason), do: false
 
   defp maybe_release_if_terminal(acc, task_id, issue) do
     if issue.status in acc.terminal_states do
@@ -1062,8 +1083,9 @@ defmodule Svarm.Orchestrator do
   end
 
   # Prefer tracker review ids so done rows cannot fill a bounded window.
-  # Empty/failed list_issues must not mean "poll nothing": GitHub maps HTTP
-  # errors to `{:ok, []}`, and `status: "review"` may miss configured labels.
+  # HTTP 200 with an empty list may still miss configured labels, so we fall
+  # back to unbounded `list_with_pr`. A tagged `list_issues` error must not
+  # scan those rows — that was the swallowed-403 "poll everything" bug.
   defp review_resume_pr_rows(state) do
     case review_task_ids(state) do
       [_ | _] = ids ->
@@ -1072,6 +1094,9 @@ defmodule Svarm.Orchestrator do
           include_circuit_open: true,
           task_ids: ids
         )
+
+      :unavailable ->
+        []
 
       _ ->
         Coordination.list_with_pr(include_circuit_open: true, limit: nil)
@@ -1082,6 +1107,7 @@ defmodule Svarm.Orchestrator do
     if function_exported?(state.tracker, :list_issues, 2) do
       case state.tracker.list_issues(state.tracker_config, status: "review") do
         {:ok, [_ | _] = issues} -> Enum.map(issues, & &1.id)
+        {:error, _} -> :unavailable
         _ -> nil
       end
     else
@@ -1513,6 +1539,8 @@ defmodule Svarm.Orchestrator do
     agent = Map.get(state.agents, assignee, %{})
     pr_url = coordination_pr_url(task_id)
 
+    cost = Usage.task_cost(task_id)
+
     summary = %{
       run_id: entry[:run_id],
       task_id: task_id,
@@ -1525,8 +1553,8 @@ defmodule Svarm.Orchestrator do
       harness: harness_label(agent),
       model: agent[:model],
       provider: agent[:provider],
-      cost: Usage.task_cost(task_id),
-      total_tokens: total_tokens_for_task(task_id),
+      cost: cost,
+      total_tokens: (cost.prompt_tokens || 0) + (cost.completion_tokens || 0),
       branch: nil,
       pr_url: pr_url,
       exit_code: exit_code_from_result(result)
@@ -1560,11 +1588,6 @@ defmodule Svarm.Orchestrator do
   defp blank_to_nil(nil), do: nil
   defp blank_to_nil(""), do: nil
   defp blank_to_nil(s) when is_binary(s), do: s
-
-  defp total_tokens_for_task(task_id) do
-    Usage.for_task(task_id)
-    |> Enum.reduce(0, fn r, acc -> acc + (r.prompt_tokens || 0) + (r.completion_tokens || 0) end)
-  end
 
   ## retry / backoff
 

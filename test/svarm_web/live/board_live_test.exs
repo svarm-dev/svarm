@@ -2,6 +2,7 @@ defmodule SvarmWeb.BoardLiveTest do
   use SvarmWeb.LiveCase, async: false
 
   alias Svarm.{AgentQuestion, Approval, Events, KanbanBridge, RunSteer, StreamEvent}
+  alias Svarm.Test.GitHubListErrorReq
 
   test "empty board shows first-value onboarding without column strip", %{conn: conn} do
     KanbanBridge.delete_all_tasks()
@@ -19,6 +20,18 @@ defmodule SvarmWeb.BoardLiveTest do
     unless Svarm.Board.instance_status().setup_complete? do
       assert html =~ "Open setup"
     end
+  end
+
+  test "GitHub list_issues failure is not the idle empty board", %{conn: conn} do
+    GitHubListErrorReq.install()
+    KanbanBridge.delete_all_tasks()
+
+    {:ok, _view, html} = live(conn, ~p"/board")
+
+    refute html =~ "All quiet. No tickets yet."
+    assert html =~ "Cannot load the board"
+    assert html =~ "rate limited"
+    assert html =~ "Cannot load GitHub issues"
   end
 
   test "renders board with tasks and hides empty onboarding", %{conn: conn} do

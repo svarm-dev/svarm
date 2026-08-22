@@ -111,8 +111,11 @@ defmodule Svarm.Approval do
 
   def list_pending do
     {adapter, config} = resolve_tracker()
-    {:ok, issues} = adapter.list_issues(config, status: @status_pending)
-    Enum.reject(issues, &Budget.held?(&1.id))
+
+    case adapter.list_issues(config, status: @status_pending) do
+      {:ok, issues} -> Enum.reject(issues, &Budget.held?(&1.id))
+      {:error, _} -> []
+    end
   end
 
   def approve(task_id) when is_binary(task_id) do
