@@ -509,11 +509,22 @@ defmodule Svarm.Tracker.GitHub do
     ["| | |", "|---|---|" | rows] |> Enum.join("\n")
   end
 
+  # Board reads are unauthenticated. Only embed a console URL when the operator
+  # explicitly opts in — SVARM_BASE_URL alone is not enough (see SECURITY.md).
   defp build_console_link(summary) do
-    case Application.get_env(:svarm, :console_base_url) do
-      nil -> nil
-      url -> "→ Full run log: #{url}/board?task=#{summary.task_id}&attach=1"
+    if comment_console_links_enabled?() do
+      case Application.get_env(:svarm, :console_base_url) do
+        url when is_binary(url) and url != "" ->
+          "→ Full run log: #{url}/board?task=#{summary.task_id}&attach=1"
+
+        _ ->
+          nil
+      end
     end
+  end
+
+  defp comment_console_links_enabled? do
+    Application.get_env(:svarm, :comment_console_links, false) == true
   end
 
   defp format_duration(ms) when is_integer(ms) do

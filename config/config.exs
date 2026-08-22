@@ -11,11 +11,16 @@ config :svarm,
   generators: [timestamp_type: :utc_datetime, binary_id: true],
   ecto_repos: [Svarm.Repo],
   # Sticky board Basic Auth proof TTL (seconds). Override with BOARD_AUTH_TTL_SECONDS.
-  board_auth_ttl_seconds: 8 * 60 * 60
+  board_auth_ttl_seconds: 8 * 60 * 60,
+  # GitHub run comments omit board/run-log URLs unless SVARM_COMMENT_CONSOLE_LINKS=true.
+  comment_console_links: false
 
 config :svarm, Svarm.Repo,
   database: Path.join(System.user_home!(), ".svarm/kanban/kanban.db"),
   journal_mode: :wal,
+  # Wait up to 5s on SQLITE_BUSY so concurrent RunLog/usage/kanban writers retry.
+  # ecto_sqlite3 default is 2000ms. WAL stays; do not raise pool_size as the fix.
+  busy_timeout: 5_000,
   pool_size: 5
 
 # Configure the endpoint

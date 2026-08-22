@@ -1,5 +1,5 @@
 defmodule Svarm.Tracker.GitHubTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Svarm.Tracker.GitHub
 
@@ -168,6 +168,53 @@ defmodule Svarm.Tracker.GitHubTest do
       comment = GitHub.build_comment(summary)
       refute comment =~ "$"
     end
+
+    test "omits board/run-log URL by default even when console_base_url is set" do
+      previous_links = Application.get_env(:svarm, :comment_console_links)
+      previous_url = Application.get_env(:svarm, :console_base_url)
+
+      on_exit(fn ->
+        restore_app_env(:comment_console_links, previous_links)
+        restore_app_env(:console_base_url, previous_url)
+      end)
+
+      Application.put_env(:svarm, :comment_console_links, false)
+      Application.put_env(:svarm, :console_base_url, "http://localhost:4000")
+
+      summary = comment_summary(%{task_id: "sva_nolink", run_id: "run_nolink"})
+      comment = GitHub.build_comment(summary)
+
+      refute comment =~ "Full run log"
+      refute comment =~ "/board?task="
+      refute comment =~ "http://localhost:4000"
+      assert comment =~ "$0.47"
+      assert comment =~ "**Harness**"
+      assert comment =~ "Claude Code"
+      assert comment =~ "**Session**"
+      assert comment =~ "`run_nolink`"
+    end
+
+    test "embeds board/run-log URL only when comment_console_links is opted in" do
+      previous_links = Application.get_env(:svarm, :comment_console_links)
+      previous_url = Application.get_env(:svarm, :console_base_url)
+
+      on_exit(fn ->
+        restore_app_env(:comment_console_links, previous_links)
+        restore_app_env(:console_base_url, previous_url)
+      end)
+
+      Application.put_env(:svarm, :comment_console_links, true)
+      Application.put_env(:svarm, :console_base_url, "https://svarm.example")
+
+      summary = comment_summary(%{task_id: "sva_link", run_id: "run_link"})
+      comment = GitHub.build_comment(summary)
+
+      assert comment =~ "→ Full run log: https://svarm.example/board?task=sva_link&attach=1"
+      assert comment =~ "$0.47"
+      assert comment =~ "**Harness**"
+      assert comment =~ "**Session**"
+      assert comment =~ "`run_link`"
+    end
   end
 
   describe "post_run_summary idempotency" do
@@ -200,4 +247,28 @@ defmodule Svarm.Tracker.GitHubTest do
       refute String.contains?(comment, "<!-- svarm-run:")
     end
   end
+
+  defp comment_summary(overrides) do
+    Map.merge(
+      %{
+        run_id: "run_abc123",
+        task_id: "sva_test123",
+        task: %{title: "Add retry logic to API client", source_id: "42"},
+        result: :ok,
+        duration_ms: 252_000,
+        agent_name: "Reece",
+        agent_role: "Research & Architecture",
+        harness: "Claude Code",
+        model: "sonnet-4",
+        total_tokens: 2340,
+        cost: %{total_cost_usd: 0.47, record_count: 3},
+        branch: "feat/retry-logic",
+        exit_code: 0
+      },
+      overrides
+    )
+  end
+
+  defp restore_app_env(key, nil), do: Application.delete_env(:svarm, key)
+  defp restore_app_env(key, value), do: Application.put_env(:svarm, key, value)
 end

@@ -32,6 +32,8 @@ services:
       - PHX_HOST=${PHX_HOST:-localhost}
       # Session Secure defaults true in prod runtime. For plain-HTTP localhost
       # with this profile, set PHX_SECURE_COOKIES=false in .env (demo sets false).
+      # Board origin only. GitHub comments do not embed /board?task=… URLs unless
+      # SVARM_COMMENT_CONSOLE_LINKS=true (off by default — board reads are open).
       - SVARM_BASE_URL=${SVARM_BASE_URL:-http://localhost:${SVARM_PORT:-4000}}
     volumes:
       - ./data:/app/data
@@ -55,6 +57,7 @@ services:
       - PHX_HOST=${PHX_HOST:-localhost}
       # Plain HTTP on localhost: allow non-Secure session cookies (prod defaults Secure).
       - PHX_SECURE_COOKIES=${PHX_SECURE_COOKIES:-false}
+      # Board origin only — comment console links stay off (see app service).
       - SVARM_BASE_URL=${SVARM_BASE_URL:-http://localhost:${SVARM_PORT:-4000}}
       - SVARM_SEED_DEMO=1
       # Re-seed button + /dev/demo/seed (explicit; not implied by SEED alone).
