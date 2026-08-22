@@ -52,12 +52,17 @@ defmodule Svarm.Usage.Outcomes do
       %{
         since: DateTime.t() | nil,
         by_outcome: %{merged: summary(), in_review: summary(), other: summary()},
+        by_task: %{optional(String.t()) => task_summary()},
         task_count: non_neg_integer()
       }
 
-  Each summary includes `total_cost_usd`, `estimated`, `record_count`,
-  `task_count`, `prompt_tokens`, `completion_tokens`. Estimated is true when
-  any contributing group was rate-table / unbilled.
+  Each bucket summary includes `total_cost_usd`, `estimated`, `record_count`,
+  `task_count`, `prompt_tokens`, `completion_tokens`. Each `by_task` entry is
+  the same cost fields plus `outcome`. Estimated is true when any contributing
+  group was rate-table / unbilled.
+
+  Callers that need per-agent (or other) slices should group `by_task` in
+  memory — do not call `by_outcome/1` again for the same snapshot.
   """
   @spec by_outcome(keyword()) :: map()
   def by_outcome(opts \\ []) when is_list(opts) do
@@ -88,15 +93,21 @@ defmodule Svarm.Usage.Outcomes do
     empty = empty_summary()
     merged_flags = github_merged_flags(Map.keys(by_task), statuses, opts)
 
-    by_outcome =
-      Enum.reduce(by_task, Map.new(@outcomes, &{&1, empty}), fn {task_id, summary}, acc ->
+    by_task =
+      Map.new(by_task, fn {task_id, summary} ->
         outcome = classify_task(task_id, Map.get(statuses, task_id), merged_flags)
-        Map.update!(acc, outcome, &merge_summaries(&1, summary))
+        {task_id, Map.put(summary, :outcome, outcome)}
+      end)
+
+    by_outcome =
+      Enum.reduce(by_task, Map.new(@outcomes, &{&1, empty}), fn {_task_id, summary}, acc ->
+        Map.update!(acc, summary.outcome, &merge_summaries(&1, summary))
       end)
 
     %{
       since: if(match?(%DateTime{}, since), do: since, else: nil),
       by_outcome: by_outcome,
+      by_task: by_task,
       task_count: map_size(by_task)
     }
   end

@@ -48,48 +48,35 @@ defmodule Svarm.Dashboard do
   @doc """
   Outcome ROI strip for a spend window (`session` / `24h` / `7d`).
 
-  Uses `Usage.by_outcome/1` (query-time; ledger append-only). Merge rate is
+  One `Usage.by_outcome/1` (one ledger grouping) per snapshot; `by_agent` is
+  sliced from that result in memory. Merge rate is
   `merged_tasks / tasks_with_spend` in the window. Cost per merged is
   merged-bucket spend / merged task count (nil when no merges). Estimated
   flag is true when any contributing spend is approximate.
+
+  `opts` are forwarded to `Usage.by_outcome/1` (`:req`, `:tracker_config`).
   """
-  def roi_for_window(window \\ "session", tasks \\ nil) do
+  def roi_for_window(window \\ "session", tasks \\ nil, opts \\ [])
+
+  def roi_for_window(window, tasks, opts) when is_list(opts) do
     tasks = tasks || Board.list_tasks()
     agents = Board.list_agents()
     since = window_since(window)
     statuses = Map.new(tasks, &{&1.id, &1.status})
 
-    overall =
-      Usage.by_outcome(task_statuses: statuses, since: since)
-      |> metrics_from_outcome()
+    outcome =
+      opts
+      |> Keyword.take([:req, :tracker_config])
+      |> Keyword.merge(task_statuses: statuses, since: since)
+      |> Usage.by_outcome()
 
-    by_agent =
-      tasks
-      |> Enum.group_by(&AgentRegistry.normalize_assignee(&1.assignee))
-      |> Enum.map(fn {agent, agent_tasks} ->
-        ids = Enum.map(agent_tasks, & &1.id)
-        agent_statuses = Map.take(statuses, ids)
-
-        metrics =
-          Usage.by_outcome(task_statuses: agent_statuses, since: since, task_ids: ids)
-          |> metrics_from_outcome()
-
-        identity = AgentRegistry.identity(agent, agents)
-
-        %{
-          assignee: agent,
-          display_name: identity.display_name,
-          metrics: metrics
-        }
-      end)
-      |> Enum.reject(&(&1.metrics.tasks_with_spend == 0))
-      |> Enum.sort_by(& &1.display_name)
+    by_task = Map.get(outcome, :by_task, %{})
 
     %{
       window: window,
       since: since,
-      overall: overall,
-      by_agent: by_agent
+      overall: metrics_from_task_summaries(Map.values(by_task)),
+      by_agent: agent_roi_rows(tasks, agents, by_task)
     }
   end
 
@@ -102,34 +89,53 @@ defmodule Svarm.Dashboard do
 
   defp window_since(_), do: nil
 
-  defp metrics_from_outcome(%{by_outcome: by, task_count: n}) do
-    merged = Map.fetch!(by, :merged)
-    estimated = Enum.any?([by.merged, by.in_review, by.other], & &1.estimated)
+  defp agent_roi_rows(tasks, agents, by_task) do
+    tasks
+    |> Enum.group_by(&AgentRegistry.normalize_assignee(&1.assignee))
+    |> Enum.map(fn {agent, agent_tasks} ->
+      ids = Enum.map(agent_tasks, & &1.id)
+      identity = AgentRegistry.identity(agent, agents)
 
-    merge_rate =
-      if n > 0 do
-        Float.round(merged.task_count / n, 4)
-      else
-        nil
-      end
+      %{
+        assignee: agent,
+        display_name: identity.display_name,
+        metrics: by_task |> Map.take(ids) |> Map.values() |> metrics_from_task_summaries()
+      }
+    end)
+    |> Enum.reject(&(&1.metrics.tasks_with_spend == 0))
+    |> Enum.sort_by(& &1.display_name)
+  end
 
-    cost_per_merged =
-      if merged.task_count > 0 do
-        Float.round(merged.total_cost_usd / merged.task_count, 4)
-      else
-        nil
-      end
+  defp metrics_from_task_summaries(summaries) do
+    n = length(summaries)
+
+    {merged_n, in_review_n, other_n, merged_cost, estimated} =
+      Enum.reduce(summaries, {0, 0, 0, 0.0, false}, fn summary,
+                                                       {merged, review, other, cost, est} ->
+        est = est or Map.get(summary, :estimated) == true
+        usd = summary_usd(summary)
+
+        case Map.get(summary, :outcome, :other) do
+          :merged -> {merged + 1, review, other, cost + usd, est}
+          :in_review -> {merged, review + 1, other, cost, est}
+          _ -> {merged, review, other + 1, cost, est}
+        end
+      end)
 
     %{
-      merge_rate: merge_rate,
-      cost_per_merged_usd: cost_per_merged,
-      merged_tasks: merged.task_count,
-      in_review_tasks: by.in_review.task_count,
-      other_tasks: by.other.task_count,
+      merge_rate: if(n > 0, do: Float.round(merged_n / n, 4), else: nil),
+      cost_per_merged_usd:
+        if(merged_n > 0, do: Float.round(merged_cost / merged_n, 4), else: nil),
+      merged_tasks: merged_n,
+      in_review_tasks: in_review_n,
+      other_tasks: other_n,
       tasks_with_spend: n,
       estimated: estimated
     }
   end
+
+  defp summary_usd(%{total_cost_usd: n}) when is_number(n), do: n
+  defp summary_usd(_), do: 0.0
 
   @window_seconds 86_400
 
