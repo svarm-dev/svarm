@@ -133,19 +133,23 @@ defmodule Svarm.Tracker.GitHub do
       {:ok, %{status: 401}} ->
         {:error, error(:auth_failure, "bad GitHub token")}
 
-      {:ok, %{status: 403} = resp} ->
-        retry = parse_retry_after(resp.headers)
+      {:ok, %{status: status} = resp} when status in [403, 429] ->
+        retry = parse_retry_after(Map.get(resp, :headers, %{}))
         {:error, error(:rate_limit, "rate limited", retry)}
 
       {:ok, %{status: 404}} ->
         {:error, error(:not_found, "repo #{owner}/#{repo} not found")}
 
-      {:ok, %{status: code}} when code >= 500 ->
+      {:ok, %{status: code}} when is_integer(code) ->
         {:error, error(:server_error, "GitHub API error #{code}")}
 
-      {:error, %{reason: reason}} ->
+      {:error, reason} ->
         Logger.error("github tracker: #{inspect(reason)}")
         {:error, error(:network_error, "cannot reach GitHub API")}
+
+      other ->
+        Logger.error("github tracker: unexpected response #{inspect(other)}")
+        {:error, error(:server_error, "GitHub API error")}
     end
   end
 

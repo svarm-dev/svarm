@@ -45,6 +45,26 @@ defmodule Svarm.Tracker.GitHub.ListIssuesTest do
       assert {:ok, []} = GitHub.list_issues(@config)
       assert {:ok, []} = GitHub.list_eligible(@config)
     end
+
+    test "429 is rate_limit with retry_after from header" do
+      stub_list({:ok, %{status: 429, headers: %{"retry-after" => ["15"]}}})
+      assert_same_error(:rate_limit, "rate limited", 15)
+    end
+
+    test "400 is tagged server_error, not an empty list" do
+      stub_list({:ok, %{status: 400, body: %{"message" => "bad request"}}})
+      assert_same_error(:server_error, "GitHub API error 400")
+    end
+
+    test "422 is tagged server_error, not an empty list" do
+      stub_list({:ok, %{status: 422}})
+      assert_same_error(:server_error, "GitHub API error 422")
+    end
+
+    test "unexpected error shape is tagged network_error, not CaseClauseError" do
+      stub_list({:error, :timeout})
+      assert_same_error(:network_error, "cannot reach GitHub API")
+    end
   end
 
   defp stub_list(response), do: Process.put(:github_list_response, response)
