@@ -45,34 +45,21 @@ defmodule Svarm.Tracker.GitHub do
 
     url = "#{@base_url}/repos/#{owner}/#{repo}/issues"
     params = %{state: "open", per_page: 100}
+    req = req_mod(config)
 
-    case Req.get(url, params: params, headers: headers(config)) do
-      {:ok, %{status: 200, body: issues}} ->
+    map_list_http(
+      req.get(url, params: params, headers: headers(config)),
+      owner,
+      repo,
+      fn issues ->
         status_labels = Map.get(config, :status_labels, @default_status_labels)
         normalized_config = Map.put(config, :status_labels, status_labels)
 
         issues
         |> Enum.map(&Normalize.from_api_response(&1, normalized_config))
         |> Enum.filter(&Eligibility.eligible?(&1, config))
-        |> then(&{:ok, &1})
-
-      {:ok, %{status: 401}} ->
-        {:error, error(:auth_failure, "bad GitHub token")}
-
-      {:ok, %{status: 403} = resp} ->
-        retry = parse_retry_after(resp.headers)
-        {:error, error(:rate_limit, "rate limited", retry)}
-
-      {:ok, %{status: 404}} ->
-        {:error, error(:not_found, "repo #{owner}/#{repo} not found")}
-
-      {:ok, %{status: code}} when code >= 500 ->
-        {:error, error(:server_error, "GitHub API error #{code}")}
-
-      {:error, %{reason: reason}} ->
-        Logger.error("github tracker: #{inspect(reason)}")
-        {:error, error(:network_error, "cannot reach GitHub API")}
-    end
+      end
+    )
   end
 
   @impl true
@@ -122,13 +109,47 @@ defmodule Svarm.Tracker.GitHub do
 
     url = "#{@base_url}/repos/#{owner}/#{repo}/issues"
     params = build_list_params(filters)
+    req = req_mod(config)
 
-    case Req.get(url, params: params, headers: headers(config)) do
+    map_list_http(
+      req.get(url, params: params, headers: headers(config)),
+      owner,
+      repo,
+      fn issues ->
+        normalize_listed_issues(issues, config, include_body)
+      end
+    )
+  end
+
+  defp req_mod(config) when is_map(config) do
+    Map.get(config, :req) || Application.get_env(:svarm, :github_req, Req)
+  end
+
+  defp map_list_http(resp, owner, repo, on_ok) when is_function(on_ok, 1) do
+    case resp do
       {:ok, %{status: 200, body: issues}} ->
-        {:ok, normalize_listed_issues(issues, config, include_body)}
+        {:ok, on_ok.(issues)}
 
-      _ ->
-        {:ok, []}
+      {:ok, %{status: 401}} ->
+        {:error, error(:auth_failure, "bad GitHub token")}
+
+      {:ok, %{status: status} = resp} when status in [403, 429] ->
+        retry = parse_retry_after(Map.get(resp, :headers, %{}))
+        {:error, error(:rate_limit, "rate limited", retry)}
+
+      {:ok, %{status: 404}} ->
+        {:error, error(:not_found, "repo #{owner}/#{repo} not found")}
+
+      {:ok, %{status: code}} when is_integer(code) ->
+        {:error, error(:server_error, "GitHub API error #{code}")}
+
+      {:error, reason} ->
+        Logger.error("github tracker: #{inspect(reason)}")
+        {:error, error(:network_error, "cannot reach GitHub API")}
+
+      other ->
+        Logger.error("github tracker: unexpected response #{inspect(other)}")
+        {:error, error(:server_error, "GitHub API error")}
     end
   end
 

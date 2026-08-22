@@ -1062,8 +1062,9 @@ defmodule Svarm.Orchestrator do
   end
 
   # Prefer tracker review ids so done rows cannot fill a bounded window.
-  # Empty/failed list_issues must not mean "poll nothing": GitHub maps HTTP
-  # errors to `{:ok, []}`, and `status: "review"` may miss configured labels.
+  # HTTP 200 with an empty list may still miss configured labels, so we fall
+  # back to unbounded `list_with_pr`. A tagged `list_issues` error must not
+  # scan those rows — that was the swallowed-403 "poll everything" bug.
   defp review_resume_pr_rows(state) do
     case review_task_ids(state) do
       [_ | _] = ids ->
@@ -1072,6 +1073,9 @@ defmodule Svarm.Orchestrator do
           include_circuit_open: true,
           task_ids: ids
         )
+
+      :unavailable ->
+        []
 
       _ ->
         Coordination.list_with_pr(include_circuit_open: true, limit: nil)
@@ -1082,6 +1086,7 @@ defmodule Svarm.Orchestrator do
     if function_exported?(state.tracker, :list_issues, 2) do
       case state.tracker.list_issues(state.tracker_config, status: "review") do
         {:ok, [_ | _] = issues} -> Enum.map(issues, & &1.id)
+        {:error, _} -> :unavailable
         _ -> nil
       end
     else

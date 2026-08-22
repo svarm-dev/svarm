@@ -55,9 +55,12 @@ defmodule Svarm.Demo do
   Returns `{:ok, count}`, `:already_has_tasks`, or `{:error, reason}`.
   """
   def seed_if_empty(goal \\ @default_goal) do
-    case Svarm.Board.list_tasks() do
-      [] -> seed(goal)
-      _ -> :already_has_tasks
+    with :ok <- preflight_seed() do
+      case Svarm.Board.fetch_tasks() do
+        {:ok, []} -> seed(goal)
+        {:ok, _} -> :already_has_tasks
+        {:error, reason} -> {:error, reason}
+      end
     end
   rescue
     e in [DBConnection.ConnectionError, ErlangError] ->

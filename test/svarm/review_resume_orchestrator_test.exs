@@ -32,13 +32,18 @@ defmodule Svarm.ReviewResumeOrchestratorTest do
     def list_eligible(_config), do: {:ok, []}
 
     def list_issues(_config, filters \\ []) do
-      if Application.get_env(:svarm, :review_resume_list_issues_empty, false) do
-        {:ok, []}
-      else
-        issues = Application.get_env(:svarm, :review_resume_test_issues, %{}) |> Map.values()
-        status = Keyword.get(filters, :status)
-        issues = if status, do: Enum.filter(issues, &(&1.status == status)), else: issues
-        {:ok, issues}
+      cond do
+        Application.get_env(:svarm, :review_resume_list_issues_error, false) ->
+          {:error, %{type: :rate_limit, message: "rate limited", retry_after: 60}}
+
+        Application.get_env(:svarm, :review_resume_list_issues_empty, false) ->
+          {:ok, []}
+
+        true ->
+          issues = Application.get_env(:svarm, :review_resume_test_issues, %{}) |> Map.values()
+          status = Keyword.get(filters, :status)
+          issues = if status, do: Enum.filter(issues, &(&1.status == status)), else: issues
+          {:ok, issues}
       end
     end
 
@@ -108,6 +113,7 @@ defmodule Svarm.ReviewResumeOrchestratorTest do
     Application.put_env(:svarm, :review_resume_test_issues, %{})
     Application.put_env(:svarm, :review_resume_test_result, nil)
     Application.put_env(:svarm, :review_resume_list_issues_empty, false)
+    Application.put_env(:svarm, :review_resume_list_issues_error, false)
 
     :sys.replace_state(Orchestrator, fn state ->
       %{
@@ -143,6 +149,7 @@ defmodule Svarm.ReviewResumeOrchestratorTest do
       Application.delete_env(:svarm, :review_resume_test_issues)
       Application.delete_env(:svarm, :review_resume_test_result)
       Application.delete_env(:svarm, :review_resume_list_issues_empty)
+      Application.delete_env(:svarm, :review_resume_list_issues_error)
 
       if Process.whereis(Orchestrator) do
         :sys.replace_state(Orchestrator, fn _ -> original end)
@@ -384,6 +391,54 @@ defmodule Svarm.ReviewResumeOrchestratorTest do
              match?(%{review_decision: "changes_requested"}, Coordination.get(live_id))
            end)
 
+    assert get_issue(live_id).status == "review"
+  end
+
+  test "list_issues error does not unbounded-scan coordination PR rows" do
+    Application.put_env(:svarm, :review_resume_list_issues_error, true)
+
+    for i <- 1..51 do
+      id = "error_stale_pr_#{i}"
+      put_issue(id, "done")
+
+      {:ok, _} =
+        Coordination.upsert(id, %{
+          pr_url: "https://github.com/o/r/pull/#{i}",
+          pr_owner: "o",
+          pr_repo: "r",
+          pr_number: i
+        })
+    end
+
+    live_id = "review_resume_error"
+    put_issue(live_id)
+
+    {:ok, _} =
+      Coordination.upsert(live_id, %{
+        pr_url: "https://github.com/o/r/pull/299",
+        pr_owner: "o",
+        pr_repo: "r",
+        pr_number: 299
+      })
+
+    Application.put_env(
+      :svarm,
+      :review_resume_test_result,
+      {:ok,
+       %{
+         decision: :changes_requested,
+         head_sha: "sha_error",
+         reviewer_logins: ["alice"],
+         summary: "Changes requested by alice",
+         draft: false,
+         review_count: 1
+       }}
+    )
+
+    send(Orchestrator, :tick)
+    flush_orchestrator()
+
+    assert Coordination.get(live_id).review_decision == nil
     assert get_issue(live_id).status == "review"
   end
 

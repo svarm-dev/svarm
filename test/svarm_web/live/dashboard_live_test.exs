@@ -2,6 +2,7 @@ defmodule SvarmWeb.DashboardLiveTest do
   use SvarmWeb.LiveCase, async: false
 
   alias Svarm.{Approval, KanbanBridge, Repo, Usage}
+  alias Svarm.Test.GitHubListErrorReq
 
   setup do
     KanbanBridge.delete_all_tasks()
@@ -302,5 +303,17 @@ defmodule SvarmWeb.DashboardLiveTest do
     {:ok, _view, html} = live(conn, ~p"/dashboard")
 
     assert html =~ "retry 1/2"
+  end
+
+  test "GitHub list_issues failure shows error card not idle dashboard", %{conn: conn} do
+    GitHubListErrorReq.install()
+
+    {:ok, _view, html} = live(conn, ~p"/dashboard")
+
+    assert html =~ "Failed to load dashboard"
+    assert html =~ "Cannot load GitHub issues"
+    assert html =~ "rate limited"
+    refute html =~ "Waiting on humans"
+    refute html =~ "nothing waiting on humans"
   end
 end

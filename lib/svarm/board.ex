@@ -28,14 +28,42 @@ defmodule Svarm.Board do
 
   Omits full issue `body` (card UI never shows it). Use `get_task/1` when the
   body is required (agent dispatch, approvals detail).
+
+  Returns a list on success. Tracker API failures raise `MatchError` — use
+  `fetch_tasks/1` when the caller must distinguish an empty board from an
+  error (GitHub 401/403/404/5xx/network).
   """
   def list_tasks(filters \\ []) do
+    {:ok, tasks} = fetch_tasks(filters)
+    tasks
+  end
+
+  @doc """
+  Tagged-tuple list of card tasks.
+
+  `{:ok, []}` is a genuine empty board. `{:error, reason}` is a tracker
+  failure (same shape GitHub `list_issues/2` already uses: a map with
+  `:type`, `:message`, `:retry_after`).
+  """
+  def fetch_tasks(filters \\ []) do
     {adapter, config} = Tracker.Resolve.adapter_and_config()
     filters = Keyword.put(filters, :include_body, false)
-    {:ok, issues} = adapter.list_issues(config, filters)
-    tasks = Enum.map(issues, &issue_to_card_map/1)
-    attach_coordination(tasks)
+
+    case adapter.list_issues(config, filters) do
+      {:ok, issues} ->
+        {:ok, issues |> Enum.map(&issue_to_card_map/1) |> attach_coordination()}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
+
+  @doc "Operator-facing message for a tracker `list_issues` failure."
+  def tracker_error_message(%{message: message}) when is_binary(message) and message != "" do
+    "Cannot load GitHub issues: #{message}"
+  end
+
+  def tracker_error_message(reason), do: "Cannot load GitHub issues (#{inspect(reason)})."
 
   def get_task(id) do
     {adapter, config} = Tracker.Resolve.adapter_and_config()
@@ -82,15 +110,7 @@ defmodule Svarm.Board do
     {_adapter, tracker} = Tracker.Resolve.adapter_and_config()
     agents = Keyword.get_lazy(opts, :agents, &list_agents/0)
 
-    {task_count, empty?} =
-      case Keyword.get(opts, :task_count) do
-        n when is_integer(n) and n >= 0 ->
-          {n, n == 0}
-
-        _ ->
-          tasks = safe_list_tasks()
-          {length(tasks), tasks == []}
-      end
+    {task_count, empty?, tracker_error} = task_status_fields(opts)
 
     approval = approval_mode(workflow)
     setup = Settings.status()
@@ -107,10 +127,37 @@ defmodule Svarm.Board do
       approvals_auth?: approvals_auth_configured?(),
       demo_routes: Svarm.Demo.routes_enabled?(),
       empty?: empty?,
+      tracker_error: tracker_error,
       provider_configured?: setup.provider_configured?,
       tracker_ready?: setup.tracker_ready?,
       setup_complete?: setup.setup_complete?
     }
+  end
+
+  defp task_status_fields(opts) do
+    error = Keyword.get(opts, :tracker_error)
+    count = Keyword.get(opts, :task_count)
+
+    cond do
+      is_binary(error) and error != "" ->
+        {normalized_task_count(count), false, error}
+
+      is_integer(count) and count >= 0 ->
+        {count, count == 0, nil}
+
+      true ->
+        fetched_task_status()
+    end
+  end
+
+  defp normalized_task_count(n) when is_integer(n) and n >= 0, do: n
+  defp normalized_task_count(_), do: 0
+
+  defp fetched_task_status do
+    case safe_fetch_tasks() do
+      {:ok, tasks} -> {length(tasks), tasks == [], nil}
+      {:error, reason} -> {0, false, tracker_error_message(reason)}
+    end
   end
 
   defp tracker_label(%{kind: :github} = t),
@@ -130,12 +177,12 @@ defmodule Svarm.Board do
     ) or Application.get_env(:svarm, :dev_routes, false)
   end
 
-  defp safe_list_tasks do
-    list_tasks()
+  defp safe_fetch_tasks do
+    fetch_tasks()
   rescue
     e in [DBConnection.ConnectionError, ErlangError, ArgumentError] ->
       _ = e
-      []
+      {:ok, []}
   end
 
   @doc "Column ids in display order (workflow active + terminal, de-duplicated)."
@@ -519,10 +566,15 @@ defmodule Svarm.Board do
   defp latest_usage_hint(_), do: nil
 
   def refresh_snapshot do
-    tasks = list_tasks()
-    Svarm.Events.broadcast_tasks_snapshot(tasks)
-    Svarm.Events.broadcast_orchestrator_status(orchestrator_status())
-    tasks
+    case fetch_tasks() do
+      {:ok, tasks} ->
+        Svarm.Events.broadcast_tasks_snapshot(tasks)
+        Svarm.Events.broadcast_orchestrator_status(orchestrator_status())
+        tasks
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   # Full issue map (get_task / callers that need body).
