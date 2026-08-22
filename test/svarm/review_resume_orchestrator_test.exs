@@ -180,6 +180,15 @@ defmodule Svarm.ReviewResumeOrchestratorTest do
     Application.get_env(:svarm, :review_resume_test_issues, %{}) |> Map.get(task_id)
   end
 
+  defp backdate(row, seconds_ago) do
+    older =
+      DateTime.utc_now()
+      |> DateTime.add(-seconds_ago, :second)
+      |> DateTime.truncate(:second)
+
+    Repo.update!(Ecto.Changeset.change(row, updated_at: older))
+  end
+
   test "records changes requested without reopening the ticket" do
     task_id = "review_resume_1"
     put_issue(task_id)
@@ -344,27 +353,44 @@ defmodule Svarm.ReviewResumeOrchestratorTest do
     assert get_issue(live_id).status == "review"
   end
 
-  test "empty list_issues still polls in-review tickets behind stale PR rows" do
+  test "empty list_issues falls back to a capped coordination scan" do
     Application.put_env(:svarm, :review_resume_list_issues_empty, true)
 
+    # Oldest in-review ticket sits inside the 50-row window (updated_at ASC).
+    in_window_id = "review_resume_in_window"
+    put_issue(in_window_id)
+
+    {:ok, in_window} =
+      Coordination.upsert(in_window_id, %{
+        pr_url: "https://github.com/o/r/pull/98",
+        pr_owner: "o",
+        pr_repo: "r",
+        pr_number: 98
+      })
+
+    backdate(in_window, 52 * 60)
+
+    # 51 older-than-newest PR rows overflow the same cap as the happy path.
     for i <- 1..51 do
       id = "hidden_stale_pr_#{i}"
       put_issue(id, "done")
 
-      {:ok, _} =
+      {:ok, row} =
         Coordination.upsert(id, %{
           pr_url: "https://github.com/o/r/pull/#{i}",
           pr_owner: "o",
           pr_repo: "r",
           pr_number: i
         })
+
+      backdate(row, (52 - i) * 60)
     end
 
-    live_id = "review_resume_hidden"
-    put_issue(live_id)
+    later_id = "review_resume_later"
+    put_issue(later_id)
 
     {:ok, _} =
-      Coordination.upsert(live_id, %{
+      Coordination.upsert(later_id, %{
         pr_url: "https://github.com/o/r/pull/199",
         pr_owner: "o",
         pr_repo: "r",
@@ -377,7 +403,7 @@ defmodule Svarm.ReviewResumeOrchestratorTest do
       {:ok,
        %{
          decision: :changes_requested,
-         head_sha: "sha_hidden",
+         head_sha: "sha_capped",
          reviewer_logins: ["alice"],
          summary: "Changes requested by alice",
          draft: false,
@@ -388,10 +414,12 @@ defmodule Svarm.ReviewResumeOrchestratorTest do
     send(Orchestrator, :tick)
 
     assert wait_until(fn ->
-             match?(%{review_decision: "changes_requested"}, Coordination.get(live_id))
+             match?(%{review_decision: "changes_requested"}, Coordination.get(in_window_id))
            end)
 
-    assert get_issue(live_id).status == "review"
+    flush_orchestrator()
+    assert Coordination.get(later_id).review_decision == nil
+    assert get_issue(later_id).status == "review"
   end
 
   test "list_issues error does not unbounded-scan coordination PR rows" do
