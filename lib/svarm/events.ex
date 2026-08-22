@@ -9,6 +9,10 @@ defmodule Svarm.Events do
   Live path emits `{:stream_event, task_id, event}` (`Svarm.StreamEvent`).
   RunLog stores the text projection only (no kind column). `{:agent_line, ...}`
   remains as a compatibility broadcast; BoardLive renders `:stream_event`.
+
+  Redaction: PubSub payloads go through `Redact.map/1`. Persist-path scrubbing
+  is `RunLog.append/2` only — fail-closed if a caller skips Events.
+  `persist_agent_line/2` must not call `Redact.text/1` again.
   """
   @topic "board"
 
@@ -79,14 +83,15 @@ defmodule Svarm.Events do
   end
 
   @doc """
-  Persist a transcript chunk once (redacted). Used by broadcast helpers.
+  Persist a transcript chunk once. Used by broadcast helpers.
 
-  Prefer `broadcast_stream_event/2` / `broadcast_agent_line/2` /
+  Does not redact — `RunLog.append/2` is the single persist-path redact so
+  callers that skip Events stay fail-closed. Prefer
+  `broadcast_stream_event/2` / `broadcast_agent_line/2` /
   `broadcast_run_started/2` / `broadcast_run_finished/2` so PubSub and RunLog
   stay in lockstep.
   """
   def persist_agent_line(task_id, line) when is_binary(task_id) and is_binary(line) do
-    line = Redact.text(line)
     Svarm.RunLog.append(task_id, line)
     line
   end

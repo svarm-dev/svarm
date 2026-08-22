@@ -36,6 +36,16 @@ defmodule Svarm.EventsTest do
     refute_receive {:agent_line, ^task_id, _}, 100
   end
 
+  test "persist_agent_line redacts via RunLog.append (fail-closed persist)" do
+    Events.subscribe()
+    task_id = "evt_persist_secret_#{System.unique_integer([:positive])}"
+    secret = "sk-ant-abcdefghijklmnopqrstuvwxyz"
+
+    Events.persist_agent_line(task_id, "token=#{secret}\n")
+    refute RunLog.get(task_id) =~ secret
+    refute_receive {:agent_line, ^task_id, _}, 100
+  end
+
   test "broadcast_run_started persists started banner once" do
     Events.subscribe()
     task_id = "evt_start_#{System.unique_integer([:positive])}"

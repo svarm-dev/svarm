@@ -23,8 +23,10 @@ defmodule Svarm.RunLog do
   @doc """
   Append a chunk to a task's log.
 
-  Redacts secrets before any buffering or durable write. Creates the row on
-  first flush if it does not exist.
+  Single persist-path redact: secrets are scrubbed here before any buffering
+  or durable write, so callers that skip `Events` stay fail-closed.
+  `Events.persist_agent_line/2` must not call `Redact.text/1` again.
+  Creates the row on first flush if it does not exist.
   """
   def append(task_id, chunk) when is_binary(task_id) and is_binary(chunk) do
     chunk = Svarm.Redact.text(chunk)
