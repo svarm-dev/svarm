@@ -59,7 +59,8 @@ cp .env.example .env
 | `APPROVALS_USER` / `APPROVALS_PASSWORD` | **Yes** for Docker/prod (UI + board mutations) | Strong unique pair in `.env` (`.env.example` leaves them empty). **Demo** compose profile still defaults to `svarm`/`svarm` for the zero-key demo only. Without credentials, production high-trust board mutations (approve/reject/mark-done/answer/steer/overage) fail closed |
 | `GITHUB_TOKEN` | For GitHub tracker | Classic PAT with `repo` scope |
 | `OPENROUTER_API_KEY` | For real agents | From [openrouter.ai/keys](https://openrouter.ai/keys) |
-| `SVARM_BASE_URL` | Recommended | `http://localhost:4000` so cost receipts link to the board |
+| `SVARM_BASE_URL` | Optional | Public board origin (e.g. `http://localhost:4000`). Used for GitHub comment console links **only** when the opt-in below is on |
+| `SVARM_COMMENT_CONSOLE_LINKS` | Optional, default **off** | Set `true` to embed `/board?task=…&attach=1` in GitHub run comments. Board **reads** are unauthenticated — anyone who can read the issue can open the console. Leave unset on public repos (see [SECURITY.md](SECURITY.md)) |
 | `PHX_SECURE_COOKIES` | For plain-HTTP local `app` only | Prod/compose **app** defaults Secure (`true`). On `http://localhost` with `--profile app`, set `PHX_SECURE_COOKIES=false` in `.env` so sessions work. Demo profile sets this for you. |
 
 Optional **GitHub App** (comments as `{slug}[bot]`): [docs/github-app.md](docs/github-app.md).
@@ -116,7 +117,7 @@ Poll interval defaults to ~30s (see `polling.interval_ms` in WORKFLOW.md).
 
 Pi RPC runs default to a **45-minute wall-clock** timeout (streaming does not extend it); orchestrator stall is the same duration (WORKFLOW `agent.stall_timeout_ms`). Keep run timeout ≤ stall so abort→kill runs before stall. See [docs/agents.md](docs/agents.md#pi-rpc-profile-default-for-the-real-tracker-loop).
 
-Example receipt shape:
+Example receipt shape (cost / harness / session stay; the board URL does **not** unless you set `SVARM_COMMENT_CONSOLE_LINKS=true`):
 
 ```
 ✅ **Pi** completed Initialize project scaffold · $0.12 · 890 tokens · 1m 42s
@@ -126,9 +127,9 @@ Example receipt shape:
 | **Harness** | Pi |
 | **Model** | … |
 | **Session** | `run_…` |
-
-→ Full run log: http://localhost:4000/board?task=…&attach=1
 ```
+
+With the opt-in, comments also get `→ Full run log: {SVARM_BASE_URL}/board?task=…&attach=1`. Default Compose / prod leave that off.
 
 ### Labels and states
 
@@ -147,7 +148,8 @@ Svärm tracks GitHub work with **labels**. Your eligibility label (e.g. `ai-task
 | CI resume | Optional: re-dispatch when a managed PR’s Checks fail (see below). **Off by default.** |
 | Review resume | GitHub **changes requested** is detected on poll (board chip). Optional re-dispatch on first request (see below). **Off by default.** |
 | Smoke-only off | Never leave `approval.mode: off` on a shared repo; do not leave `SVARM_DEMO_ROUTES` / `SVARM_SEED_DEMO` on production |
-| Base URL | Point `SVARM_BASE_URL` at the deployed host |
+| Base URL | Point `SVARM_BASE_URL` at the deployed host (needed only if you opt in to comment console links) |
+| Comment console links | **Off by default.** `SVARM_COMMENT_CONSOLE_LINKS=true` embeds `/board?task=…&attach=1` in GitHub run comments. Do not enable on a public repo while board reads are open ([SECURITY.md](SECURITY.md)) |
 | HTTPS + host | Terminate TLS at a reverse proxy; set `PHX_HOST` to the public hostname (origin checks). Compose **app** leaves session cookies Secure by default; only set `PHX_SECURE_COOKIES=false` for plain-HTTP localhost. See [SECURITY.md](SECURITY.md) |
 | Workspace isolation | Optional: `workspace.isolation` `path` (default) or `worktree`. Not a container. Unknown values fail closed (see below). |
 

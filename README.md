@@ -125,7 +125,8 @@ Docker mounts `./svarm-config/` as a directory. On first boot, missing files are
 | `OPENROUTER_API_KEY` | LLM access for agents — must also be listed in the agent `env` block in `agents.toml` |
 | `SVARM_BUDGET_MAX_USD_PER_TICKET` / `SVARM_BUDGET_MAX_USD_PER_DAY` | Optional USD caps (or WORKFLOW `budget.*`); block **new** spawns only |
 | `SVARM_BUDGET_MODE` | `hard` (default: skip spawn) or `hold` (park ticket for overage approval) |
-| `SVARM_BASE_URL` | Links in issue comments (e.g. `http://localhost:4000`) |
+| `SVARM_BASE_URL` | Public board origin (e.g. `http://localhost:4000`); used for GitHub comment console links only when opted in |
+| `SVARM_COMMENT_CONSOLE_LINKS` | Opt-in `/board?task=…&attach=1` in GitHub run comments (default **off**; board reads are unauthenticated — see [SECURITY.md](SECURITY.md)) |
 | `PHX_HOST` | Public hostname for URLs + LiveView origin checks (prod) |
 | `PHX_CHECK_ORIGIN` | Optional comma-separated origin allow-list (default: `//PHX_HOST`) |
 | `PHX_SECURE_COOKIES` | Session Secure flag (prod default `true`; local compose sets `false` for HTTP) |
