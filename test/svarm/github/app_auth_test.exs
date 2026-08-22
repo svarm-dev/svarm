@@ -126,6 +126,16 @@ defmodule Svarm.GitHub.AppAuthTest do
 
       refute match?([{"7", "ghs_secret", _}], Task.await(task))
     end
+
+    test "sys status reports do not include cached token values" do
+      expires_at = System.system_time(:millisecond) + 3_600_000
+      secret = "ghs_secret_never_in_status"
+      assert :ok = AppAuth.put_cached_token("7", secret, expires_at)
+
+      dumped = :sys.get_status(AppAuth) |> inspect()
+      refute dumped =~ secret
+      assert dumped =~ "redacted"
+    end
   end
 
   defp test_pem do

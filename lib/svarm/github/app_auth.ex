@@ -98,6 +98,17 @@ defmodule Svarm.GitHub.AppAuth do
     {:reply, :ok, %{tokens: %{}}}
   end
 
+  @impl true
+  def format_status(status) do
+    case status do
+      %{state: %{tokens: tokens} = state} ->
+        %{status | state: %{state | tokens: redact_tokens(tokens)}}
+
+      _ ->
+        status
+    end
+  end
+
   # -- private --
 
   defp pat_token(config) do
@@ -257,4 +268,8 @@ defmodule Svarm.GitHub.AppAuth do
   defp blank?(nil), do: true
   defp blank?(""), do: true
   defp blank?(_), do: false
+
+  defp redact_tokens(tokens) when is_map(tokens) do
+    Map.new(tokens, fn {id, {_token, expires_at}} -> {id, {:"[redacted]", expires_at}} end)
+  end
 end
