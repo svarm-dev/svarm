@@ -112,7 +112,76 @@ defmodule Svarm.UsageTest do
       # Rate-table-only rows are approximate
       assert report.estimated == true
       assert report.record_count == 2
+      assert report.prompt_tokens == 1_000_000
+      assert report.completion_tokens == 1_000_000
       assert map_size(report.breakdown) == 2
+
+      summary = Usage.task_cost_summaries([task_id])[task_id]
+      assert report.total_cost_usd == summary.total_cost_usd
+      assert report.record_count == summary.record_count
+      assert report.estimated == summary.estimated
+    end
+
+    test "totals stay in parity with task_cost_summaries for billed and rate-table rows" do
+      task_id = "task_cost_parity"
+
+      Usage.append(%{
+        run_id: "r_billed",
+        task_id: task_id,
+        source: "worker",
+        provider: "openrouter",
+        model_id: "deepseek/deepseek-v4-flash",
+        prompt_tokens: 90_000,
+        completion_tokens: 6_200,
+        provider_cost_usd: 0.0148,
+        estimated: false
+      })
+
+      Usage.append(%{
+        run_id: "r_rate",
+        task_id: task_id,
+        source: "decompose",
+        provider: "openrouter",
+        model_id: "gpt-5.1",
+        prompt_tokens: 1_000_000,
+        completion_tokens: 0,
+        estimated: false
+      })
+
+      report = Usage.task_cost(task_id)
+      summary = Usage.task_cost_summaries([task_id])[task_id]
+
+      assert report.total_cost_usd == summary.total_cost_usd
+      assert report.record_count == summary.record_count
+      assert report.estimated == summary.estimated
+      assert report.record_count == 2
+      # Mixed billed + rate-table → estimated (fail closed)
+      assert report.estimated == true
+      # Provider-billed 0.0148 + gpt-5.1 rate-table $1.75
+      assert report.total_cost_usd == 1.7648
+      assert report.prompt_tokens == 1_090_000
+      assert report.completion_tokens == 6_200
+      assert map_size(report.breakdown) == 2
+
+      assert Map.has_key?(
+               report.breakdown,
+               {"worker", "openrouter", "deepseek/deepseek-v4-flash"}
+             )
+
+      assert Map.has_key?(report.breakdown, {"decompose", "openrouter", "gpt-5.1"})
+    end
+
+    test "empty task returns zeroed totals and empty breakdown" do
+      report = Usage.task_cost("task_missing_cost")
+
+      assert report.task_id == "task_missing_cost"
+      assert report.total_cost_usd == 0.0
+      assert report.record_count == 0
+      assert report.estimated == false
+      assert report.prompt_tokens == 0
+      assert report.completion_tokens == 0
+      assert report.breakdown == %{}
+      assert Usage.task_cost_summaries(["task_missing_cost"]) == %{}
     end
 
     test "prefers provider_cost_usd over rate table" do
@@ -133,6 +202,11 @@ defmodule Svarm.UsageTest do
       report = Usage.task_cost(task_id)
       assert report.total_cost_usd == 0.0148
       assert report.estimated == false
+
+      summary = Usage.task_cost_summaries([task_id])[task_id]
+      assert report.total_cost_usd == summary.total_cost_usd
+      assert report.record_count == summary.record_count
+      assert report.estimated == summary.estimated
     end
 
     test "rate-table-only is estimated even when estimated flag is false" do

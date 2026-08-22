@@ -7,38 +7,38 @@ defmodule Svarm.Usage.Query do
   2. rate-table estimate from `Svarm.Usage.Rates`
   3. $0 only when both are missing (unknown model + no provider total)
 
-  Session and multi-task summaries use SQL group-by aggregates so the common
-  path does not materialize every ledger row in Elixir.
+  Session, multi-task, and per-task totals use SQL group-by aggregates so the
+  common path does not materialize every ledger row in Elixir. Run-detail
+  `{source, provider, model_id}` breakdown is a separate grouped query, not a
+  full row load.
   """
   alias Svarm.Usage.{Ledger, Rates}
 
   @doc """
   Returns a per-task cost breakdown with total and source-level detail.
   Use this for the run details panel.
+
+  Totals (`total_cost_usd`, `record_count`, `estimated`, token sums) come from
+  the same grouped SQL path as `task_cost_summaries/1`. Breakdown is a bounded
+  group-by, not `Ledger.for_task/1`.
   """
   def task_cost(task_id) do
-    records = Ledger.for_task(task_id)
+    groups = Ledger.cost_groups_for_tasks([task_id])
+    totals = summarize_task_groups(groups)
 
-    {total, breakdown} =
-      Enum.reduce(records, {0.0, %{}}, fn record, {total_acc, breakdown_acc} ->
-        case cost_for_record(record) do
-          {:ok, cost} ->
-            key = {record.source, record.provider, record.model_id}
-            new_total = total_acc + cost
-            new_breakdown = Map.update(breakdown_acc, key, cost, &(&1 + cost))
-            {new_total, new_breakdown}
-
-          _ ->
-            {total_acc, breakdown_acc}
-        end
+    {prompt, completion} =
+      Enum.reduce(groups, {0, 0}, fn group, {p_acc, c_acc} ->
+        {p_acc + (group.prompt_tokens || 0), c_acc + (group.completion_tokens || 0)}
       end)
 
     %{
       task_id: task_id,
-      total_cost_usd: Float.round(total, 4),
-      estimated: Enum.any?(records, &estimated_record?/1),
-      breakdown: breakdown,
-      record_count: length(records)
+      total_cost_usd: totals.total_cost_usd,
+      estimated: totals.estimated,
+      record_count: totals.record_count,
+      prompt_tokens: prompt,
+      completion_tokens: completion,
+      breakdown: breakdown_for_task(task_id, totals.record_count)
     }
   end
 
@@ -202,6 +202,16 @@ defmodule Svarm.Usage.Query do
       estimated: estimated,
       record_count: count
     }
+  end
+
+  defp breakdown_for_task(_task_id, 0), do: %{}
+
+  defp breakdown_for_task(task_id, _record_count) do
+    task_id
+    |> Ledger.breakdown_groups_for_task()
+    |> Map.new(fn group ->
+      {{group.source, group.provider, group.model_id}, group_cost_usd(group)}
+    end)
   end
 
   defp summarize_session_groups(groups) do

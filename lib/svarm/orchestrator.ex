@@ -1539,6 +1539,8 @@ defmodule Svarm.Orchestrator do
     agent = Map.get(state.agents, assignee, %{})
     pr_url = coordination_pr_url(task_id)
 
+    cost = Usage.task_cost(task_id)
+
     summary = %{
       run_id: entry[:run_id],
       task_id: task_id,
@@ -1551,8 +1553,8 @@ defmodule Svarm.Orchestrator do
       harness: harness_label(agent),
       model: agent[:model],
       provider: agent[:provider],
-      cost: Usage.task_cost(task_id),
-      total_tokens: total_tokens_for_task(task_id),
+      cost: cost,
+      total_tokens: (cost.prompt_tokens || 0) + (cost.completion_tokens || 0),
       branch: nil,
       pr_url: pr_url,
       exit_code: exit_code_from_result(result)
@@ -1586,11 +1588,6 @@ defmodule Svarm.Orchestrator do
   defp blank_to_nil(nil), do: nil
   defp blank_to_nil(""), do: nil
   defp blank_to_nil(s) when is_binary(s), do: s
-
-  defp total_tokens_for_task(task_id) do
-    Usage.for_task(task_id)
-    |> Enum.reduce(0, fn r, acc -> acc + (r.prompt_tokens || 0) + (r.completion_tokens || 0) end)
-  end
 
   ## retry / backoff
 
