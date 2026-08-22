@@ -103,6 +103,175 @@ defmodule Svarm.OrchestratorTest do
     end
   end
 
+  describe "spawn failures" do
+    test "supervisor start_child error does not kill Orchestrator" do
+      {:ok, fake_sup} = Task.Supervisor.start_link(max_children: 0)
+      original = :sys.get_state(Orchestrator)
+      orch = Process.whereis(Orchestrator)
+      orch_ref = Process.monitor(orch)
+
+      local_config = %{
+        kind: :local,
+        active_states: ["todo", "in_progress"],
+        terminal_states: ["done", "failed", "review"],
+        ignored_assignees: []
+      }
+
+      demo_agent = %{
+        command: "true",
+        args: [],
+        env: %{},
+        adapter: "cli",
+        display_name: "Demo",
+        name: "demo"
+      }
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | tracker: Svarm.Tracker.Local,
+            tracker_config: local_config,
+            agents: Map.put(state.agents, "demo", demo_agent),
+            approval: %{mode: :off, trusted_assignees: MapSet.new()},
+            budget_caps: %{},
+            claimed: MapSet.new(),
+            running: %{},
+            completed: MapSet.new(),
+            retry_attempts: %{},
+            last_budget_block: nil,
+            task_supervisor: fake_sup
+        }
+      end)
+
+      try do
+        flush_orchestrator()
+
+        already =
+          KanbanBridge.create_task(%{
+            title: "preexisting claim",
+            status: "in_progress",
+            assignee: "demo"
+          })
+
+        :sys.replace_state(Orchestrator, fn state ->
+          %{state | claimed: MapSet.put(state.claimed, already.id)}
+        end)
+
+        task =
+          KanbanBridge.create_task(%{
+            title: "spawn error survivor",
+            status: "todo",
+            assignee: "demo"
+          })
+
+        log =
+          ExUnit.CaptureLog.capture_log(fn ->
+            send(Orchestrator, :tick)
+            flush_orchestrator()
+          end)
+
+        refute_received {:DOWN, ^orch_ref, :process, ^orch, _}
+        assert Process.whereis(Orchestrator) == orch
+        assert is_map(Orchestrator.status())
+
+        st = :sys.get_state(Orchestrator)
+        assert MapSet.member?(st.claimed, already.id)
+        refute MapSet.member?(st.claimed, task.id)
+        refute Map.has_key?(st.running, task.id)
+        assert KanbanBridge.get_task(task.id).status == "todo"
+        assert log =~ "spawn failed"
+        assert log =~ task.id
+      after
+        Process.demonitor(orch_ref, [:flush])
+
+        if Process.whereis(Orchestrator) do
+          :sys.replace_state(Orchestrator, fn _ -> original end)
+        end
+
+        if Process.alive?(fake_sup), do: GenServer.stop(fake_sup)
+      end
+    end
+
+    test "supervisor start_child error does not burn one-shot permits" do
+      {:ok, fake_sup} = Task.Supervisor.start_link(max_children: 0)
+      original = :sys.get_state(Orchestrator)
+      orch = Process.whereis(Orchestrator)
+      orch_ref = Process.monitor(orch)
+
+      local_config = %{
+        kind: :local,
+        active_states: ["todo", "in_progress"],
+        terminal_states: ["done", "failed", "review"],
+        ignored_assignees: []
+      }
+
+      demo_agent = %{
+        command: "true",
+        args: [],
+        env: %{},
+        adapter: "cli",
+        display_name: "Demo",
+        name: "demo"
+      }
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | tracker: Svarm.Tracker.Local,
+            tracker_config: local_config,
+            agents: Map.put(state.agents, "demo", demo_agent),
+            approval: %{mode: :off, trusted_assignees: MapSet.new()},
+            budget_caps: %{},
+            claimed: MapSet.new(),
+            running: %{},
+            completed: MapSet.new(),
+            retry_attempts: %{},
+            last_budget_block: nil,
+            task_supervisor: fake_sup
+        }
+      end)
+
+      try do
+        flush_orchestrator()
+
+        task =
+          KanbanBridge.create_task(%{
+            title: "spawn error keeps permits",
+            status: "todo",
+            assignee: "demo"
+          })
+
+        :sys.replace_state(Orchestrator, fn state ->
+          %{
+            state
+            | approved_once: MapSet.put(state.approved_once, task.id),
+              overage_once: MapSet.put(state.overage_once || MapSet.new(), task.id)
+          }
+        end)
+
+        ExUnit.CaptureLog.capture_log(fn ->
+          send(Orchestrator, :tick)
+          flush_orchestrator()
+        end)
+
+        refute_received {:DOWN, ^orch_ref, :process, ^orch, _}
+        st = :sys.get_state(Orchestrator)
+        assert MapSet.member?(st.approved_once, task.id)
+        assert MapSet.member?(st.overage_once, task.id)
+        refute MapSet.member?(st.claimed, task.id)
+        refute Map.has_key?(st.running, task.id)
+      after
+        Process.demonitor(orch_ref, [:flush])
+
+        if Process.whereis(Orchestrator) do
+          :sys.replace_state(Orchestrator, fn _ -> original end)
+        end
+
+        if Process.alive?(fake_sup), do: GenServer.stop(fake_sup)
+      end
+    end
+  end
+
   describe "dispatch and approval" do
     # Full suite leaves many todo tasks + orchestrator claims; isolate this describe.
     setup do
