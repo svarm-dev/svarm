@@ -643,36 +643,45 @@ defmodule SvarmWeb.DashboardLive do
   # -- Helpers --
 
   defp load_dashboard(socket) do
-    snapshot = Dashboard.snapshot()
     window = socket.assigns[:time_window] || "session"
-    cost = Dashboard.cost_for_window(window)
-    roi = Dashboard.roi_for_window(window, snapshot.tasks)
 
-    assign(socket,
-      snapshot: snapshot,
-      window_cost: cost,
-      roi: roi,
-      time_window: window,
-      error: nil,
-      connected: true,
-      now_mono: System.monotonic_time(:millisecond),
-      page_title: "Dashboard",
-      reload_timer: nil
-    )
+    case Dashboard.snapshot() do
+      {:ok, snapshot} ->
+        cost = Dashboard.cost_for_window(window)
+        roi = Dashboard.roi_for_window(window, snapshot.tasks)
+
+        assign(socket,
+          snapshot: snapshot,
+          window_cost: cost,
+          roi: roi,
+          time_window: window,
+          error: nil,
+          connected: true,
+          now_mono: System.monotonic_time(:millisecond),
+          page_title: "Dashboard",
+          reload_timer: nil
+        )
+
+      {:error, reason} ->
+        assign_dashboard_error(socket, window, Board.tracker_error_message(reason))
+    end
   rescue
     e in [DBConnection.ConnectionError, ErlangError, ArgumentError] ->
       window = socket.assigns[:time_window] || "session"
+      assign_dashboard_error(socket, window, Exception.message(e))
+  end
 
-      assign(socket,
-        snapshot: empty_snapshot(),
-        window_cost: empty_window_cost(),
-        roi: empty_roi(window),
-        time_window: window,
-        error: Exception.message(e),
-        connected: true,
-        now_mono: System.monotonic_time(:millisecond),
-        page_title: "Dashboard"
-      )
+  defp assign_dashboard_error(socket, window, message) do
+    assign(socket,
+      snapshot: empty_snapshot(),
+      window_cost: empty_window_cost(),
+      roi: empty_roi(window),
+      time_window: window,
+      error: message,
+      connected: true,
+      now_mono: System.monotonic_time(:millisecond),
+      page_title: "Dashboard"
+    )
   end
 
   defp empty_roi(window) do

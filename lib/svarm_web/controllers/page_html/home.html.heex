@@ -124,16 +124,22 @@
           <dd>{@instance.agent_count} registered</dd>
           <dt class="opacity-60">Board</dt>
           <dd>
-            <%= if @instance.empty? do %>
-              empty
-            <% else %>
-              {@instance.task_count} ticket{if @instance.task_count == 1, do: "", else: "s"}
+            <%= cond do %>
+              <% @instance.tracker_error -> %>
+                unavailable
+              <% @instance.empty? -> %>
+                empty
+              <% true -> %>
+                {@instance.task_count} ticket{if @instance.task_count == 1, do: "", else: "s"}
             <% end %>
           </dd>
           <dt class="opacity-60">Approvals</dt>
           <dd class="font-mono text-xs">mode: {@instance.approval_mode}</dd>
         </dl>
 
+        <%= if @instance.tracker_error do %>
+          <p class="mt-3 text-xs text-error">{@instance.tracker_error}</p>
+        <% end %>
         <%= if @instance.empty? do %>
           <p class="mt-3 text-xs opacity-70">
             Board is empty.

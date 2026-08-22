@@ -58,6 +58,7 @@ defmodule SvarmWeb.BoardLive do
       |> assign(:demo_routes, Svarm.Demo.routes_enabled?())
       |> assign(:board_auth_at, board_auth_at)
       |> assign(:last_status_cost_mono, 0)
+      |> assign(:board_error, nil)
       |> reset_column_streams(column_ids)
 
     # Dead GET still loads cards below without subscribing. On the connected
@@ -73,7 +74,11 @@ defmodule SvarmWeb.BoardLive do
      assign(
        socket,
        :checklist,
-       Board.instance_status(agents: agents, task_count: socket.assigns.task_count)
+       Board.instance_status(
+         agents: agents,
+         task_count: socket.assigns.task_count,
+         tracker_error: socket.assigns.board_error
+       )
      )}
   end
 
@@ -457,6 +462,8 @@ defmodule SvarmWeb.BoardLive do
         </div>
 
         <%= cond do %>
+          <% @board_error -> %>
+            <.board_load_error message={@board_error} />
           <% @task_count == 0 -> %>
             <.board_empty demo_routes={@demo_routes} checklist={@checklist} />
           <% true -> %>
@@ -517,20 +524,37 @@ defmodule SvarmWeb.BoardLive do
   end
 
   defp load_board(socket) do
-    tasks = Board.list_tasks()
-    costs = compute_costs(tasks)
-    orchestrator = Board.orchestrator_status()
+    case Board.fetch_tasks() do
+      {:ok, tasks} ->
+        costs = compute_costs(tasks)
+        orchestrator = Board.orchestrator_status()
 
-    # Attach session cost for the bar
-    session_cost = Usage.session_cost_summary()
-    orchestrator = Map.put(orchestrator, :session_cost, session_cost)
-    now = System.monotonic_time(:millisecond)
+        # Attach session cost for the bar
+        session_cost = Usage.session_cost_summary()
+        orchestrator = Map.put(orchestrator, :session_cost, session_cost)
+        now = System.monotonic_time(:millisecond)
 
-    socket
-    |> put_columns(tasks, costs)
-    |> assign(:orchestrator, orchestrator)
-    |> assign(:running_started, Map.get(orchestrator, :running_started, %{}))
-    |> assign(:last_status_cost_mono, now)
+        socket
+        |> put_columns(tasks, costs)
+        |> assign(:orchestrator, orchestrator)
+        |> assign(:running_started, Map.get(orchestrator, :running_started, %{}))
+        |> assign(:last_status_cost_mono, now)
+        |> assign(:board_error, nil)
+
+      {:error, reason} ->
+        message = Board.tracker_error_message(reason)
+        orchestrator = Board.orchestrator_status()
+        now = System.monotonic_time(:millisecond)
+
+        socket
+        |> put_flash(:error, message)
+        |> assign(:board_error, message)
+        |> assign(:task_count, 0)
+        |> assign(:tasks_by_id, %{})
+        |> assign(:orchestrator, orchestrator)
+        |> assign(:running_started, Map.get(orchestrator, :running_started, %{}))
+        |> assign(:last_status_cost_mono, now)
+    end
   end
 
   # One batched usage query for all visible tasks (no per-task N+1).
@@ -763,6 +787,25 @@ defmodule SvarmWeb.BoardLive do
         </a>
       </div>
     <% end %>
+    """
+  end
+
+  attr :message, :string, required: true
+
+  defp board_load_error(assigns) do
+    ~H"""
+    <section
+      class="rounded-lg border border-error/30 bg-error/5 px-6 py-8"
+      aria-labelledby="board-error-title"
+    >
+      <h2 id="board-error-title" class="text-lg font-semibold tracking-tight text-error">
+        Cannot load the board
+      </h2>
+      <p class="mt-2 max-w-2xl text-sm opacity-80">{@message}</p>
+      <button type="button" phx-click="refresh" class="btn btn-sm btn-outline mt-4">
+        Retry
+      </button>
+    </section>
     """
   end
 
