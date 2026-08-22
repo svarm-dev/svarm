@@ -1318,15 +1318,6 @@ defmodule Svarm.Orchestrator do
   end
 
   defp do_spawn_worker(state, task) do
-    # One-shot approval: clear after first spawn attempt (re-gate if agent fails back to todo)
-    state = %{
-      state
-      | approved_once: MapSet.delete(state.approved_once, task.id),
-        overage_once: MapSet.delete(state.overage_once || MapSet.new(), task.id)
-    }
-
-    Budget.clear_hold(task.id)
-
     run_id = "run_" <> Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)
 
     opts = [
@@ -1354,11 +1345,21 @@ defmodule Svarm.Orchestrator do
            result
          end) do
       {:ok, pid} ->
+        # One-shot approval: clear only after a real worker starts (re-gate if
+        # the agent fails back to todo). A supervisor {:error, _} must not burn
+        # the permit or the next tick cannot retry gated work.
+        state = %{
+          state
+          | approved_once: MapSet.delete(state.approved_once, task.id),
+            overage_once: MapSet.delete(state.overage_once || MapSet.new(), task.id)
+        }
+
+        Budget.clear_hold(task.id)
         register_spawned_worker(state, task, pid, run_id)
 
       {:error, reason} ->
-        # Do not crash the poll loop. Keep existing claims; this task was not
-        # claimed yet so it stays eligible on a later tick.
+        # Do not crash the poll loop. Keep existing claims and one-shot permits
+        # so the task stays eligible on a later tick.
         Logger.error("orchestrator: spawn failed for #{task.id}: #{inspect(reason)}")
         state
     end
