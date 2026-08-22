@@ -16,6 +16,9 @@ config :svarm,
 config :svarm, Svarm.Repo,
   database: Path.join(System.user_home!(), ".svarm/kanban/kanban.db"),
   journal_mode: :wal,
+  # Wait up to 5s on SQLITE_BUSY so concurrent RunLog/usage/kanban writers retry.
+  # ecto_sqlite3 default is 2000ms. WAL stays; do not raise pool_size as the fix.
+  busy_timeout: 5_000,
   pool_size: 5
 
 # Configure the endpoint
