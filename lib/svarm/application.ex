@@ -23,6 +23,7 @@ defmodule Svarm.Application do
         {Registry, keys: :unique, name: Svarm.RunSteer.Inbox},
         # Svärm orchestration — Repo must start before KanbanBridge / RunLog.Buffer
         Svarm.Repo,
+        Svarm.GitHub.AppAuth,
         Svarm.RunLog.Buffer,
         {Svarm.KanbanBridge, []},
         {Task.Supervisor, name: Svarm.TaskSup},

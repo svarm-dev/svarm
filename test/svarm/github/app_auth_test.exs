@@ -24,14 +24,7 @@ defmodule Svarm.GitHub.AppAuthTest do
 
   describe "jwt/2" do
     setup do
-      pem_path = System.tmp_dir!() |> Path.join("svarm_app_auth_test.pem")
-
-      unless File.exists?(pem_path) do
-        {_, 0} =
-          System.cmd("openssl", ["genrsa", "-out", pem_path, "2048"], stderr_to_stdout: true)
-      end
-
-      %{pem: File.read!(pem_path)}
+      %{pem: test_pem()}
     end
 
     test "builds RS256 JWT with app id as iss", %{pem: pem} do
@@ -71,21 +64,78 @@ defmodule Svarm.GitHub.AppAuthTest do
 
   describe "token cache" do
     setup do
-      pem_path = System.tmp_dir!() |> Path.join("svarm_app_auth_test.pem")
-
-      unless File.exists?(pem_path) do
-        {_, 0} =
-          System.cmd("openssl", ["genrsa", "-out", pem_path, "2048"], stderr_to_stdout: true)
-      end
-
-      # Bypass real GitHub by pre-seeding cache via mint path isn't possible without HTTP;
-      # exercise clear_cache and PAT path only here.
-      %{pem: File.read!(pem_path)}
+      %{pem: test_pem()}
     end
 
     test "clear_cache is safe when empty" do
       assert :ok = AppAuth.clear_cache()
       assert :ok = AppAuth.clear_cache()
     end
+
+    test "returns unexpired cached installation token", %{pem: pem} do
+      expires_at = System.system_time(:millisecond) + 3_600_000
+      assert :ok = AppAuth.put_cached_token("99", "ghs_cached", expires_at)
+
+      config = %{auth: :app, app_id: "1", private_key: pem, installation_id: "99"}
+      assert {:ok, "ghs_cached"} = AppAuth.installation_token(config)
+      assert {:ok, "ghs_cached"} = AppAuth.token_for_repo(config)
+    end
+
+    test "injects cached token as GITHUB_TOKEN without minting", %{pem: pem} do
+      expires_at = System.system_time(:millisecond) + 3_600_000
+      assert :ok = AppAuth.put_cached_token("1", "ghs_bot", expires_at)
+
+      env =
+        Svarm.Runner.with_github_token(%{"FOO" => "bar"}, %{
+          auth: :app,
+          app_id: "1",
+          private_key: pem,
+          installation_id: "1"
+        })
+
+      assert env["GITHUB_TOKEN"] == "ghs_bot"
+      assert env["GH_TOKEN"] == "ghs_bot"
+      assert env["FOO"] == "bar"
+    end
+
+    test "does not store tokens in a public or protected ETS table" do
+      expires_at = System.system_time(:millisecond) + 3_600_000
+      assert :ok = AppAuth.put_cached_token("7", "ghs_secret", expires_at)
+
+      protection =
+        case :ets.whereis(:svarm_github_app_tokens) do
+          :undefined -> :none
+          tid -> :ets.info(tid, :protection)
+        end
+
+      refute protection in [:public, :protected]
+    end
+
+    test "other processes cannot ets:lookup cached tokens" do
+      expires_at = System.system_time(:millisecond) + 3_600_000
+      assert :ok = AppAuth.put_cached_token("7", "ghs_secret", expires_at)
+
+      task =
+        Task.async(fn ->
+          try do
+            :ets.lookup(:svarm_github_app_tokens, "7")
+          rescue
+            ArgumentError -> :inaccessible
+          end
+        end)
+
+      refute match?([{"7", "ghs_secret", _}], Task.await(task))
+    end
+  end
+
+  defp test_pem do
+    pem_path = System.tmp_dir!() |> Path.join("svarm_app_auth_test.pem")
+
+    unless File.exists?(pem_path) do
+      {_, 0} =
+        System.cmd("openssl", ["genrsa", "-out", pem_path, "2048"], stderr_to_stdout: true)
+    end
+
+    File.read!(pem_path)
   end
 end

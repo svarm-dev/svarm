@@ -3,18 +3,23 @@ defmodule Svarm.GitHub.AppAuth do
   GitHub App authentication: App JWT → installation access token.
 
   Supports PAT passthrough when `tracker.auth` is `:token` (default).
-  Tokens are cached in ETS until near expiry. Never log token values.
+  Tokens are cached in this process until near expiry. Never log token values.
   """
+
+  use GenServer
 
   require Logger
 
   @base_url "https://api.github.com"
   @api_version "2026-03-10"
-  @table :svarm_github_app_tokens
   # Refresh 60s before GitHub's ~1h expiry
   @skew_ms 60_000
   # JWT lifetime (GitHub max 10 minutes)
   @jwt_ttl_s 9 * 60
+
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  end
 
   @doc "Return a Bearer token for GitHub REST calls from tracker config."
   def token_for_repo(config) when is_map(config) do
@@ -54,9 +59,43 @@ defmodule Svarm.GitHub.AppAuth do
 
   @doc "Clear the token cache (tests)."
   def clear_cache do
-    ensure_table()
-    :ets.delete_all_objects(@table)
-    :ok
+    GenServer.call(__MODULE__, :clear_cache)
+  end
+
+  @doc false
+  def put_cached_token(installation_id, token, expires_at)
+      when is_binary(installation_id) and is_binary(token) and is_integer(expires_at) do
+    put_cache(installation_id, token, expires_at)
+  end
+
+  @impl true
+  def init(_opts) do
+    {:ok, %{tokens: %{}}}
+  end
+
+  @impl true
+  def handle_call({:cached, installation_id}, _from, %{tokens: tokens} = state) do
+    now = System.system_time(:millisecond)
+
+    reply =
+      case Map.get(tokens, installation_id) do
+        {token, expires_at} when expires_at - @skew_ms > now ->
+          {:ok, token}
+
+        _ ->
+          :miss
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:put_cache, installation_id, token, expires_at}, _from, state) do
+    tokens = Map.put(state.tokens, installation_id, {token, expires_at})
+    {:reply, :ok, %{state | tokens: tokens}}
+  end
+
+  def handle_call(:clear_cache, _from, _state) do
+    {:reply, :ok, %{tokens: %{}}}
   end
 
   # -- private --
@@ -173,33 +212,12 @@ defmodule Svarm.GitHub.AppAuth do
     end
   end
 
-  defp ensure_table do
-    case :ets.whereis(@table) do
-      :undefined ->
-        :ets.new(@table, [:named_table, :public, :set, read_concurrency: true])
-
-      _ ->
-        @table
-    end
-  end
-
   defp cached_token(installation_id) do
-    ensure_table()
-    now = System.system_time(:millisecond)
-
-    case :ets.lookup(@table, installation_id) do
-      [{^installation_id, token, expires_at}] when expires_at - @skew_ms > now ->
-        {:ok, token}
-
-      _ ->
-        :miss
-    end
+    GenServer.call(__MODULE__, {:cached, installation_id})
   end
 
   defp put_cache(installation_id, token, expires_at) do
-    ensure_table()
-    :ets.insert(@table, {installation_id, token, expires_at})
-    :ok
+    GenServer.call(__MODULE__, {:put_cache, installation_id, token, expires_at})
   end
 
   defp app_headers(jwt) do
