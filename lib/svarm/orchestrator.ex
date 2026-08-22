@@ -99,7 +99,8 @@ defmodule Svarm.Orchestrator do
     ci_resume_caps: %{enabled: false, max_attempts: 3, skip_draft: true},
     review_resume_caps: %{enabled: false},
     last_run_entries: %{},
-    last_tick_mono_ms: nil
+    last_tick_mono_ms: nil,
+    task_supervisor: Svarm.TaskSup
   ]
 
   ## API
@@ -1347,13 +1348,26 @@ defmodule Svarm.Orchestrator do
       "orchestrator: spawning #{task.id} → #{agent_config[:display_name]} (#{agent_config[:adapter]})"
     )
 
-    {:ok, pid} =
-      Task.Supervisor.start_child(Svarm.TaskSup, fn ->
-        result = runner.run(task, AgentRunner.resolve!(task.assignee, state.agents), opts)
-        send(parent, {:run_exit, task.id, result})
-        result
-      end)
+    case Task.Supervisor.start_child(task_supervisor(state), fn ->
+           result = runner.run(task, AgentRunner.resolve!(task.assignee, state.agents), opts)
+           send(parent, {:run_exit, task.id, result})
+           result
+         end) do
+      {:ok, pid} ->
+        register_spawned_worker(state, task, pid, run_id)
 
+      {:error, reason} ->
+        # Do not crash the poll loop. Keep existing claims; this task was not
+        # claimed yet so it stays eligible on a later tick.
+        Logger.error("orchestrator: spawn failed for #{task.id}: #{inspect(reason)}")
+        state
+    end
+  end
+
+  defp task_supervisor(%{task_supervisor: sup}) when not is_nil(sup), do: sup
+  defp task_supervisor(_), do: Svarm.TaskSup
+
+  defp register_spawned_worker(state, task, pid, run_id) do
     mref = Process.monitor(pid)
     state.tracker.update_status(state.tracker_config, task.id, "in_progress")
 
