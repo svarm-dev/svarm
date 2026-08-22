@@ -80,7 +80,7 @@ defmodule SvarmWeb.DashboardLiveTest do
       KanbanBridge.create_task(%{
         title: "Still review",
         status: "review",
-        assignee: "demo"
+        assignee: "demo_code"
       })
 
     Usage.append(%{
@@ -112,7 +112,8 @@ defmodule SvarmWeb.DashboardLiveTest do
     assert html =~ "50.0%"
     assert html =~ "$/merged"
     assert html =~ "1/2 tasks with spend"
-    assert html =~ "Demo" or html =~ "demo"
+    assert html =~ "Demo"
+    assert html =~ "Demo Code"
   end
 
   test "session spend shows cost and tokens from same window", %{conn: conn} do

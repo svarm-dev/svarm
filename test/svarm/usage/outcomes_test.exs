@@ -95,6 +95,9 @@ defmodule Svarm.Usage.OutcomesTest do
     result = Usage.by_outcome(task_statuses: statuses)
 
     assert result.task_count == 3
+    assert result.by_task[done.id].outcome == :merged
+    assert result.by_task[review.id].outcome == :in_review
+    assert result.by_task[todo.id].outcome == :other
     assert result.by_outcome.merged.task_count == 1
     assert result.by_outcome.in_review.task_count == 1
     assert result.by_outcome.other.task_count == 1
