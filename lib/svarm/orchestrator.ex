@@ -395,8 +395,10 @@ defmodule Svarm.Orchestrator do
   end
 
   # Tracker reconcile (P0 for v1 correctness): pull current status for active
-  # tasks. External terminal states (or missing issue) → stop worker + release claim.
-  # Safe: tracker errors are logged and ignored so one bad tick doesn't kill loop.
+  # tasks. External terminal states (or documented gone / :not_found) → stop
+  # worker + release claim. Transient tracker errors (network, 5xx, rate-limit,
+  # and other non-gone failures) are logged and left in-flight so one bad tick
+  # does not kill a healthy run.
   defp reconcile_tracker_states(state) do
     ids =
       (Map.keys(state.running) ++ MapSet.to_list(state.claimed) ++ Map.keys(state.retry_attempts))
@@ -405,10 +407,29 @@ defmodule Svarm.Orchestrator do
     Enum.reduce(ids, state, fn task_id, acc ->
       case safe_get_issue(acc.tracker, acc.tracker_config, task_id) do
         {:ok, issue} -> maybe_release_if_terminal(acc, task_id, issue)
-        {:error, _} -> release_task(acc, task_id)
+        {:error, reason} -> reconcile_get_issue_error(acc, task_id, reason)
       end
     end)
   end
+
+  defp reconcile_get_issue_error(acc, task_id, reason) do
+    if gone_issue?(reason) do
+      Logger.info("tracker reconcile: #{task_id} missing (#{inspect(reason)}), releasing")
+      release_task(acc, task_id)
+    else
+      Logger.warning(
+        "tracker reconcile: get_issue failed for #{task_id} (#{inspect(reason)}); keeping in-flight work"
+      )
+
+      acc
+    end
+  end
+
+  # Documented gone / missing issue. GitHub get_issue uses the atom; other
+  # adapter callbacks use %{type: :not_found} maps — treat both as vanished.
+  defp gone_issue?(:not_found), do: true
+  defp gone_issue?(%{type: :not_found}), do: true
+  defp gone_issue?(_reason), do: false
 
   defp maybe_release_if_terminal(acc, task_id, issue) do
     if issue.status in acc.terminal_states do
