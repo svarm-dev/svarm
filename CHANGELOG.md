@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **RunLog stream append** ([#182](https://github.com/svarm-dev/svarm/issues/182)): `RunLog.append/2` returns once the redacted chunk is visible to `get/1` and no longer waits on SQLite. Persist still uses SQL `content || ?` (no full-row rewrite). A pending-bytes cap applies back-pressure when the database is slow.
 - **Tracker resolve single path** ([#169](https://github.com/svarm-dev/svarm/pull/169)): kind → adapter mapping lives only in `Svarm.Tracker.Resolve`; Orchestrator uses adapter capabilities instead of `== Tracker.Local` branches. Mix `svarm.demo` pins the local tracker so a GitHub WORKFLOW/Settings overlay cannot pull the isolated demo off its temp board.
 
 ### Fixed
