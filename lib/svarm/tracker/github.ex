@@ -10,6 +10,16 @@ defmodule Svarm.Tracker.GitHub do
   there is no extra GitHub label. Terminal states close the issue
   with `state_reason: completed`.
 
+  Issue lookup (`get_issue/2`, shared by `update_status/3`, `claim/2`, and
+  `post_run_summary/3`): an integer-string id hits REST
+  `GET /repos/{owner}/{repo}/issues/{number}`. A GraphQL `node_id`
+  (`Normalize` `Issue.id`) scans `list_issues/2` (`state: all`,
+  board-visible) — not `list_eligible/1`, which is only open +
+  dispatchable (so it misses `pending_approval`, `review`, `done`, and
+  `failed`). Both paths are bound to the configured owner/repo; the list
+  scan is a single page (`per_page: 100`). Transferring an issue to
+  another repository is not followed (no GraphQL `node(id:)`).
+
   Uses `X-GitHub-Api-Version: 2026-03-10` header.
   """
   @behaviour Svarm.Tracker
@@ -92,16 +102,16 @@ defmodule Svarm.Tracker.GitHub do
     end
   end
 
+  # GraphQL node_id is not a REST issue number. Match Issue.id against
+  # board-visible issues (`list_issues`, state: all) — not list_eligible.
+  # Preserve tagged list errors (rate_limit / network / 5xx). Mapping them
+  # to :not_found would look like a vanished issue and release in-flight work.
   defp find_issue_by_id_fallback(config, id) do
-    case list_eligible(config) do
-      {:ok, issues} ->
-        case Enum.find(issues, &(&1.id == id)) do
-          nil -> {:error, :not_found}
-          issue -> {:ok, issue}
-        end
-
-      _ ->
-        {:error, :not_found}
+    with {:ok, issues} <- list_issues(config) do
+      case Enum.find(issues, &(&1.id == id)) do
+        nil -> {:error, :not_found}
+        issue -> {:ok, issue}
+      end
     end
   end
 
@@ -617,5 +627,10 @@ defmodule Svarm.Tracker.GitHub do
 
   defp format_tokens(_), do: nil
 
-  defp extract_source_id_from_config(_config, _id), do: nil
+  defp extract_source_id_from_config(config, id) do
+    case find_issue(config, id) do
+      %{source_id: source_id} when is_binary(source_id) and source_id != "" -> source_id
+      _ -> nil
+    end
+  end
 end
