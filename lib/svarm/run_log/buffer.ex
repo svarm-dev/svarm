@@ -149,14 +149,19 @@ defmodule Svarm.RunLog.Buffer do
   def handle_info(:flush_tick, state) do
     state =
       %{state | timer: nil}
+      |> retry_hydrates()
       |> persist_any()
       |> ensure_timer()
 
     {:noreply, state}
   end
 
-  def handle_info({:hydrated, task_id, stored}, state) do
+  def handle_info({:hydrate_done, task_id, {:ok, stored}}, state) do
     {:noreply, apply_hydrate(state, task_id, stored)}
+  end
+
+  def handle_info({:hydrate_done, _task_id, {:error, _reason}}, state) do
+    {:noreply, ensure_timer(state)}
   end
 
   def handle_info({:persisted, task_id, n}, state) do
@@ -241,10 +246,27 @@ defmodule Svarm.RunLog.Buffer do
 
     _ =
       Task.start(fn ->
-        send(parent, {:hydrated, task_id, RunLog.stored(task_id)})
+        result =
+          try do
+            {:ok, RunLog.stored(task_id)}
+          rescue
+            e in [DBConnection.ConnectionError, Exqlite.Error] ->
+              {:error, e}
+          end
+
+        send(parent, {:hydrate_done, task_id, result})
       end)
 
     :ok
+  end
+
+  defp retry_hydrates(state) do
+    Enum.each(state.buffers, fn
+      {task_id, %{flushed: :unknown}} -> spawn_hydrate(task_id)
+      _ -> :ok
+    end)
+
+    state
   end
 
   defp apply_hydrate(state, task_id, stored) do
@@ -536,9 +558,9 @@ defmodule Svarm.RunLog.Buffer do
         %{state | inflight: nil}
     after
       5_000 ->
-        # Assume the in-flight write landed so terminate does not append it twice.
+        # Keep pending so sync_persist_all can write it if SQLite never committed.
         Process.demonitor(ref, [:flush])
-        drop_prefix(%{state | inflight: nil}, task_id, n)
+        %{state | inflight: nil}
     end
   end
 
