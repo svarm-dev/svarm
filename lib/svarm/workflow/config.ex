@@ -61,7 +61,14 @@ defmodule Svarm.Workflow.Config do
     end
   end
 
-  defp validate_tracker_config(%{kind: :github} = t) do
+  defp validate_tracker_config(t) when is_map(t) do
+    with :ok <- validate_github_fields(t),
+         :ok <- validate_label_map_field(t[:status_labels]) do
+      validate_label_map_field(t[:reverse_labels])
+    end
+  end
+
+  defp validate_github_fields(%{kind: :github} = t) do
     cond do
       blank?(t[:owner]) or blank?(t[:repo]) ->
         {:error, :github_tracker_missing_owner_or_repo}
@@ -74,7 +81,10 @@ defmodule Svarm.Workflow.Config do
     end
   end
 
-  defp validate_tracker_config(_), do: :ok
+  defp validate_github_fields(_), do: :ok
+
+  defp validate_label_map_field({:error, reason}), do: {:error, reason}
+  defp validate_label_map_field(_), do: :ok
 
   defp blank_app_key?(t) do
     blank?(t[:private_key]) and blank?(t[:private_key_path])
@@ -111,14 +121,28 @@ defmodule Svarm.Workflow.Config do
   Returns a map with adapter-agnostic fields plus adapter-specific extras.
   """
   def tracker_config(config) when is_map(config) do
-    tracker = Map.get(config, "tracker", %{})
+    tracker =
+      case Map.get(config, "tracker", %{}) do
+        map when is_map(map) -> map
+        _ -> %{}
+      end
+
     kind = get_string(tracker, ["kind"], "local") |> String.to_existing_atom()
 
-    base = %{
-      kind: kind,
-      active_states: get_list(tracker, ["active_states"], ["todo", "in_progress"]),
-      terminal_states: get_list(tracker, ["terminal_states"], ["done", "failed", "review"])
-    }
+    base =
+      %{
+        kind: kind,
+        active_states: get_list(tracker, ["active_states"], ["todo", "in_progress"]),
+        terminal_states: get_list(tracker, ["terminal_states"], ["done", "failed", "review"])
+      }
+      |> maybe_put_label_map(
+        :status_labels,
+        parse_label_map(tracker, "status_labels", :invalid_tracker_status_labels)
+      )
+      |> maybe_put_label_map(
+        :reverse_labels,
+        parse_label_map(tracker, "reverse_labels", :invalid_tracker_reverse_labels)
+      )
 
     case kind do
       :github ->
@@ -167,6 +191,32 @@ defmodule Svarm.Workflow.Config do
 
   defp parse_auth("app"), do: :app
   defp parse_auth(_), do: :token
+
+  # nil = omitted (adapter defaults). {:error, reason} = fail closed at validate.
+  defp parse_label_map(tracker, key, invalid_reason) when is_map(tracker) do
+    case Map.get(tracker, key) do
+      nil -> nil
+      map when is_map(map) -> decode_label_map(map, invalid_reason)
+      _other -> {:error, invalid_reason}
+    end
+  end
+
+  defp decode_label_map(map, invalid_reason) do
+    case valid_label_map?(map) do
+      true -> Map.new(map, fn {k, v} -> {to_string(k), to_string(v)} end)
+      false -> {:error, invalid_reason}
+    end
+  end
+
+  defp valid_label_map?(map) when is_map(map) do
+    Enum.all?(map, fn {k, v} -> label_map_string?(k) and label_map_string?(v) end)
+  end
+
+  defp label_map_string?(value) when is_binary(value), do: String.trim(value) != ""
+  defp label_map_string?(_), do: false
+
+  defp maybe_put_label_map(map, _key, nil), do: map
+  defp maybe_put_label_map(map, key, value), do: Map.put(map, key, value)
 
   defp get_int(map, path, default) do
     case get_in_path(map, path) do
