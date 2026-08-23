@@ -243,6 +243,22 @@ defmodule Svarm.Tracker.GitHub.PendingApprovalTest do
       assert "ai-task" in opts[:json][:labels]
     end
 
+    test "approve of a node_id still works after the issue leaves the eligible set" do
+      payload =
+        gh_issue(%{
+          "labels" => [%{"name" => "status: pending-approval"}, %{"name" => "ai-task"}]
+        })
+
+      stub_list([payload])
+
+      assert {:ok, []} = GitHub.list_eligible(@config)
+      assert :ok = Approval.approve("I_42")
+      assert_received {:http_patch, url, opts}
+      assert url =~ "/issues/42"
+      refute "status: pending-approval" in opts[:json][:labels]
+      assert "ai-task" in opts[:json][:labels]
+    end
+
     test "reject of a numeric GitHub issue id sets status: failed" do
       stub_issue(gh_issue(%{"labels" => [%{"name" => "status: pending-approval"}]}))
 
