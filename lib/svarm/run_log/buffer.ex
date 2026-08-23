@@ -50,15 +50,18 @@ defmodule Svarm.RunLog.Buffer do
 
   @doc "Pending (not yet ACKed durable) content for a task, or empty string."
   def pending(task_id, _server \\ @name) when is_binary(task_id) do
-    case :ets.whereis(@table) do
-      :undefined ->
-        ""
+    case ets_lookup(task_id) do
+      {_, pending} -> pending
+      :miss -> ""
+    end
+  end
 
-      _tid ->
-        case :ets.lookup(@table, task_id) do
-          [{^task_id, pending}] -> pending
-          [] -> ""
-        end
+  @doc false
+  def cached_transcript(task_id) when is_binary(task_id) do
+    case ets_lookup(task_id) do
+      {flushed, pending} when is_binary(flushed) -> {:ok, flushed <> pending}
+      {:unknown, pending} -> {:unknown, pending}
+      :miss -> :miss
     end
   end
 
@@ -152,22 +155,27 @@ defmodule Svarm.RunLog.Buffer do
     {:noreply, state}
   end
 
+  def handle_info({:hydrated, task_id, stored}, state) do
+    {:noreply, apply_hydrate(state, task_id, stored)}
+  end
+
   def handle_info({:persisted, task_id, n}, state) do
     {:noreply, finish_persist(state, task_id, n)}
   end
 
+  def handle_info({:persist_failed, task_id, n}, state) do
+    {:noreply, fail_persist(state, task_id, n)}
+  end
+
   def handle_info({:DOWN, ref, :process, _pid, :normal}, state) do
-    # `{:persisted, ...}` is the ACK; :normal DOWN is ignored (may race).
     _ = ref
     {:noreply, state}
   end
 
   def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
     case state.inflight do
-      {^ref, task_id, _n} ->
-        # Persist task crashed before ACK — keep pending and retry.
-        state = %{state | inflight: nil}
-        {:noreply, state |> maybe_persist_task(task_id) |> ensure_timer()}
+      {^ref, task_id, n} ->
+        {:noreply, fail_persist(state, task_id, n)}
 
       _ ->
         {:noreply, state}
@@ -183,18 +191,78 @@ defmodule Svarm.RunLog.Buffer do
 
   # —— Internals ——
 
-  defp enqueue(state, task_id, chunk) do
-    {iodata, size} = Map.get(state.buffers, task_id, {[], 0})
-    size = size + byte_size(chunk)
-    iodata = [iodata, chunk]
-    pending = IO.iodata_to_binary(iodata)
-    :ets.insert(state.table, {task_id, pending})
+  defp ets_lookup(task_id) do
+    case :ets.whereis(@table) do
+      :undefined ->
+        :miss
 
-    %{
-      state
-      | buffers: Map.put(state.buffers, task_id, {iodata, size}),
-        pending_bytes: state.pending_bytes + byte_size(chunk)
-    }
+      _tid ->
+        case :ets.lookup(@table, task_id) do
+          [{^task_id, flushed, pending}] -> {flushed, pending}
+          [] -> :miss
+        end
+    end
+  end
+
+  defp ets_put(state, task_id, flushed, pending) do
+    :ets.insert(state.table, {task_id, flushed, pending})
+  end
+
+  defp enqueue(state, task_id, chunk) do
+    case Map.get(state.buffers, task_id) do
+      nil ->
+        spawn_hydrate(task_id)
+        pending = chunk
+        rec = %{iodata: [chunk], size: byte_size(chunk), flushed: :unknown}
+        ets_put(state, task_id, :unknown, pending)
+
+        %{
+          state
+          | buffers: Map.put(state.buffers, task_id, rec),
+            pending_bytes: state.pending_bytes + byte_size(chunk)
+        }
+
+      rec ->
+        size = rec.size + byte_size(chunk)
+        iodata = [rec.iodata, chunk]
+        pending = IO.iodata_to_binary(iodata)
+        ets_put(state, task_id, rec.flushed, pending)
+
+        %{
+          state
+          | buffers: Map.put(state.buffers, task_id, %{rec | iodata: iodata, size: size}),
+            pending_bytes: state.pending_bytes + byte_size(chunk)
+        }
+    end
+  end
+
+  defp spawn_hydrate(task_id) do
+    parent = self()
+
+    _ =
+      Task.start(fn ->
+        send(parent, {:hydrated, task_id, RunLog.stored(task_id)})
+      end)
+
+    :ok
+  end
+
+  defp apply_hydrate(state, task_id, stored) do
+    case Map.get(state.buffers, task_id) do
+      %{flushed: :unknown} = rec ->
+        pending = IO.iodata_to_binary(rec.iodata)
+        rec = %{rec | flushed: stored}
+        ets_put(state, task_id, stored, pending)
+
+        state
+        |> Map.update!(:buffers, &Map.put(&1, task_id, rec))
+        |> maybe_persist_task(task_id)
+        |> kick_after_ack()
+        |> ensure_timer()
+
+      _ ->
+        state
+    end
   end
 
   defp idle_task?(state, task_id) do
@@ -212,6 +280,9 @@ defmodule Svarm.RunLog.Buffer do
   defp maybe_persist_task(state, task_id) do
     cond do
       state.inflight != nil ->
+        state
+
+      not persistable?(state, task_id) ->
         state
 
       flush_requested?(state, task_id) ->
@@ -237,7 +308,7 @@ defmodule Svarm.RunLog.Buffer do
 
       true ->
         oversized =
-          for {task_id, {_io, size}} <- state.buffers, size >= @flush_bytes, do: task_id
+          for {task_id, rec} <- state.buffers, rec.size >= @flush_bytes, do: task_id
 
         persist_first(state, oversized)
     end
@@ -247,10 +318,17 @@ defmodule Svarm.RunLog.Buffer do
 
   defp persist_first(state, task_ids) do
     Enum.find_value(task_ids, state, fn task_id ->
-      if task_size(state, task_id) > 0 do
+      if persistable?(state, task_id) do
         start_persist(state, task_id)
       end
     end)
+  end
+
+  defp persistable?(state, task_id) do
+    case Map.get(state.buffers, task_id) do
+      %{flushed: flushed, size: size} when size > 0 and is_binary(flushed) -> true
+      _ -> false
+    end
   end
 
   defp flush_requested?(state, task_id) do
@@ -259,22 +337,20 @@ defmodule Svarm.RunLog.Buffer do
 
   defp task_size(state, task_id) do
     case Map.get(state.buffers, task_id) do
-      {_, size} -> size
+      %{size: size} -> size
       nil -> 0
     end
   end
 
   defp start_persist(state, task_id) do
     case Map.get(state.buffers, task_id) do
-      {iodata, size} when size > 0 ->
+      %{iodata: iodata, size: size, flushed: flushed} when size > 0 and is_binary(flushed) ->
         chunk = IO.iodata_to_binary(iodata)
         parent = self()
 
         {:ok, pid} =
           Task.start(fn ->
-            await_stall()
-            RunLog.persist_append(task_id, chunk)
-            send(parent, {:persisted, task_id, size})
+            persist_chunk(parent, task_id, chunk, size)
           end)
 
         ref = Process.monitor(pid)
@@ -285,23 +361,53 @@ defmodule Svarm.RunLog.Buffer do
     end
   end
 
-  defp finish_persist(state, task_id, n) do
-    state =
-      case state.inflight do
-        {ref, ^task_id, ^n} ->
-          Process.demonitor(ref, [:flush])
-          %{state | inflight: nil}
+  defp persist_chunk(parent, task_id, chunk, size) do
+    await_stall()
 
-        _ ->
-          %{state | inflight: nil}
+    result =
+      try do
+        RunLog.persist_append(task_id, chunk)
+        :ok
+      rescue
+        e in [DBConnection.ConnectionError, Exqlite.Error] ->
+          {:error, e}
       end
 
-    state
-    |> drop_prefix(task_id, n)
-    |> reply_append_waiters()
-    |> reply_flush_waiters(task_id)
-    |> kick_after_ack()
-    |> ensure_timer()
+    case result do
+      :ok -> send(parent, {:persisted, task_id, size})
+      {:error, _} -> send(parent, {:persist_failed, task_id, size})
+    end
+  end
+
+  defp finish_persist(state, task_id, n) do
+    case state.inflight do
+      {ref, ^task_id, ^n} ->
+        Process.demonitor(ref, [:flush])
+
+        %{state | inflight: nil}
+        |> drop_prefix(task_id, n)
+        |> reply_append_waiters()
+        |> reply_flush_waiters(task_id)
+        |> kick_after_ack()
+        |> ensure_timer()
+
+      _ ->
+        state
+    end
+  end
+
+  defp fail_persist(state, task_id, n) do
+    case state.inflight do
+      {ref, ^task_id, ^n} ->
+        Process.demonitor(ref, [:flush])
+
+        %{state | inflight: nil}
+        |> maybe_persist_task(task_id)
+        |> ensure_timer()
+
+      _ ->
+        state
+    end
   end
 
   defp drop_prefix(state, task_id, n) do
@@ -309,9 +415,11 @@ defmodule Svarm.RunLog.Buffer do
       nil ->
         state
 
-      {iodata, size} ->
-        rest_size = size - n
+      rec ->
+        rest_size = rec.size - n
         pending_bytes = max(state.pending_bytes - n, 0)
+        prefix = rec.iodata |> IO.iodata_to_binary() |> binary_part(0, min(n, rec.size))
+        flushed = flushed_after(rec.flushed, prefix)
 
         if rest_size <= 0 do
           :ets.delete(state.table, task_id)
@@ -323,20 +431,24 @@ defmodule Svarm.RunLog.Buffer do
           }
         else
           pending =
-            iodata
+            rec.iodata
             |> IO.iodata_to_binary()
             |> binary_part(n, rest_size)
 
-          :ets.insert(state.table, {task_id, pending})
+          rec = %{rec | iodata: [pending], size: rest_size, flushed: flushed}
+          ets_put(state, task_id, flushed, pending)
 
           %{
             state
-            | buffers: Map.put(state.buffers, task_id, {[pending], rest_size}),
+            | buffers: Map.put(state.buffers, task_id, rec),
               pending_bytes: pending_bytes
           }
         end
     end
   end
+
+  defp flushed_after(:unknown, _prefix), do: :unknown
+  defp flushed_after(flushed, prefix) when is_binary(flushed), do: flushed <> prefix
 
   defp park_append(state, from) do
     %{state | append_waiters: :queue.in(from, state.append_waiters)}
@@ -416,18 +528,24 @@ defmodule Svarm.RunLog.Buffer do
         Process.demonitor(ref, [:flush])
         drop_prefix(%{state | inflight: nil}, task_id, n)
 
+      {:persist_failed, ^task_id, ^n} ->
+        Process.demonitor(ref, [:flush])
+        %{state | inflight: nil}
+
       {:DOWN, ^ref, :process, _pid, _reason} ->
         %{state | inflight: nil}
     after
       5_000 ->
-        %{state | inflight: nil}
+        # Assume the in-flight write landed so terminate does not append it twice.
+        Process.demonitor(ref, [:flush])
+        drop_prefix(%{state | inflight: nil}, task_id, n)
     end
   end
 
   defp sync_persist_all(state) do
-    Enum.each(state.buffers, fn {task_id, {iodata, size}} ->
-      if size > 0 do
-        RunLog.persist_append(task_id, IO.iodata_to_binary(iodata))
+    Enum.each(state.buffers, fn {task_id, rec} ->
+      if rec.size > 0 do
+        RunLog.persist_append(task_id, IO.iodata_to_binary(rec.iodata))
       end
     end)
   end

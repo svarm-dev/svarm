@@ -111,6 +111,27 @@ defmodule Svarm.RunLogTest do
     assert RunLog.get(task_id) == big
   end
 
+  test "get does not duplicate durable prefix while a later chunk is persisting" do
+    task_id = "rl_nodup_#{System.unique_integer([:positive])}"
+    assert :ok = RunLog.append(task_id, "first\n")
+    assert :ok = RunLog.flush(task_id)
+    assert durable_only(task_id) == "first\n"
+
+    {:ok, _} = Stall.start_link()
+    on_exit(&Stall.stop/0)
+
+    big = String.duplicate("y", 5_000)
+    assert :ok = RunLog.append(task_id, big)
+    assert_receive {:persist_await, _}, 1_000
+    assert RunLog.get(task_id) == "first\n" <> big
+    assert durable_only(task_id) == "first\n"
+
+    Stall.release()
+    assert :ok = RunLog.flush(task_id)
+    assert RunLog.get(task_id) == "first\n" <> big
+    assert durable_only(task_id) == "first\n" <> big
+  end
+
   test "append returns while the Repo checkout is held (persist path stalled)" do
     task_id = "rl_pool_#{System.unique_integer([:positive])}"
     big = String.duplicate("x", 5_000)

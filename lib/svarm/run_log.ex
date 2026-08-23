@@ -39,8 +39,21 @@ defmodule Svarm.RunLog do
 
   @doc "Get the full log for a task (durable + pending buffer), or empty string."
   def get(task_id) when is_binary(task_id) do
-    durable_content(task_id) <> Buffer.pending(task_id)
+    case Buffer.cached_transcript(task_id) do
+      {:ok, text} ->
+        text
+
+      {:unknown, pending} ->
+        durable_content(task_id) <> pending
+
+      :miss ->
+        durable_content(task_id)
+    end
   end
+
+  @doc false
+  # Buffer hydrate only — already-durable content, no pending.
+  def stored(task_id) when is_binary(task_id), do: durable_content(task_id)
 
   @doc "Force pending buffer for a task into SQLite (e.g. run finished)."
   def flush(task_id) when is_binary(task_id) do
