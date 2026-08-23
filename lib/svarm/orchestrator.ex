@@ -1084,8 +1084,9 @@ defmodule Svarm.Orchestrator do
 
   # Prefer tracker review ids so done rows cannot fill a bounded window.
   # HTTP 200 with an empty list may still miss configured labels, so we fall
-  # back to unbounded `list_with_pr`. A tagged `list_issues` error must not
-  # scan those rows — that was the swallowed-403 "poll everything" bug.
+  # back to `list_with_pr` with the same cap of 50 as the happy path. A tagged
+  # `list_issues` error must not scan those rows — that was the swallowed-403
+  # "poll everything" bug.
   defp review_resume_pr_rows(state) do
     case review_task_ids(state) do
       [_ | _] = ids ->
@@ -1099,7 +1100,7 @@ defmodule Svarm.Orchestrator do
         []
 
       _ ->
-        Coordination.list_with_pr(include_circuit_open: true, limit: nil)
+        Coordination.list_with_pr(include_circuit_open: true, limit: 50)
     end
   end
 
