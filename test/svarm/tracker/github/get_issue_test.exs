@@ -131,6 +131,23 @@ defmodule Svarm.Tracker.GitHub.GetIssueTest do
 
       assert {:error, :not_found} = GitHub.get_issue(@config, "I_missing")
     end
+
+    test "list_issues rate_limit is not rewritten as not_found" do
+      stub_list_response({:ok, %{status: 429, headers: %{"retry-after" => ["15"]}}})
+      stub_eligible([])
+
+      assert {:error, reason} = GitHub.get_issue(@config, "I_pending")
+      assert reason.type == :rate_limit
+      assert reason.retry_after == 15
+    end
+
+    test "list_issues network error is not rewritten as not_found" do
+      stub_list_response({:error, :timeout})
+      stub_eligible([])
+
+      assert {:error, reason} = GitHub.get_issue(@config, "I_pending")
+      assert reason.type == :network_error
+    end
   end
 
   describe "update_status/3 via find_issue" do
@@ -216,7 +233,11 @@ defmodule Svarm.Tracker.GitHub.GetIssueTest do
   end
 
   defp stub_list(issues) do
-    Process.put(:github_list_response, {:ok, %{status: 200, body: issues}})
+    stub_list_response({:ok, %{status: 200, body: issues}})
+  end
+
+  defp stub_list_response(response) do
+    Process.put(:github_list_response, response)
   end
 
   defp stub_eligible(issues) do

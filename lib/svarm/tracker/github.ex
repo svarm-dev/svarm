@@ -104,16 +104,14 @@ defmodule Svarm.Tracker.GitHub do
 
   # GraphQL node_id is not a REST issue number. Match Issue.id against
   # board-visible issues (`list_issues`, state: all) — not list_eligible.
+  # Preserve tagged list errors (rate_limit / network / 5xx). Mapping them
+  # to :not_found would look like a vanished issue and release in-flight work.
   defp find_issue_by_id_fallback(config, id) do
-    case list_issues(config) do
-      {:ok, issues} ->
-        case Enum.find(issues, &(&1.id == id)) do
-          nil -> {:error, :not_found}
-          issue -> {:ok, issue}
-        end
-
-      _ ->
-        {:error, :not_found}
+    with {:ok, issues} <- list_issues(config) do
+      case Enum.find(issues, &(&1.id == id)) do
+        nil -> {:error, :not_found}
+        issue -> {:ok, issue}
+      end
     end
   end
 
