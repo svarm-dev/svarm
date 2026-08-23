@@ -133,7 +133,18 @@ With the opt-in, comments also get `→ Full run log: {SVARM_BASE_URL}/board?tas
 
 ### Labels and states
 
-Svärm tracks GitHub work with **labels**. Your eligibility label (e.g. `ai-task`) stays; status labels like `status: in-progress` / `status: pending-approval` / `status: review` are added or swapped. Budget hold reuses `status: pending-approval` plus `wait_reason` (no extra label). Success lands in **`review`**, not `done`.
+Svärm tracks GitHub work with **labels**. Your eligibility label (e.g. `ai-task`) stays; status labels are added or swapped. Success lands in **`review`**, not `done`.
+
+| Svärm status | Default GitHub label |
+|--------------|----------------------|
+| `todo` | eligibility only (`ai-task`) — no status label |
+| `pending_approval` | `status: pending-approval` |
+| `in_progress` | `status: in-progress` |
+| `review` | `status: review` |
+| `done` | `status: done` |
+| `failed` | `status: failed` |
+
+On the board, `pending_approval` is the **Needs approval** column; `/approvals` lists the same issues. Budget hold reuses `status: pending-approval` plus `wait_reason` (no extra label). Override with WORKFLOW `tracker.status_labels` / `reverse_labels` (keep both directions in sync); invalid maps fail closed and the orchestrator will not dispatch.
 
 ---
 
@@ -222,7 +233,7 @@ Env overrides:
 |----------|--------|
 | `SVARM_REVIEW_RESUME_ENABLED` | `true` / `1` / `yes` enables spawn (env wins over WORKFLOW) |
 
-**Requirements:** GitHub tracker; App/PAT **Pull requests: Read & write** (read for reviews; write to move the issue back to `todo`, same as CI resume) — see [docs/github-app.md](docs/github-app.md). Polls are capped per tick like CI resume.
+**Requirements:** GitHub tracker; App/PAT **Pull requests: Read & write** (read for reviews; write to move the issue back to `todo`, same as CI resume) — see [docs/github-app.md](docs/github-app.md). Polls are capped per tick like CI resume. If the review column is empty, Svärm falls back to at most **50** coordination rows that have a PR (same cap as the labeled path). A GitHub `list_issues` error skips that fallback rather than scanning the whole table.
 
 **Costs:** each resume is a new spawn — usage ledger and budget caps still apply. In-flight runs are not killed when a review asks for changes.
 
@@ -261,13 +272,13 @@ While a **PiRPC** run is `in_progress` (and not waiting on a question), the cons
 | Board approve/reject/mark-done/answer/steer/overage blocked without auth flash | Production needs `APPROVALS_*`; sign in via `/approvals` then return to the board. Local Mix without credentials is open only when `dev_routes` is on. Sticky proof expires after 8h by default (`BOARD_AUTH_TTL_SECONDS`) — re-sign in if mid-session mutations start failing |
 | `/approvals` 401 | Wrong Basic Auth credentials |
 | Nothing happens | `docker compose logs -f` (polling / eligibility) |
-| Tick never dispatches after a WORKFLOW edit | Invalid `workspace.isolation` fails closed (expected `path` or `worktree`); logs include the rejected value |
-| Stuck before agent runs | `/approvals` (default is untrusted) |
-| 401/403 from GitHub | PAT `repo` scope; token in `.env` |
+| Tick never dispatches after a WORKFLOW edit | Invalid `workspace.isolation` (expected `path` or `worktree`) or invalid `tracker.status_labels` / `reverse_labels` fail closed; logs include the rejected value |
+| Stuck before agent runs | `/approvals` (default is untrusted). On GitHub the issue should have `status: pending-approval` and appear under **Needs approval** |
+| 401/403 from GitHub | PAT `repo` scope; token in `.env`. `/board`, `/dashboard`, and `/` show **Cannot load GitHub issues** — that is not a healthy empty kanban |
 | No eligible issues | Issue has `ai-task`; `required_labels` matches |
 | pi not found (local) | `which pi`; Docker image includes pi |
 | OpenRouter errors | `OPENROUTER_API_KEY` set |
-| Empty board | Demo (`--profile demo`) or Seed demo; the real tracker loop needs a labeled issue |
+| Empty board | Demo (`--profile demo`) or Seed demo; the real tracker loop needs a labeled issue. A GitHub API error (401/403/rate-limit) shows **Cannot load GitHub issues**, not a silent empty board |
 | `mix svarm.demo` ≠ `/board` | Expected: Mix task uses a temp DB. Use Seed demo on the running server |
 | Sessions / approvals sticky auth fail on local HTTP `app` | Set `PHX_SECURE_COOKIES=false` in `.env` (Secure cookies need HTTPS; demo profile sets this already) |
 
