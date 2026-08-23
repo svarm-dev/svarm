@@ -154,7 +154,7 @@ GitHub App identity (bot comments): [docs/github-app.md](docs/github-app.md).
 **Working now:**
 
 - Local board + GitHub Issues + pi/CLI agents + OpenRouter
-- Approvals (one-shot after human approve); board mutations require `APPROVALS_*` in Docker/prod (**fail closed** if unset)
+- Approvals (one-shot after human approve); GitHub parks gated tickets as `status: pending-approval` (**Needs approval** / `/approvals`). Budget hold reuses that label plus `wait_reason`. Board mutations require `APPROVALS_*` in Docker/prod (**fail closed** if unset)
 - Per-ticket cost (estimated labeled); optional daily/per-ticket USD caps that block **new** spawns (`hard` skip, or `hold` for a one-shot overage approval)
 - **Per-agent 24h cost + retry share** — `/dashboard` roster: wall-clock 24h ledger spend (estimated labeled) and retry `retried/total` (n/a when attempts aren't recorded, e.g. GitHub today)
 - Allowlisted agent child env; usage ledger export (`mix svarm.export_usage`)
@@ -163,7 +163,7 @@ GitHub App identity (bot comments): [docs/github-app.md](docs/github-app.md).
 - **Run console** on the ticket — typed narrative/tool/run chrome, late-join from durable log, deep link `/board?task=…&attach=1`
 - **Steer** — queue a mid-run note on a live **PiRPC** session from the console (same board auth as approve/answer; CLI unsupported; hidden while a Q&A is parked). Follow-up after settle is not shipped
 - Optional **CI fail → fresh agent re-dispatch** with circuit breaker (default **off**; enable via WORKFLOW / `SVARM_CI_RESUME_*`)
-- **Review-resume** — Changes requested chip when GitHub reviews ask for changes; optional re-dispatch on first request (default **off**; `review_resume` / `SVARM_REVIEW_RESUME_ENABLED`; shares the CI resume circuit)
+- **Review-resume** — Changes requested chip when GitHub reviews ask for changes; optional re-dispatch on first request (default **off**; `review_resume` / `SVARM_REVIEW_RESUME_ENABLED`; shares the CI resume circuit). Empty review-column fallback is capped at 50 PR rows; a GitHub list error skips that scan
 - **Review Station** — structured Evidence (PR, attempts, agent/model, cost, age) on selected review cards; PR/no-PR glance chips and a CI `pass` / `fail` / `pending` / `unknown` summary chip (N/A on the local tracker). Informational only — humans still merge on GitHub.
 - **Mid-run Q&A** — a PiRPC agent can pause on a dialog; **Waiting for answer** chip + board form (confirm / select / input). CLI inject is unsupported. Dismiss or the 15-minute deadline **continues** the run.
 - **Git worktree isolation** — optional `workspace.isolation: worktree` (default `path`) gives each ticket a git worktree from `workspace.git_repo`; unknown isolation values fail closed. Still directory-level isolation, not a container
