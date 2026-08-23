@@ -165,7 +165,7 @@ Default adapter `pi_rpc` spawns **`pi --mode rpc --no-session`** (+ provider/mod
 | Mid-run UI (`extension_ui_request`) | **park + inject** (dialogs) | `AgentQuestion`; fire-and-forget ignored; invalid dialog fails the run; CLI unsupported |
 | Operator steer | **live `type: steer`** | `RunSteer` → PiRPC JSONL; CLI unsupported; hidden while a question is parked |
 
-**Keep PiRPC timeout ≤ stall.** The runner uses a **wall-clock** deadline (streaming does not reset it), then aborts (JSONL `abort` → grace → `kill_tree`). Orchestrator stall only `Process.exit`s the worker Task (Port close is best-effort, no kill_tree). Raise both together for longer coding sessions.
+**Keep PiRPC timeout ≤ stall.** The runner uses a **wall-clock** deadline (streaming does not reset it), then aborts (JSONL `abort` → grace → `kill_tree`). Orchestrator stall also runs that same OS kill-tree (then exits the worker Task) so hung pi/node/git children are reaped even when `try/after` does not run. Agent Ports already have their own process group (OTP `erl_child_setup`, equivalent to `setsid`); if `pgrep` is missing (slim images), kill-tree signals that PGID (never the BEAM PGID). Raise both timeouts together for longer coding sessions.
 
 Missing `pi` on PATH → task `failed` with `[pi_rpc: pi not found on PATH]`. Broken protocol / rejected prompt → `failed` with a protocol board line.
 

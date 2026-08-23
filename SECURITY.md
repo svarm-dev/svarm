@@ -70,7 +70,7 @@ Local Mix (`dev_routes: true`) keeps board mutations open without Basic Auth so 
 
 ### Agent child environment
 
-Agent Port processes receive a **small allowlist** of host env vars (PATH, HOME, locale, temp, shell) plus keys listed in the agent’s `env` map in `agents.toml`. Empty `env` does **not** inherit the full host environment — API keys such as `OPENROUTER_API_KEY` must be listed explicitly (e.g. `OPENROUTER_API_KEY = "$OPENROUTER_API_KEY"`). GitHub App mode still injects installation tokens as `GITHUB_TOKEN` / `GH_TOKEN` when the tracker uses App auth.
+Agent Port processes receive a **small allowlist** of host env vars (PATH, HOME, locale, temp, shell) plus keys listed in the agent’s `env` map in `agents.toml`. Empty `env` does **not** inherit the full host environment — API keys such as `OPENROUTER_API_KEY` must be listed explicitly (e.g. `OPENROUTER_API_KEY = "$OPENROUTER_API_KEY"`). GitHub App mode still injects installation tokens as `GITHUB_TOKEN` / `GH_TOKEN` when the tracker uses App auth. Stall, tracker-terminal stop, and runner timeout abort all run the same OS kill-tree (Port process group; PGID kill when `pgrep` is absent) so hung agent children do not keep those tokens.
 
 ### Hard spend caps
 

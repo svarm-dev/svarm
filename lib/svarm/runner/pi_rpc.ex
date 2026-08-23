@@ -34,9 +34,11 @@ defmodule Svarm.Runner.PiRPC do
   reset the timer. Override per call with `opts[:timeout_ms]` (tests).
 
   Orchestrator **stall** (`agent.stall_timeout_ms`, default also 45 min) is a
-  separate safety net: it `Process.exit/2`s the worker. That closes the Port
-  but does **not** run this module's `kill_tree/1` (grandchildren may need the
-  kernel/reaper). Keep **PiRPC timeout ≤ stall** so abort→kill_tree runs first.
+  separate safety net: it calls `AgentRunner.kill_os_tree/1` (the same
+  `Svarm.Runner.kill_tree/1` as timeout abort — process-group / PGID when
+  `pgrep` is absent) then `Process.exit/2`s the worker. `try/after` does not run on
+  that exit; `kill_os_tree` and a Port reaper still reap the OS tree. Keep
+  **PiRPC timeout ≤ stall** so abort can try a graceful JSONL abort first.
 
   Operator **steer** (board → live session) uses pi RPC `type: steer`.
   Mailbox steers are not written while a dialog is parked (`waiting_ui`).
@@ -197,7 +199,7 @@ defmodule Svarm.Runner.PiRPC do
         after
           AgentQuestion.clear(task.id)
           RunSteer.unregister()
-          ensure_dead(port)
+          Svarm.Runner.ensure_dead(port)
         end
 
       {:error, reason} ->
@@ -211,6 +213,8 @@ defmodule Svarm.Runner.PiRPC do
 
   # Exit signals (orchestrator stall) skip try/after. A monitor still clears
   # the parked question so a dead worker cannot leave a stuck board chip.
+  # OS kill-tree on that path is AgentRunner.kill_os_tree/1 plus the Port reaper
+  # in Svarm.Runner.open_agent_port/2.
   defp watch_clear(task_id) when is_binary(task_id) do
     worker = self()
 
@@ -265,59 +269,10 @@ defmodule Svarm.Runner.PiRPC do
         [:binary, :exit_status, :use_stdio, :stderr_to_stdout, {:args, args}, {:cd, cwd}]
         |> Svarm.Runner.maybe_add_env(env)
 
-      port = Port.open({:spawn_executable, executable}, port_opts)
+      port = Svarm.Runner.open_agent_port(executable, port_opts)
       {:ok, port}
     else
       {:error, {:pi, :not_on_path}}
-    end
-  end
-
-  defp ensure_dead(port) do
-    info = Port.info(port)
-    os_pid = info && Keyword.get(info, :os_pid)
-
-    try do
-      Port.close(port)
-    rescue
-      ArgumentError -> :ok
-    end
-
-    if is_integer(os_pid), do: force_kill(os_pid)
-    :ok
-  end
-
-  defp force_kill(os_pid) when is_integer(os_pid) do
-    # Descendants first (e.g. sleep/node under the shell), then the port pid.
-    kill_tree(os_pid)
-    :ok
-  end
-
-  defp kill_tree(os_pid) when is_integer(os_pid) do
-    # Docker slim images often lack pgrep (procps). Never raise here — a cleanup
-    # failure must not crash the worker after a successful run.
-    case System.find_executable("pgrep") do
-      nil ->
-        :ok
-
-      pgrep ->
-        case System.cmd(pgrep, ["-P", Integer.to_string(os_pid)], stderr_to_stdout: true) do
-          {out, 0} -> Enum.each(String.split(out), &kill_parsed_child/1)
-          _ -> :ok
-        end
-    end
-
-    case System.find_executable("kill") do
-      nil -> :ok
-      kill -> _ = System.cmd(kill, ["-KILL", Integer.to_string(os_pid)], stderr_to_stdout: true)
-    end
-
-    :ok
-  end
-
-  defp kill_parsed_child(child) do
-    case Integer.parse(child) do
-      {cid, ""} -> kill_tree(cid)
-      _ -> :ok
     end
   end
 

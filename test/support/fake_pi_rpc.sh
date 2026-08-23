@@ -31,7 +31,9 @@ if [[ "$got_prompt" -ne 1 ]]; then
   exit 2
 fi
 
-write_pidfile
+if [[ "$mode" != hang ]]; then
+  write_pidfile
+fi
 
 case "$mode" in
   happy)
@@ -54,11 +56,14 @@ case "$mode" in
     exit 0
     ;;
   hang)
-    # Never settle. Keep this script as the process image (no exec) so cmdline
-    # still contains fake_pi_rpc.sh, and children are real descendants.
-    while true; do
-      sleep 1
-    done
+    # Never settle. A long-lived descendant so stall/timeout kill-tree tests
+    # can assert the child is gone (killing only the port pid would leave it).
+    sleep 999999 &
+    child=$!
+    if [[ -n "${FAKE_PI_PIDFILE:-}" ]]; then
+      printf '%s\n' "$child" >"$FAKE_PI_PIDFILE"
+    fi
+    wait "$child"
     ;;
   crash)
     printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"boom\n"}}'
