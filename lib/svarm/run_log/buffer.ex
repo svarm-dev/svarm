@@ -98,6 +98,8 @@ defmodule Svarm.RunLog.Buffer do
        append_waiters: :queue.new(),
        flush_waiters: %{},
        flush_all_waiters: [],
+       hydrating: MapSet.new(),
+       hydrate_monitors: %{},
        timer: nil
      }}
   end
@@ -157,10 +159,12 @@ defmodule Svarm.RunLog.Buffer do
   end
 
   def handle_info({:hydrate_done, task_id, {:ok, stored}}, state) do
+    state = %{state | hydrating: MapSet.delete(state.hydrating, task_id)}
     {:noreply, apply_hydrate(state, task_id, stored)}
   end
 
-  def handle_info({:hydrate_done, _task_id, {:error, _reason}}, state) do
+  def handle_info({:hydrate_done, task_id, {:error, _reason}}, state) do
+    state = %{state | hydrating: MapSet.delete(state.hydrating, task_id)}
     {:noreply, ensure_timer(state)}
   end
 
@@ -172,18 +176,28 @@ defmodule Svarm.RunLog.Buffer do
     {:noreply, fail_persist(state, task_id, n)}
   end
 
-  def handle_info({:DOWN, ref, :process, _pid, :normal}, state) do
-    _ = ref
-    {:noreply, state}
-  end
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
+    case Map.pop(state.hydrate_monitors, ref) do
+      {task_id, monitors} when is_binary(task_id) ->
+        state = %{
+          state
+          | hydrate_monitors: monitors,
+            hydrating: MapSet.delete(state.hydrating, task_id)
+        }
 
-  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
-    case state.inflight do
-      {^ref, task_id, n} ->
-        {:noreply, fail_persist(state, task_id, n)}
+        {:noreply, ensure_timer(state)}
 
-      _ ->
-        {:noreply, state}
+      {nil, _} ->
+        case {reason, state.inflight} do
+          {:normal, _} ->
+            {:noreply, state}
+
+          {_, {^ref, task_id, n}} ->
+            {:noreply, fail_persist(state, task_id, n)}
+
+          _ ->
+            {:noreply, state}
+        end
     end
   end
 
@@ -216,7 +230,6 @@ defmodule Svarm.RunLog.Buffer do
   defp enqueue(state, task_id, chunk) do
     case Map.get(state.buffers, task_id) do
       nil ->
-        spawn_hydrate(task_id)
         pending = chunk
         rec = %{iodata: [chunk], size: byte_size(chunk), flushed: :unknown}
         ets_put(state, task_id, :unknown, pending)
@@ -226,6 +239,7 @@ defmodule Svarm.RunLog.Buffer do
           | buffers: Map.put(state.buffers, task_id, rec),
             pending_bytes: state.pending_bytes + byte_size(chunk)
         }
+        |> spawn_hydrate(task_id)
 
       rec ->
         size = rec.size + byte_size(chunk)
@@ -241,32 +255,40 @@ defmodule Svarm.RunLog.Buffer do
     end
   end
 
-  defp spawn_hydrate(task_id) do
-    parent = self()
+  defp spawn_hydrate(state, task_id) do
+    if MapSet.member?(state.hydrating, task_id) do
+      state
+    else
+      parent = self()
 
-    _ =
-      Task.start(fn ->
-        result =
-          try do
-            {:ok, RunLog.stored(task_id)}
-          rescue
-            e in [DBConnection.ConnectionError, Exqlite.Error] ->
-              {:error, e}
-          end
+      {:ok, pid} =
+        Task.start(fn ->
+          result =
+            try do
+              {:ok, RunLog.stored(task_id)}
+            rescue
+              e in [DBConnection.ConnectionError, Exqlite.Error] ->
+                {:error, e}
+            end
 
-        send(parent, {:hydrate_done, task_id, result})
-      end)
+          send(parent, {:hydrate_done, task_id, result})
+        end)
 
-    :ok
+      ref = Process.monitor(pid)
+
+      %{
+        state
+        | hydrating: MapSet.put(state.hydrating, task_id),
+          hydrate_monitors: Map.put(state.hydrate_monitors, ref, task_id)
+      }
+    end
   end
 
   defp retry_hydrates(state) do
-    Enum.each(state.buffers, fn
-      {task_id, %{flushed: :unknown}} -> spawn_hydrate(task_id)
-      _ -> :ok
+    Enum.reduce(state.buffers, state, fn
+      {task_id, %{flushed: :unknown}}, acc -> spawn_hydrate(acc, task_id)
+      _, acc -> acc
     end)
-
-    state
   end
 
   defp apply_hydrate(state, task_id, stored) do
