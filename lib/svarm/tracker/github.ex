@@ -4,7 +4,10 @@ defmodule Svarm.Tracker.GitHub do
   using the GitHub REST API via Req.
 
   Status mapping: Svärm statuses ↔ GitHub labels, configured via
-  WORKFLOW.md `tracker.status_labels`. Terminal states close the issue
+  WORKFLOW.md `tracker.status_labels` / `tracker.reverse_labels`.
+  Defaults include `pending_approval` → `status: pending-approval`.
+  Budget hold reuses that same status plus `wait_reason` (`budget_overage`) —
+  there is no extra GitHub label. Terminal states close the issue
   with `state_reason: completed`.
 
   Uses `X-GitHub-Api-Version: 2026-03-10` header.
@@ -21,18 +24,22 @@ defmodule Svarm.Tracker.GitHub do
   @api_version "2026-03-10"
 
   # Default label↔status mapping. Operators can override in WORKFLOW.md.
+  # Budget hold is `pending_approval` + Coordination `wait_reason`, not a
+  # second GitHub status label.
   @default_status_labels %{
     "status: in-progress" => "in_progress",
     "status: done" => "done",
     "status: failed" => "failed",
-    "status: review" => "review"
+    "status: review" => "review",
+    "status: pending-approval" => "pending_approval"
   }
 
   @default_reverse_labels %{
     "in_progress" => "status: in-progress",
     "done" => "status: done",
     "failed" => "status: failed",
-    "review" => "status: review"
+    "review" => "status: review",
+    "pending_approval" => "status: pending-approval"
   }
 
   @impl true
@@ -52,8 +59,7 @@ defmodule Svarm.Tracker.GitHub do
       owner,
       repo,
       fn issues ->
-        status_labels = Map.get(config, :status_labels, @default_status_labels)
-        normalized_config = Map.put(config, :status_labels, status_labels)
+        normalized_config = with_status_labels(config)
 
         issues
         |> Enum.map(&Normalize.from_api_response(&1, normalized_config))
@@ -71,13 +77,11 @@ defmodule Svarm.Tracker.GitHub do
     case Integer.parse(id) do
       {number, ""} ->
         url = "#{@base_url}/repos/#{owner}/#{repo}/issues/#{number}"
+        req = req_mod(config)
 
-        case Req.get(url, headers: headers(config)) do
+        case req.get(url, headers: headers(config)) do
           {:ok, %{status: 200, body: gh_issue}} ->
-            status_labels = Map.get(config, :status_labels, @default_status_labels)
-
-            {:ok,
-             Normalize.from_api_response(gh_issue, Map.put(config, :status_labels, status_labels))}
+            {:ok, Normalize.from_api_response(gh_issue, with_status_labels(config))}
 
           _ ->
             {:error, :not_found}
@@ -108,7 +112,7 @@ defmodule Svarm.Tracker.GitHub do
     repo = Map.fetch!(config, :repo)
 
     url = "#{@base_url}/repos/#{owner}/#{repo}/issues"
-    params = build_list_params(filters)
+    params = build_list_params(filters, config)
     req = req_mod(config)
 
     map_list_http(
@@ -154,8 +158,7 @@ defmodule Svarm.Tracker.GitHub do
   end
 
   defp normalize_listed_issues(issues, config, include_body) do
-    status_labels = Map.get(config, :status_labels, @default_status_labels)
-    normalized_config = Map.put(config, :status_labels, status_labels)
+    normalized_config = with_status_labels(config)
 
     issues
     |> Enum.map(&Normalize.from_api_response(&1, normalized_config))
@@ -186,10 +189,7 @@ defmodule Svarm.Tracker.GitHub do
 
     case Req.post(url, json: body, headers: headers(config)) do
       {:ok, %{status: 201, body: gh_issue}} ->
-        status_labels = Map.get(config, :status_labels, @default_status_labels)
-
-        {:ok,
-         Normalize.from_api_response(gh_issue, Map.put(config, :status_labels, status_labels))}
+        {:ok, Normalize.from_api_response(gh_issue, with_status_labels(config))}
 
       {:ok, %{status: 401}} ->
         {:error, :auth_failure}
@@ -201,7 +201,7 @@ defmodule Svarm.Tracker.GitHub do
 
   @impl true
   def update_status(config, id, status) do
-    reverse_labels = Map.get(config, :reverse_labels, @default_reverse_labels)
+    {status_labels, reverse_labels} = resolved_label_maps(config)
 
     case find_issue(config, id) do
       nil ->
@@ -209,7 +209,7 @@ defmodule Svarm.Tracker.GitHub do
         :ok
 
       issue ->
-        new_labels = labels_for_status(issue.labels, status, reverse_labels)
+        new_labels = labels_for_status(issue.labels, status, reverse_labels, status_labels)
         patch_issue(config, issue.source_id, new_labels, status)
     end
   end
@@ -217,18 +217,18 @@ defmodule Svarm.Tracker.GitHub do
   # `"todo"` has no status label — strip in/out-progress/review/done/failed labels
   # so Normalize maps the issue back to `hd(active_states)` (todo). Without this,
   # `Map.get(reverse_labels, "todo")` is nil and the old no-op left `status: review`.
-  defp labels_for_status(current_labels, "todo", reverse_labels) do
-    strip_status_labels(current_labels, reverse_labels)
+  defp labels_for_status(current_labels, "todo", reverse_labels, status_labels) do
+    strip_status_labels(current_labels, reverse_labels, status_labels)
   end
 
-  defp labels_for_status(current_labels, status, reverse_labels) do
+  defp labels_for_status(current_labels, status, reverse_labels, status_labels) do
     label = Map.get(reverse_labels, status)
-    update_label_list(current_labels, label, reverse_labels)
+    update_label_list(current_labels, label, reverse_labels, status_labels)
   end
 
-  defp strip_status_labels(current_labels, reverse_labels) do
-    status_values = Map.values(reverse_labels)
-    Enum.reject(current_labels, &(&1 in status_values))
+  defp strip_status_labels(current_labels, reverse_labels, status_labels) do
+    known = known_status_labels(reverse_labels, status_labels)
+    Enum.reject(current_labels, &MapSet.member?(known, &1))
   end
 
   @impl true
@@ -311,12 +311,13 @@ defmodule Svarm.Tracker.GitHub do
     repo = Map.fetch!(config, :repo)
 
     url = "#{@base_url}/repos/#{owner}/#{repo}/issues/#{source_id}"
+    req = req_mod(config)
 
     body =
       %{labels: labels |> Enum.uniq()}
       |> maybe_close(status)
 
-    case Req.patch(url, json: body, headers: headers(config)) do
+    case req.patch(url, json: body, headers: headers(config)) do
       {:ok, %{status: 200}} ->
         :ok
 
@@ -336,30 +337,78 @@ defmodule Svarm.Tracker.GitHub do
   defp maybe_close(body, _status), do: body
 
   # Unknown status (no reverse label): leave labels unchanged (legacy behavior).
-  defp update_label_list(current_labels, nil, _reverse_labels), do: current_labels
+  defp update_label_list(current_labels, nil, _reverse_labels, _status_labels), do: current_labels
 
-  defp update_label_list(current_labels, new_label, reverse_labels) do
-    status_values = Map.values(reverse_labels)
-    cleaned = strip_status_labels(current_labels, reverse_labels)
+  defp update_label_list(current_labels, new_label, reverse_labels, status_labels) do
+    cleaned = strip_status_labels(current_labels, reverse_labels, status_labels)
 
-    if new_label in status_values do
+    if MapSet.member?(known_status_labels(reverse_labels, status_labels), new_label) do
       [new_label | cleaned]
     else
       cleaned
     end
   end
 
-  defp build_list_params([]), do: %{state: "all", per_page: 100}
+  defp build_list_params([], _config), do: %{state: "all", per_page: 100}
 
-  defp build_list_params(filters) do
+  defp build_list_params(filters, config) do
     params = %{state: "all", per_page: 100}
+    reverse = resolved_reverse_labels(config)
 
     Enum.reduce(filters, params, fn
-      {:status, "todo"}, acc -> Map.put(acc, :labels, "none")
-      {:status, status}, acc -> Map.put(acc, :labels, "status: #{status}")
-      {:assignee, assignee}, acc -> Map.put(acc, :assignee, assignee)
-      _, acc -> acc
+      {:status, "todo"}, acc ->
+        Map.put(acc, :labels, "none")
+
+      {:status, status}, acc ->
+        case Map.get(reverse, status) do
+          label when is_binary(label) and label != "" -> Map.put(acc, :labels, label)
+          _ -> acc
+        end
+
+      {:assignee, assignee}, acc ->
+        Map.put(acc, :assignee, assignee)
+
+      _, acc ->
+        acc
     end)
+  end
+
+  defp with_status_labels(config) when is_map(config) do
+    {forward, _reverse} = resolved_label_maps(config)
+    Map.put(config, :status_labels, forward)
+  end
+
+  defp resolved_reverse_labels(config) when is_map(config) do
+    {_forward, reverse} = resolved_label_maps(config)
+    reverse
+  end
+
+  # Reverse (status → label) is the write map. Forward is inverted from reverse
+  # so a reverse-only override stays readable; default labels remain so leftover
+  # GitHub labels still normalize. Custom status_labels overlay last.
+  defp resolved_label_maps(config) when is_map(config) do
+    reverse = merge_label_map(Map.get(config, :reverse_labels), @default_reverse_labels)
+    from_reverse = Map.new(reverse, fn {status, label} -> {label, status} end)
+
+    forward =
+      @default_status_labels
+      |> Map.merge(from_reverse)
+      |> then(&merge_label_map(Map.get(config, :status_labels), &1))
+
+    {forward, reverse}
+  end
+
+  defp merge_label_map(map, default) when is_map(map), do: Map.merge(default, map)
+  defp merge_label_map(_, default), do: default
+
+  # Include default names so remapped statuses still strip leftover GitHub labels.
+  defp known_status_labels(reverse_labels, status_labels) do
+    MapSet.new(
+      Map.values(@default_reverse_labels) ++
+        Map.keys(@default_status_labels) ++
+        Map.values(reverse_labels) ++
+        Map.keys(status_labels)
+    )
   end
 
   defp build_create_labels(attrs, config) do

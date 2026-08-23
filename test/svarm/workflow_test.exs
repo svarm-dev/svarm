@@ -159,6 +159,131 @@ defmodule Svarm.WorkflowTest do
     end
   end
 
+  describe "Config.tracker_config status_labels / reverse_labels" do
+    test "parses custom maps from WORKFLOW YAML" do
+      yaml = """
+      ---
+      tracker:
+        kind: github
+        owner: acme
+        repo: demo
+        status_labels:
+          "gate: wait": pending_approval
+        reverse_labels:
+          pending_approval: "gate: wait"
+        extra_future_key: true
+      ---
+
+      Do {{issue.id}}
+      """
+
+      assert {:ok, wf} = Workflow.parse(yaml)
+      assert :ok = Config.validate_workflow(wf)
+      cfg = Config.tracker_config(wf.config)
+      assert cfg.status_labels["gate: wait"] == "pending_approval"
+      assert cfg.reverse_labels["pending_approval"] == "gate: wait"
+    end
+
+    test "omitted maps are not on tracker_config (adapter defaults apply)" do
+      cfg =
+        Config.tracker_config(%{
+          "tracker" => %{"kind" => "github", "owner" => "acme", "repo" => "demo"}
+        })
+
+      refute Map.has_key?(cfg, :status_labels)
+      refute Map.has_key?(cfg, :reverse_labels)
+    end
+
+    test "unknown extra tracker keys and extra label-map keys do not crash" do
+      cfg =
+        Config.tracker_config(%{
+          "tracker" => %{
+            "kind" => "github",
+            "owner" => "acme",
+            "repo" => "demo",
+            "not_a_real_key" => 123,
+            "status_labels" => %{
+              "status: pending-approval" => "pending_approval",
+              "custom: extra" => "other"
+            }
+          }
+        })
+
+      assert cfg.kind == :github
+      assert cfg.owner == "acme"
+      assert cfg.status_labels["custom: extra"] == "other"
+      assert cfg.status_labels["status: pending-approval"] == "pending_approval"
+    end
+
+    test "non-map status_labels fail closed" do
+      wf = %Workflow{
+        config: %{
+          "tracker" => %{
+            "kind" => "github",
+            "owner" => "acme",
+            "repo" => "demo",
+            "status_labels" => ["not", "a", "map"]
+          }
+        },
+        prompt_template: "Do {{issue.id}}",
+        path: "x"
+      }
+
+      assert {:error, :invalid_tracker_status_labels} = Config.validate_workflow(wf)
+    end
+
+    test "non-string status_labels entries fail closed" do
+      wf = %Workflow{
+        config: %{
+          "tracker" => %{
+            "kind" => "github",
+            "owner" => "acme",
+            "repo" => "demo",
+            "status_labels" => %{"status: pending-approval" => 1}
+          }
+        },
+        prompt_template: "Do {{issue.id}}",
+        path: "x"
+      }
+
+      assert {:error, :invalid_tracker_status_labels} = Config.validate_workflow(wf)
+    end
+
+    test "non-map reverse_labels fail closed" do
+      wf = %Workflow{
+        config: %{
+          "tracker" => %{
+            "kind" => "github",
+            "owner" => "acme",
+            "repo" => "demo",
+            "reverse_labels" => "nope"
+          }
+        },
+        prompt_template: "Do {{issue.id}}",
+        path: "x"
+      }
+
+      assert {:error, :invalid_tracker_reverse_labels} = Config.validate_workflow(wf)
+    end
+
+    test "blank label-map values fail closed" do
+      wf = %Workflow{
+        config: %{
+          "tracker" => %{
+            "kind" => "github",
+            "owner" => "acme",
+            "repo" => "demo",
+            "reverse_labels" => %{"pending_approval" => "  "}
+          }
+        },
+        prompt_template: "Do {{issue.id}}",
+        path: "x"
+      }
+
+      assert {:error, :invalid_tracker_reverse_labels} = Config.validate_workflow(wf)
+    end
+  end
+
   describe "Config.tracker_config GitHub App auth" do
     test "parses auth: app and literal app_id" do
       cfg =

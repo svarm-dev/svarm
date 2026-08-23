@@ -133,7 +133,7 @@ With the opt-in, comments also get `→ Full run log: {SVARM_BASE_URL}/board?tas
 
 ### Labels and states
 
-Svärm tracks GitHub work with **labels**. Your eligibility label (e.g. `ai-task`) stays; status labels like `status: in-progress` / `status: review` are added or swapped. Success lands in **`review`**, not `done`.
+Svärm tracks GitHub work with **labels**. Your eligibility label (e.g. `ai-task`) stays; status labels like `status: in-progress` / `status: pending-approval` / `status: review` are added or swapped. Budget hold reuses `status: pending-approval` plus `wait_reason` (no extra label). Success lands in **`review`**, not `done`.
 
 ---
 
