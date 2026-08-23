@@ -80,6 +80,14 @@ defmodule Svarm.Tracker.GitHub.AttemptsTest do
     assert issue.attempts == 3
   end
 
+  test "update_attempts does not return :ok for a negative count" do
+    assert_raise FunctionClauseError, fn ->
+      GitHub.update_attempts(@config, "I_neg", -1)
+    end
+
+    assert Coordination.get("I_neg") == nil
+  end
+
   test "attach_attempts is a no-op when no coordination row exists" do
     payload = gh_issue(%{"node_id" => "I_fresh"})
     issue = Normalize.from_api_response(payload, %{status_labels: %{}, active_states: ["todo"]})

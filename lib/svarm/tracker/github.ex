@@ -262,15 +262,9 @@ defmodule Svarm.Tracker.GitHub do
   @impl true
   def update_attempts(_config, id, attempts)
       when is_binary(id) and is_integer(attempts) and attempts >= 0 do
-    case Coordination.upsert(id, %{attempts: attempts}) do
-      {:ok, _} ->
-        :ok
-
-      {:error, changeset} ->
-        Logger.warning("github: persist attempts failed for #{id}: #{inspect(changeset.errors)}")
-
-        :ok
-    end
+    # Fail closed: a swallowed upsert would re-fetch attempts: 0 and retry forever.
+    {:ok, _row} = Coordination.upsert(id, %{attempts: attempts})
+    :ok
   end
 
   @impl true

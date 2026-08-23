@@ -53,6 +53,10 @@ defmodule Svarm.CoordinationTest do
     assert {:ok, row3} = Coordination.upsert("task_1", %{attempts: 4})
     assert row3.attempts == 4
     assert row3.pr_number == 12
+
+    assert {:error, changeset} = Coordination.upsert("task_1", %{attempts: -1})
+    assert changeset.errors[:attempts]
+    assert Coordination.get("task_1").attempts == 4
   end
 
   test "upsert stores mid-run wait fields" do
