@@ -156,7 +156,7 @@ GitHub App identity (bot comments): [docs/github-app.md](docs/github-app.md).
 - Local board + GitHub Issues + pi/CLI agents + OpenRouter
 - Approvals (one-shot after human approve); GitHub parks gated tickets as `status: pending-approval` (**Needs approval** / `/approvals`). Budget hold reuses that label plus `wait_reason`. Board mutations require `APPROVALS_*` in Docker/prod (**fail closed** if unset)
 - Per-ticket cost (estimated labeled); optional daily/per-ticket USD caps that block **new** spawns (`hard` skip, or `hold` for a one-shot overage approval)
-- **Per-agent 24h cost + retry share** — `/dashboard` roster: wall-clock 24h ledger spend (estimated labeled) and retry `retried/total` (n/a when attempts aren't recorded, e.g. GitHub today)
+- **Per-agent 24h cost + retry share** — `/dashboard` roster: wall-clock 24h ledger spend (estimated labeled) and retry `retried/total` (n/a when every assigned card still has `attempts == 0`). GitHub retry counts are durable in `task_coordination`.
 - Allowlisted agent child env; usage ledger export (`mix svarm.export_usage`)
 - **Outcome ROI** — `/dashboard` strip with merge rate and `$/merged` over the Spend window (session/24h/7d), overall + per agent; estimated spend labeled. GitHub can count a PR as merged while the ticket is still `review` (query-time; ledger stays append-only)
 - Optional **in-app `/setup`** (encrypted keys; file/env still work); human-wait visibility on board/dashboard

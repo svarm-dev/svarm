@@ -258,8 +258,8 @@ defmodule Svarm.Dashboard do
     |> then(fn {usd, estimated, count} -> {Float.round(usd, 2), estimated, count} end)
   end
 
-  # attempts is a retry counter (0 until the first retry). All zeros → n/a
-  # (GitHub tracker does not persist attempts).
+  # attempts is a retry counter (0 until the first retry). All zeros → n/a.
+  # GitHub stores the counter in task_coordination.attempts.
   defp reliability_rate(tasks) when is_list(tasks) do
     {retried, total} =
       Enum.reduce(tasks, {0, 0}, fn task, {retried, total} ->

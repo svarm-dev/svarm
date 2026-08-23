@@ -83,6 +83,28 @@ defmodule Svarm.BoardWaitReasonTest do
     assert Board.wait_reason(found) == :agent_question
   end
 
+  test "attach_coordination overlays GitHub retry attempts when the card is still 0" do
+    task =
+      KanbanBridge.create_task(%{title: "gh-attempts", status: "todo", assignee: "demo"})
+
+    KanbanBridge.update_attempts(task.id, 0)
+    {:ok, _} = Coordination.upsert(task.id, %{attempts: 2})
+
+    found = Board.get_task(task.id)
+    assert found.attempts == 2
+  end
+
+  test "attach_coordination does not clobber local attempts with coordination 0" do
+    task =
+      KanbanBridge.create_task(%{title: "local-attempts", status: "todo", assignee: "demo"})
+
+    KanbanBridge.update_attempts(task.id, 3)
+    {:ok, _} = Coordination.upsert(task.id, %{attempts: 0})
+
+    found = Board.get_task(task.id)
+    assert found.attempts == 3
+  end
+
   test "pr_url prefers coordination row" do
     {:ok, _} =
       Coordination.record_pr("t_pr", "https://github.com/o/r/pull/42")

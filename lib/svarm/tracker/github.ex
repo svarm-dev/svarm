@@ -10,6 +10,11 @@ defmodule Svarm.Tracker.GitHub do
   there is no extra GitHub label. Terminal states close the issue
   with `state_reason: completed`.
 
+  Retry attempts are tracker-durable in `task_coordination.attempts` (not a
+  GitHub `attempts: N` label, not Orchestrator `retry_attempts`).
+  `update_attempts/3` upserts that row; `Normalize.attach_attempts/1` reads
+  it back on fetch so retries increment and exhaust like Local.
+
   Issue lookup (`get_issue/2`, shared by `update_status/3`, `claim/2`, and
   `post_run_summary/3`): an integer-string id hits REST
   `GET /repos/{owner}/{repo}/issues/{number}`. A GraphQL `node_id`
@@ -24,6 +29,7 @@ defmodule Svarm.Tracker.GitHub do
   """
   @behaviour Svarm.Tracker
 
+  alias Svarm.Coordination
   alias Svarm.GitHub.AppAuth
   alias Svarm.Tracker.GitHub.Eligibility
   alias Svarm.Tracker.GitHub.Normalize
@@ -73,6 +79,7 @@ defmodule Svarm.Tracker.GitHub do
 
         issues
         |> Enum.map(&Normalize.from_api_response(&1, normalized_config))
+        |> Normalize.attach_attempts()
         |> Enum.filter(&Eligibility.eligible?(&1, config))
       end
     )
@@ -91,7 +98,12 @@ defmodule Svarm.Tracker.GitHub do
 
         case req.get(url, headers: headers(config)) do
           {:ok, %{status: 200, body: gh_issue}} ->
-            {:ok, Normalize.from_api_response(gh_issue, with_status_labels(config))}
+            issue =
+              gh_issue
+              |> Normalize.from_api_response(with_status_labels(config))
+              |> Normalize.attach_attempts()
+
+            {:ok, issue}
 
           _ ->
             {:error, :not_found}
@@ -172,6 +184,7 @@ defmodule Svarm.Tracker.GitHub do
 
     issues
     |> Enum.map(&Normalize.from_api_response(&1, normalized_config))
+    |> Normalize.attach_attempts()
     |> Enum.filter(&Eligibility.board_visible?(&1, normalized_config))
     |> maybe_strip_list_bodies(include_body)
   end
@@ -199,7 +212,12 @@ defmodule Svarm.Tracker.GitHub do
 
     case Req.post(url, json: body, headers: headers(config)) do
       {:ok, %{status: 201, body: gh_issue}} ->
-        {:ok, Normalize.from_api_response(gh_issue, with_status_labels(config))}
+        issue =
+          gh_issue
+          |> Normalize.from_api_response(with_status_labels(config))
+          |> Normalize.attach_attempts()
+
+        {:ok, issue}
 
       {:ok, %{status: 401}} ->
         {:error, :auth_failure}
@@ -242,7 +260,18 @@ defmodule Svarm.Tracker.GitHub do
   end
 
   @impl true
-  def update_attempts(_config, _id, _attempts), do: :ok
+  def update_attempts(_config, id, attempts)
+      when is_binary(id) and is_integer(attempts) and attempts >= 0 do
+    case Coordination.upsert(id, %{attempts: attempts}) do
+      {:ok, _} ->
+        :ok
+
+      {:error, changeset} ->
+        Logger.warning("github: persist attempts failed for #{id}: #{inspect(changeset.errors)}")
+
+        :ok
+    end
+  end
 
   @impl true
   def claim(config, id) do
@@ -294,7 +323,7 @@ defmodule Svarm.Tracker.GitHub do
       body = build_comment(summary) <> "\n\n" <> marker
       url = "#{@base_url}/repos/#{owner}/#{repo}/issues/#{issue_number}/comments"
 
-      case Req.post(url, json: %{body: body}, headers: headers(config)) do
+      case req_mod(config).post(url, json: %{body: body}, headers: headers(config)) do
         {:ok, %{status: 201}} ->
           Logger.info("github: posted run summary (run #{run_id})")
 
@@ -501,7 +530,7 @@ defmodule Svarm.Tracker.GitHub do
     url = "#{@base_url}/repos/#{owner}/#{repo}/issues/#{issue_number}/comments"
     params = %{per_page: 30, sort: "created", direction: "desc"}
 
-    case Req.get(url, params: params, headers: headers(config)) do
+    case req_mod(config).get(url, params: params, headers: headers(config)) do
       {:ok, %{status: 200, body: comments}} when is_list(comments) ->
         Enum.any?(comments, fn c -> String.contains?(c["body"] || "", marker) end)
 
