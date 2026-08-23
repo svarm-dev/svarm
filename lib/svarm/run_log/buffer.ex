@@ -159,13 +159,12 @@ defmodule Svarm.RunLog.Buffer do
   end
 
   def handle_info({:hydrate_done, task_id, {:ok, stored}}, state) do
-    state = %{state | hydrating: MapSet.delete(state.hydrating, task_id)}
+    state = clear_hydrate(state, task_id)
     {:noreply, apply_hydrate(state, task_id, stored)}
   end
 
   def handle_info({:hydrate_done, task_id, {:error, _reason}}, state) do
-    state = %{state | hydrating: MapSet.delete(state.hydrating, task_id)}
-    {:noreply, ensure_timer(state)}
+    {:noreply, state |> clear_hydrate(task_id) |> ensure_timer()}
   end
 
   def handle_info({:persisted, task_id, n}, state) do
@@ -179,12 +178,16 @@ defmodule Svarm.RunLog.Buffer do
   def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
     case Map.pop(state.hydrate_monitors, ref) do
       {task_id, monitors} when is_binary(task_id) ->
-        state = %{
-          state
-          | hydrate_monitors: monitors,
-            hydrating: MapSet.delete(state.hydrating, task_id)
-        }
+        still? = Enum.any?(monitors, fn {_ref, id} -> id == task_id end)
 
+        hydrating =
+          if still? do
+            state.hydrating
+          else
+            MapSet.delete(state.hydrating, task_id)
+          end
+
+        state = %{state | hydrate_monitors: monitors, hydrating: hydrating}
         {:noreply, ensure_timer(state)}
 
       {nil, _} ->
@@ -253,6 +256,19 @@ defmodule Svarm.RunLog.Buffer do
             pending_bytes: state.pending_bytes + byte_size(chunk)
         }
     end
+  end
+
+  defp clear_hydrate(state, task_id) do
+    {gone, keep} =
+      Enum.split_with(state.hydrate_monitors, fn {_ref, id} -> id == task_id end)
+
+    Enum.each(gone, fn {ref, _} -> Process.demonitor(ref, [:flush]) end)
+
+    %{
+      state
+      | hydrating: MapSet.delete(state.hydrating, task_id),
+        hydrate_monitors: Map.new(keep)
+    }
   end
 
   defp spawn_hydrate(state, task_id) do
