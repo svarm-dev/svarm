@@ -1,8 +1,11 @@
 defmodule Svarm.OrchestratorTest do
   use ExUnit.Case, async: false
 
-  alias Svarm.{Approval, KanbanBridge, Orchestrator, Workspace}
-  alias Svarm.Test.Wait
+  alias Svarm.{Approval, Events, Issue, KanbanBridge, Orchestrator, Workspace}
+  alias Svarm.Runner.Cli
+  alias Svarm.Test.{OsPid, Wait}
+
+  @fake_cli Path.expand("../support/fake_cli_agent.sh", __DIR__)
 
   # Sync barrier: GenServer processes mailbox FIFO, so get_state waits until
   # prior handle_info/handle_cast messages have finished.
@@ -1414,6 +1417,107 @@ defmodule Svarm.OrchestratorTest do
         if Process.alive?(worker), do: Process.exit(worker, :kill)
         :sys.replace_state(Orchestrator, fn _ -> original end)
       end
+    end
+  end
+
+  describe "stall kill-tree" do
+    defmodule StallStubTracker do
+      def update_status(config, id, status) do
+        Agent.update(config.statuses, &[{id, status} | &1])
+        :ok
+      end
+    end
+
+    test "reconcile_stalls reaps the OS hang child" do
+      {:ok, statuses} = Agent.start_link(fn -> [] end)
+
+      workspace_root =
+        Path.join(System.tmp_dir!(), "svarm_stall_#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(workspace_root)
+      pidfile = Path.join(workspace_root, "stall.pid")
+      :ok = Events.subscribe()
+
+      kb =
+        KanbanBridge.create_task(%{
+          title: "stall kill tree",
+          status: "in_progress",
+          assignee: "cody"
+        })
+
+      issue = %Issue{
+        id: kb.id,
+        source_id: kb.id,
+        title: kb.title,
+        body: "",
+        type: "code",
+        assignee: "cody",
+        status: "in_progress",
+        attempts: 0,
+        tenant: "test"
+      }
+
+      cfg = %{
+        command: "sh",
+        args: [@fake_cli, "hang"],
+        env: %{"FAKE_CLI_PIDFILE" => pidfile},
+        display_name: "FakeCli",
+        adapter: "cli",
+        provider: "test",
+        model: "fake"
+      }
+
+      opts = [
+        workspace_root: workspace_root,
+        tracker: StallStubTracker,
+        tracker_config: %{statuses: statuses},
+        timeout_ms: 30_000
+      ]
+
+      {:ok, runner} = Task.start(fn -> Cli.run(issue, cfg, opts) end)
+      child = wait_stall_pidfile(pidfile)
+      original = :sys.get_state(Orchestrator)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | running: %{
+              kb.id => %{
+                task: issue,
+                pid: runner,
+                mref: Process.monitor(runner),
+                started_mono_ms: System.monotonic_time(:millisecond) - 10_000,
+                started_at: System.system_time(:second)
+              }
+            },
+            claimed: MapSet.new([kb.id]),
+            stall_timeout_ms: 50,
+            agents: %{}
+        }
+      end)
+
+      try do
+        send(Orchestrator, :tick)
+        flush_orchestrator()
+
+        refute OsPid.alive_after?(child, 1_000),
+               "stall tick left hang child pid #{child} alive"
+
+        state = :sys.get_state(Orchestrator)
+        refute Map.has_key?(state.running, kb.id)
+      after
+        if Process.alive?(runner), do: Process.exit(runner, :kill)
+        OsPid.kill(child)
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+        if Process.alive?(statuses), do: Agent.stop(statuses)
+        File.rm_rf(workspace_root)
+      end
+    end
+
+    defp wait_stall_pidfile(path) do
+      pid = OsPid.wait_pidfile(path, 2_000)
+      assert is_integer(pid), "pidfile #{path} never appeared"
+      pid
     end
   end
 

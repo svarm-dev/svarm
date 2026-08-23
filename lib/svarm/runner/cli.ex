@@ -5,6 +5,9 @@ defmodule Svarm.Runner.Cli do
 
   Mid-run UI inject (`extension_ui_request`) and operator steer are not
   supported here — those paths live on `Svarm.Runner.PiRPC`.
+
+  Timeout abort uses the same OS kill-tree as PiRPC (`Svarm.Runner.ensure_dead/1`,
+  process-group / PGID when `pgrep` is absent).
   """
   @behaviour Svarm.Runner
 
@@ -84,9 +87,11 @@ defmodule Svarm.Runner.Cli do
       (agent_config[:env] || %{})
       |> Svarm.Runner.with_github_token(tracker_config)
 
+    timeout_ms = Keyword.get(opts, :timeout_ms, 3_600_000)
+
     {out, exit_code} =
       try do
-        stream_cmd(command, args, workspace_path, task.id, env_map)
+        stream_cmd(command, args, workspace_path, task.id, env_map, timeout_ms)
       rescue
         e in [ErlangError, File.Error] ->
           Logger.error("runner cli spawn failed: #{inspect(e)}")
@@ -182,7 +187,7 @@ defmodule Svarm.Runner.Cli do
     end
   end
 
-  defp stream_cmd(command, args, cwd, task_id, env_map) do
+  defp stream_cmd(command, args, cwd, task_id, env_map, timeout_ms) do
     executable = System.find_executable(command)
 
     if is_nil(executable) do
@@ -190,35 +195,35 @@ defmodule Svarm.Runner.Cli do
       Events.broadcast_agent_line(task_id, msg <> "\n")
       {msg, -1}
     else
-      do_stream_cmd(executable, args, cwd, task_id, env_map)
+      do_stream_cmd(executable, args, cwd, task_id, env_map, timeout_ms)
     end
   end
 
-  defp do_stream_cmd(executable, args, cwd, task_id, env_map) do
+  defp do_stream_cmd(executable, args, cwd, task_id, env_map, timeout_ms) do
     port_opts =
       [:binary, :exit_status, :stderr_to_stdout, {:args, args}, {:cd, cwd}, {:line, 65_000}]
       |> Svarm.Runner.maybe_add_env(env_map)
 
-    port = Port.open({:spawn_executable, executable}, port_opts)
-    drain_port(port, task_id, "", 0)
+    port = Svarm.Runner.open_agent_port(executable, port_opts)
+    drain_port(port, task_id, "", 0, timeout_ms)
   end
 
-  defp drain_port(port, task_id, acc, line_count) do
+  defp drain_port(port, task_id, acc, line_count, timeout_ms) do
     receive do
       {^port, {:data, {:eol, line}}} ->
         Events.broadcast_agent_line(task_id, line)
         acc2 = acc <> line <> "\n"
-        drain_port(port, task_id, acc2, line_count + 1)
+        drain_port(port, task_id, acc2, line_count + 1, timeout_ms)
 
       {^port, {:data, data}} when is_binary(data) ->
         Events.broadcast_agent_line(task_id, data)
-        drain_port(port, task_id, acc <> data, line_count + 1)
+        drain_port(port, task_id, acc <> data, line_count + 1, timeout_ms)
 
       {^port, {:exit_status, status}} ->
         {acc, status}
     after
-      3_600_000 ->
-        Port.close(port)
+      timeout_ms ->
+        Svarm.Runner.ensure_dead(port)
         Events.broadcast_agent_line(task_id, "\n[agent_runner: port receive timeout]\n")
         {acc, -1}
     end

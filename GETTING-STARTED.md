@@ -115,7 +115,7 @@ Default **`approval.mode: untrusted`**: real agents will **not** run until you a
 
 Poll interval defaults to ~30s (see `polling.interval_ms` in WORKFLOW.md).
 
-Pi RPC runs default to a **45-minute wall-clock** timeout (streaming does not extend it); orchestrator stall is the same duration (WORKFLOW `agent.stall_timeout_ms`). Keep run timeout ≤ stall so abort→kill runs before stall. See [docs/agents.md](docs/agents.md#pi-rpc-profile-default-for-the-real-tracker-loop).
+Pi RPC runs default to a **45-minute wall-clock** timeout (streaming does not extend it); orchestrator stall is the same duration (WORKFLOW `agent.stall_timeout_ms`). Keep run timeout ≤ stall so abort can try a graceful JSONL abort first; stall still force-kills the OS process group (PGID when `pgrep` is absent). See [docs/agents.md](docs/agents.md#pi-rpc-profile-default-for-the-real-tracker-loop).
 
 Example receipt shape (cost / harness / session stay; the board URL does **not** unless you set `SVARM_COMMENT_CONSOLE_LINKS=true`):
 

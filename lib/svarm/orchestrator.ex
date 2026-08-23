@@ -370,16 +370,19 @@ defmodule Svarm.Orchestrator do
 
   defp reconcile_stalls(%{stall_timeout_ms: stall} = state) when stall <= 0, do: state
 
-  # Best-effort: exits the worker Task (closes its Port). Does not walk the OS
-  # process tree — keep agent.stall_timeout_ms >= PiRPC wall-clock timeout so
-  # Svarm.Runner.PiRPC abort→kill_tree runs first on hung sessions.
+  # Stall (and tracker-terminal via stop_worker_if_running/3) calls
+  # AgentRunner.kill_os_tree/1 then exits the worker Task. That is the same
+  # OS kill-tree as PiRPC/CLI timeout abort (Port process-group / PGID when
+  # `pgrep` is absent). try/after in the runner does not run on an external
+  # exit; the facade call plus a runner reaper reap hung pi/node/git children
+  # so injected tokens are not left behind.
   defp reconcile_stalls(state) do
     now = System.monotonic_time(:millisecond)
 
     Enum.reduce(state.running, state, fn {task_id, e}, acc ->
       if now - e.started_mono_ms > state.stall_timeout_ms do
         Logger.warning("stall: killing worker for #{task_id}")
-        Process.exit(e.pid, :stall)
+        kill_worker(e.pid, :stall)
 
         acc = %{
           acc
@@ -470,9 +473,16 @@ defmodule Svarm.Orchestrator do
         state
 
       {entry, running} ->
-        Process.exit(entry.pid, reason)
+        kill_worker(entry.pid, reason)
         %{state | running: running}
     end
+  end
+
+  @doc false
+  @spec kill_worker(pid(), term()) :: true
+  def kill_worker(pid, reason) when is_pid(pid) do
+    AgentRunner.kill_os_tree(pid)
+    Process.exit(pid, reason)
   end
 
   ## dispatch

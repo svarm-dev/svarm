@@ -1,8 +1,9 @@
 defmodule Svarm.Runner.CliTest do
   use ExUnit.Case, async: false
 
-  alias Svarm.{AgentRunner, Events, Issue}
+  alias Svarm.{AgentRunner, Events, Issue, Orchestrator}
   alias Svarm.Runner.Cli
+  alias Svarm.Test.OsPid
 
   @fake Path.expand("../../support/fake_cli_agent.sh", __DIR__)
   @demo_script Path.join(:code.priv_dir(:svarm), "demo_agent.sh")
@@ -45,11 +46,11 @@ defmodule Svarm.Runner.CliTest do
     }
   end
 
-  defp agent_config(mode) do
+  defp agent_config(mode, extra_env \\ %{}) do
     %{
       command: "sh",
       args: [@fake, mode],
-      env: %{},
+      env: extra_env,
       display_name: "FakeCli",
       adapter: "cli",
       provider: "test",
@@ -57,12 +58,13 @@ defmodule Svarm.Runner.CliTest do
     }
   end
 
-  defp run_opts(workspace_root, statuses) do
+  defp run_opts(workspace_root, statuses, extra \\ []) do
     [
       workspace_root: workspace_root,
       tracker: StubTracker,
       tracker_config: %{statuses: statuses},
-      run_id: "run_cli_#{System.unique_integer([:positive])}"
+      run_id: "run_cli_#{System.unique_integer([:positive])}",
+      timeout_ms: Keyword.get(extra, :timeout_ms, 5_000)
     ]
   end
 
@@ -152,6 +154,46 @@ defmodule Svarm.Runner.CliTest do
     assert_agent_line(id, "executable not found")
   end
 
+  test "stall: kill-tree reaps hang child", %{workspace_root: root, statuses: statuses} do
+    pidfile = Path.join(root, "stall.pid")
+    id = "sva_cli_stall"
+
+    {:ok, runner} =
+      Task.start(fn ->
+        Cli.run(
+          task(id),
+          agent_config("hang", %{"FAKE_CLI_PIDFILE" => pidfile}),
+          run_opts(root, statuses, timeout_ms: 30_000)
+        )
+      end)
+
+    pid = wait_os_pidfile(pidfile)
+
+    try do
+      Orchestrator.kill_worker(runner, :stall)
+      refute OsPid.alive_after?(pid, 1_000), "stall left hang child pid #{pid} alive"
+    after
+      if Process.alive?(runner), do: Process.exit(runner, :kill)
+      OsPid.kill(pid)
+    end
+  end
+
+  test "timeout: kill-tree reaps hang child", %{workspace_root: root, statuses: statuses} do
+    pidfile = Path.join(root, "timeout.pid")
+    id = "sva_cli_timeout"
+
+    assert {:error, {:agent_exit, -1, _}} =
+             Cli.run(
+               task(id),
+               agent_config("hang", %{"FAKE_CLI_PIDFILE" => pidfile}),
+               run_opts(root, statuses, timeout_ms: 400)
+             )
+
+    assert last_status(statuses, id) == "failed"
+    pid = wait_os_pidfile(pidfile)
+    refute OsPid.alive_after?(pid, 1_000), "timeout left hang child pid #{pid} alive"
+  end
+
   test "load_agents and resolve! match AgentRunner facade" do
     from_cli = Cli.load_agents()
     from_facade = AgentRunner.load_agents()
@@ -196,5 +238,11 @@ defmodule Svarm.Runner.CliTest do
     assert_agent_line(id, "skill pack missing")
     # Workspace has no agent run.log — spawn never happened
     refute File.exists?(Path.join([root, id, "run.log"]))
+  end
+
+  defp wait_os_pidfile(path, timeout_ms \\ 2_000) do
+    pid = OsPid.wait_pidfile(path, timeout_ms)
+    assert is_integer(pid), "pidfile #{path} never appeared"
+    pid
   end
 end

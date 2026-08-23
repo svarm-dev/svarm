@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Orchestrator stall kills the OS agent tree** ([#179](https://github.com/svarm-dev/svarm/issues/179)): stall and tracker-terminal stop call the same kill-tree as PiRPC/CLI timeout abort. Agent Ports already have their own process group, so a missing `pgrep` still reaps descendants via PGID kill (never the BEAM PGID).
 - **GitHub `pending_approval` labels** ([#173](https://github.com/svarm-dev/svarm/issues/173)): default maps persist `pending_approval` as `status: pending-approval` so gated tickets leave Todo and show in **Needs approval** / `/approvals`. Budget hold reuses that status plus `wait_reason` (no extra label). WORKFLOW `tracker.status_labels` / `reverse_labels` are parsed; invalid maps fail closed.
 - **Review-resume fallback cap** ([#191](https://github.com/svarm-dev/svarm/issues/191)): empty review-column id list falls back to `Coordination.list_with_pr(..., limit: 50)` — same cap as the labeled path. A tagged `list_issues` error skips that fallback instead of scanning every PR row.
 - **GitHub `list_issues` errors** ([#176](https://github.com/svarm-dev/svarm/issues/176), [#201](https://github.com/svarm-dev/svarm/pull/201)): non-200 no longer returns `{:ok, []}` (a fake empty board). `/board`, `/dashboard`, and `/` show **Cannot load GitHub issues**. Unhandled HTTP (429/400/422) and unexpected Req shapes fail closed.

@@ -21,6 +21,7 @@ defmodule Svarm.Application do
         {Phoenix.PubSub, name: Svarm.PubSub},
         {Registry, keys: :unique, name: Svarm.AgentQuestion.Inbox},
         {Registry, keys: :unique, name: Svarm.RunSteer.Inbox},
+        {Registry, keys: :unique, name: Svarm.Runner.Ports},
         # Svärm orchestration — Repo must start before KanbanBridge / RunLog.Buffer
         Svarm.Repo,
         Svarm.GitHub.AppAuth,

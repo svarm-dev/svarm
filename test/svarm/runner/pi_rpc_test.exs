@@ -1,8 +1,9 @@
 defmodule Svarm.Runner.PiRPCTest do
   use ExUnit.Case, async: false
 
-  alias Svarm.{AgentQuestion, Events, Issue, KanbanBridge, RunSteer}
+  alias Svarm.{AgentQuestion, Events, Issue, KanbanBridge, Orchestrator, RunSteer}
   alias Svarm.Runner.PiRPC
+  alias Svarm.Test.OsPid
 
   @fake Path.expand("../../support/fake_pi_rpc.sh", __DIR__)
 
@@ -200,10 +201,33 @@ defmodule Svarm.Runner.PiRPCTest do
     pid = pidfile |> File.read!() |> String.trim() |> String.to_integer()
 
     # Kernel may take a beat to reap; poll /proc.
-    refute os_pid_alive_after?(pid, 1_000), "zombie peer pid #{pid} still alive"
+    refute OsPid.alive_after?(pid, 1_000), "zombie peer pid #{pid} still alive"
 
     leftover = list_fake_pids()
     refute pid in leftover, "pgrep still sees hang peer #{pid}: #{inspect(leftover)}"
+  end
+
+  test "stall: kill-tree reaps hang child", %{workspace_root: root, statuses: statuses} do
+    pidfile = Path.join(root, "stall.pid")
+
+    {:ok, runner} =
+      Task.start(fn ->
+        PiRPC.run(
+          task("sva_stall"),
+          agent_config("hang", %{"FAKE_PI_PIDFILE" => pidfile}),
+          run_opts(root, statuses, timeout_ms: 30_000, abort_grace_ms: 5_000)
+        )
+      end)
+
+    pid = wait_os_pidfile(pidfile)
+
+    try do
+      Orchestrator.kill_worker(runner, :stall)
+      refute OsPid.alive_after?(pid, 1_000), "stall left hang child pid #{pid} alive"
+    after
+      if Process.alive?(runner), do: Process.exit(runner, :kill)
+      OsPid.kill(pid)
+    end
   end
 
   test "crash exit without settle → failed + board line", %{
@@ -499,20 +523,9 @@ defmodule Svarm.Runner.PiRPCTest do
     end
   end
 
-  defp os_pid_alive_after?(pid, timeout_ms) do
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-
-    Stream.repeatedly(fn ->
-      alive? = match?({:ok, _}, File.read("/proc/#{pid}/stat"))
-      Process.sleep(50)
-      alive?
-    end)
-    |> Enum.reduce_while(true, fn alive?, _ ->
-      cond do
-        not alive? -> {:halt, false}
-        System.monotonic_time(:millisecond) >= deadline -> {:halt, true}
-        true -> {:cont, true}
-      end
-    end)
+  defp wait_os_pidfile(path, timeout_ms \\ 2_000) do
+    pid = OsPid.wait_pidfile(path, timeout_ms)
+    assert is_integer(pid), "pidfile #{path} never appeared"
+    pid
   end
 end

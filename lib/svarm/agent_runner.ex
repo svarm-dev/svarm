@@ -36,4 +36,17 @@ defmodule Svarm.AgentRunner do
   @doc "Resolve the runner adapter from an agent config's adapter field."
   def resolve_adapter("pi_rpc"), do: PiRPC
   def resolve_adapter(_), do: Cli
+
+  @doc """
+  Kill the OS agent process tree registered for a worker Task pid.
+
+  Orchestrator stall and tracker-terminal stop call this before
+  `Process.exit/2`. Shell-out stays in `Svarm.Runner` (`kill_tree/1` —
+  process-group / PGID when `pgrep` is absent). No-op if the worker never
+  opened an agent Port.
+  """
+  @spec kill_os_tree(pid()) :: :ok
+  def kill_os_tree(worker_pid) when is_pid(worker_pid) do
+    Svarm.Runner.kill_for_worker(worker_pid)
+  end
 end
