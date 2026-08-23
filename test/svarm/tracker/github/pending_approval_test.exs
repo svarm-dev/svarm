@@ -96,6 +96,26 @@ defmodule Svarm.Tracker.GitHub.PendingApprovalTest do
       refute "status: pending-approval" in labels
       refute "status: in-progress" in labels
     end
+
+    test "reverse-only override still strips leftover default status labels on todo" do
+      stub_issue(
+        gh_issue(%{
+          "labels" => [
+            %{"name" => "status: pending-approval"},
+            %{"name" => "ai-task"}
+          ]
+        })
+      )
+
+      config = Map.put(@config, :reverse_labels, %{"pending_approval" => "gate: wait"})
+      assert :ok = GitHub.update_status(config, "42", "todo")
+
+      assert_received {:http_patch, _url, opts}
+      labels = opts[:json][:labels]
+      refute "status: pending-approval" in labels
+      refute "gate: wait" in labels
+      assert "ai-task" in labels
+    end
   end
 
   describe "Normalize.map_status / from_api_response" do
@@ -106,6 +126,24 @@ defmodule Svarm.Tracker.GitHub.PendingApprovalTest do
       assert {:ok, issue} = GitHub.get_issue(@config, "42")
       assert issue.status == "pending_approval"
       assert "status: pending-approval" in issue.labels
+    end
+
+    test "reverse-only override maps the custom label without a status_labels entry" do
+      payload = gh_issue(%{"labels" => [%{"name" => "gate: wait"}]})
+      stub_issue(payload)
+      config = Map.put(@config, :reverse_labels, %{"pending_approval" => "gate: wait"})
+
+      assert {:ok, issue} = GitHub.get_issue(config, "42")
+      assert issue.status == "pending_approval"
+    end
+
+    test "reverse-only override still reads leftover default pending-approval labels" do
+      payload = gh_issue(%{"labels" => [%{"name" => "status: pending-approval"}]})
+      stub_issue(payload)
+      config = Map.put(@config, :reverse_labels, %{"pending_approval" => "gate: wait"})
+
+      assert {:ok, issue} = GitHub.get_issue(config, "42")
+      assert issue.status == "pending_approval"
     end
   end
 
@@ -133,6 +171,17 @@ defmodule Svarm.Tracker.GitHub.PendingApprovalTest do
           reverse_labels: %{"pending_approval" => "gate: wait"},
           status_labels: %{"gate: wait" => "pending_approval"}
         })
+
+      assert {:ok, [issue]} = GitHub.list_issues(config, status: "pending_approval")
+      assert issue.status == "pending_approval"
+
+      assert_received {:http_get, _url, opts}
+      assert opts[:params][:labels] == "gate: wait"
+    end
+
+    test "reverse-only override is enough for list_issues to read pending_approval" do
+      stub_list([gh_issue(%{"labels" => [%{"name" => "gate: wait"}]})])
+      config = Map.put(@config, :reverse_labels, %{"pending_approval" => "gate: wait"})
 
       assert {:ok, [issue]} = GitHub.list_issues(config, status: "pending_approval")
       assert issue.status == "pending_approval"
