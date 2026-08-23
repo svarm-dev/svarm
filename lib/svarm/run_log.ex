@@ -4,8 +4,10 @@ defmodule Svarm.RunLog do
 
   Stream chunks are coalesced in `Svarm.RunLog.Buffer` and flushed with a
   SQL `content || ?` append so the hot path never reads the full transcript
-  back into BEAM for every delta. `get/1` reconstructs durable content plus
-  any pending buffer so board late-join stays complete.
+  back into BEAM for every delta. `append/2` returns once the (redacted)
+  chunk is visible to `get/1`; it does not wait for SQLite. `get/1`
+  reconstructs durable content plus any pending buffer so board late-join
+  stays complete.
   """
   use Ecto.Schema
   import Ecto.Query
@@ -26,7 +28,8 @@ defmodule Svarm.RunLog do
   Single persist-path redact: secrets are scrubbed here before any buffering
   or durable write, so callers that skip `Events` stay fail-closed.
   `Events.persist_agent_line/2` must not call `Redact.text/1` again.
-  Creates the row on first flush if it does not exist.
+  Returns without waiting for SQLite; the chunk is visible to `get/1`
+  immediately. Creates the row on first flush if it does not exist.
   """
   def append(task_id, chunk) when is_binary(task_id) and is_binary(chunk) do
     chunk = Svarm.Redact.text(chunk)
