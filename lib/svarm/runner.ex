@@ -88,10 +88,9 @@ defmodule Svarm.Runner do
   def ensure_dead(port) do
     os_pid = port_os_pid(port)
 
-    try do
-      Port.close(port)
-    rescue
-      ArgumentError -> :ok
+    case Port.info(port) do
+      info when is_list(info) -> Port.close(port)
+      nil -> :ok
     end
 
     if is_integer(os_pid), do: kill_tree(os_pid)
@@ -127,10 +126,19 @@ defmodule Svarm.Runner do
   """
   @spec kill_tree(pos_integer()) :: :ok
   def kill_tree(os_pid) when is_integer(os_pid) and os_pid > 0 do
-    kill_process_group_if_safe(os_pid)
-    kill_pgrep_children(os_pid)
-    signal_kill(Integer.to_string(os_pid))
-    :ok
+    cond do
+      os_pid <= 1 ->
+        :ok
+
+      os_pid == beam_os_pid() ->
+        :ok
+
+      true ->
+        kill_process_group_if_safe(os_pid)
+        kill_pgrep_children(os_pid)
+        signal_kill(Integer.to_string(os_pid))
+        :ok
+    end
   end
 
   defp allowlisted_host_env do
@@ -239,7 +247,8 @@ defmodule Svarm.Runner do
     beam_pgid = process_group_id(beam_os_pid())
     agent_pgid = process_group_id(os_pid)
 
-    if is_integer(agent_pgid) and agent_pgid > 1 and agent_pgid != beam_pgid do
+    if is_integer(agent_pgid) and is_integer(beam_pgid) and agent_pgid > 1 and
+         agent_pgid != beam_pgid do
       signal_kill("-#{agent_pgid}")
     end
 
@@ -297,15 +306,16 @@ defmodule Svarm.Runner do
     end
   end
 
-  # /proc/pid/stat: pid (comm) state ppid pgrp ...
+  # /proc/pid/stat: pid (comm) state ppid pgrp ... — comm may contain ')'.
   defp parse_stat_pgrp(stat) when is_binary(stat) do
-    case :binary.match(stat, <<") ">>) do
-      {idx, 2} ->
-        rest = binary_part(stat, idx + 2, byte_size(stat) - idx - 2)
-        parse_stat_pgrp_fields(String.split(rest, " ", parts: 4))
-
-      :nomatch ->
+    case :binary.matches(stat, <<")">>) do
+      [] ->
         nil
+
+      matches ->
+        {idx, _} = List.last(matches)
+        rest = binary_part(stat, idx + 1, byte_size(stat) - idx - 1)
+        parse_stat_pgrp_fields(String.split(String.trim(rest), " ", parts: 4))
     end
   end
 

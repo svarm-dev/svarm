@@ -1,7 +1,7 @@
 defmodule Svarm.Runner.PiRPCTest do
   use ExUnit.Case, async: false
 
-  alias Svarm.{AgentQuestion, Events, Issue, KanbanBridge, Orchestrator, RunSteer}
+  alias Svarm.{AgentQuestion, AgentRunner, Events, Issue, KanbanBridge, RunSteer}
   alias Svarm.Runner.PiRPC
   alias Svarm.Test.OsPid
 
@@ -222,8 +222,9 @@ defmodule Svarm.Runner.PiRPCTest do
     pid = wait_os_pidfile(pidfile)
 
     try do
-      Orchestrator.kill_worker(runner, :stall)
-      refute OsPid.alive_after?(pid, 1_000), "stall left hang child pid #{pid} alive"
+      # Facade without Process.exit — child death must not depend on the DOWN reaper.
+      assert :ok = AgentRunner.kill_os_tree(runner)
+      refute OsPid.alive_after?(pid, 1_000), "kill_os_tree left hang child pid #{pid} alive"
     after
       if Process.alive?(runner), do: Process.exit(runner, :kill)
       OsPid.kill(pid)
