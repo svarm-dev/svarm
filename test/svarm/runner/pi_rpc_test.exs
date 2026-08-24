@@ -1,7 +1,7 @@
 defmodule Svarm.Runner.PiRPCTest do
   use ExUnit.Case, async: false
 
-  alias Svarm.{AgentQuestion, AgentRunner, Events, Issue, KanbanBridge, RunSteer}
+  alias Svarm.{AgentQuestion, AgentRunner, Events, Issue, KanbanBridge, Orchestrator, RunSteer}
   alias Svarm.Runner.PiRPC
   alias Svarm.Test.OsPid
 
@@ -228,6 +228,63 @@ defmodule Svarm.Runner.PiRPCTest do
     after
       if Process.alive?(runner), do: Process.exit(runner, :kill)
       OsPid.kill(pid)
+    end
+  end
+
+  test "board abort: kill-tree reaps hang child and returns todo", %{
+    workspace_root: root,
+    statuses: statuses
+  } do
+    pidfile = Path.join(root, "abort.pid")
+
+    kb =
+      KanbanBridge.create_task(%{
+        title: "pi abort hang",
+        status: "in_progress",
+        assignee: "default"
+      })
+
+    issue = task(kb.id)
+
+    {:ok, runner} =
+      Task.start(fn ->
+        PiRPC.run(
+          issue,
+          agent_config("hang", %{"FAKE_PI_PIDFILE" => pidfile}),
+          run_opts(root, statuses, timeout_ms: 30_000, abort_grace_ms: 5_000)
+        )
+      end)
+
+    pid = wait_os_pidfile(pidfile)
+    original = :sys.get_state(Orchestrator)
+
+    :sys.replace_state(Orchestrator, fn state ->
+      %{
+        state
+        | running:
+            Map.put(state.running, kb.id, %{
+              task: issue,
+              pid: runner,
+              mref: Process.monitor(runner),
+              started_mono_ms: System.monotonic_time(:millisecond),
+              started_at: System.system_time(:second)
+            }),
+          claimed: MapSet.put(state.claimed, kb.id)
+      }
+    end)
+
+    try do
+      assert :ok = Orchestrator.abort(kb.id)
+      refute OsPid.alive_after?(pid, 1_000), "abort left hang child pid #{pid} alive"
+      assert KanbanBridge.get_task(kb.id).status == "todo"
+      assert_agent_line(kb.id, "[board] aborted")
+      state = :sys.get_state(Orchestrator)
+      refute Map.has_key?(state.running, kb.id)
+      refute Map.has_key?(state.retry_attempts, kb.id)
+    after
+      if Process.alive?(runner), do: Process.exit(runner, :kill)
+      OsPid.kill(pid)
+      :sys.replace_state(Orchestrator, fn _ -> original end)
     end
   end
 

@@ -84,6 +84,15 @@ defmodule Svarm.Board do
   end
 
   @doc """
+  Abort a live agent run from the board.
+
+  Shared OS kill-tree, then the worker. Ticket returns to `todo`.
+  `{:error, :not_running}` when the orchestrator has no worker for `id`.
+  """
+  @spec abort_run(String.t()) :: :ok | {:error, :not_running}
+  def abort_run(id) when is_binary(id), do: Orchestrator.abort(id)
+
+  @doc """
   Agent configs for board UI (agents.toml + Settings overrides).
 
   LiveViews load agents through this read facade — not `AgentRunner` directly.

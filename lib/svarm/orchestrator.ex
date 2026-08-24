@@ -33,6 +33,7 @@ defmodule Svarm.Orchestrator do
   require Logger
 
   alias Svarm.{
+    AgentQuestion,
     AgentRunner,
     Approval,
     Budget,
@@ -132,6 +133,19 @@ defmodule Svarm.Orchestrator do
   Used by `/setup` Apply — no BEAM restart.
   """
   def reload_config, do: GenServer.call(__MODULE__, :reload_config)
+
+  @doc """
+  Abort a live agent run (board **Abort**).
+
+  Invokes the shared OS kill-tree (`AgentRunner.kill_os_tree/1`) before
+  exiting the worker, drops the task from the running set so `:DOWN` cannot
+  crash-retry the same run, and returns the ticket to `todo`.
+  """
+  @spec abort(String.t()) :: :ok | {:error, :not_running}
+  def abort(task_id) when is_binary(task_id) do
+    # Kill-tree + worker wait (2s) + tracker patch; keep well under this.
+    GenServer.call(__MODULE__, {:abort, task_id}, 15_000)
+  end
 
   ## init
 
@@ -351,6 +365,29 @@ defmodule Svarm.Orchestrator do
      %{state | overage_once: MapSet.put(state.overage_once || MapSet.new(), task_id)}}
   end
 
+  def handle_call({:abort, task_id}, _from, state) when is_binary(task_id) do
+    case Map.pop(state.running, task_id) do
+      {nil, _} ->
+        {:reply, {:error, :not_running}, state}
+
+      {entry, running} ->
+        state = %{
+          state
+          | running: running,
+            claimed: MapSet.delete(state.claimed, task_id)
+        }
+
+        state = cancel_retry_for(state, task_id)
+        drop_worker_monitor(entry)
+        await_worker_exit(entry.pid, :board_abort)
+        Events.broadcast_agent_line(task_id, "\n[board] aborted\n")
+        state.tracker.update_status(state.tracker_config, task_id, "todo")
+        AgentQuestion.clear(task_id)
+        broadcast_status(state)
+        {:reply, :ok, state}
+    end
+  end
+
   @impl true
   def handle_cast({:mark_approved, task_id}, state) when is_binary(task_id) do
     {:noreply, %{state | approved_once: MapSet.put(state.approved_once, task_id)}}
@@ -483,6 +520,40 @@ defmodule Svarm.Orchestrator do
   def kill_worker(pid, reason) when is_pid(pid) do
     AgentRunner.kill_os_tree(pid)
     Process.exit(pid, reason)
+  end
+
+  defp drop_worker_monitor(%{mref: mref}) when is_reference(mref) do
+    Process.demonitor(mref, [:flush])
+  end
+
+  defp drop_worker_monitor(_), do: true
+
+  # Kill-tree first (stall/timeout share this), then wait so a dying runner
+  # cannot overwrite the `todo` status we patch next.
+  defp await_worker_exit(pid, reason) when is_pid(pid) do
+    ref = Process.monitor(pid)
+    kill_worker(pid, reason)
+
+    receive do
+      {:DOWN, ^ref, :process, ^pid, _} -> :ok
+    after
+      2_000 ->
+        Logger.warning("abort: worker #{inspect(pid)} still alive after 2s")
+        Process.demonitor(ref, [:flush])
+        Process.exit(pid, :kill)
+        :ok
+    end
+  end
+
+  defp cancel_retry_for(state, task_id) do
+    case Map.pop(state.retry_attempts, task_id) do
+      {nil, map} ->
+        %{state | retry_attempts: map}
+
+      {entry, map} ->
+        if is_reference(entry[:timer]), do: Process.cancel_timer(entry.timer)
+        %{state | retry_attempts: map}
+    end
   end
 
   ## dispatch

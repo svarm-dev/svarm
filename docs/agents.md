@@ -164,6 +164,7 @@ Default adapter `pi_rpc` spawns **`pi --mode rpc --no-session`** (+ provider/mod
 | Completion | `agent_settled` only | non-zero exit / no settle → `failed` |
 | Mid-run UI (`extension_ui_request`) | **park + inject** (dialogs) | `AgentQuestion`; fire-and-forget ignored; invalid dialog fails the run; CLI unsupported |
 | Operator steer | **live `type: steer`** | `RunSteer` → PiRPC JSONL; CLI unsupported; hidden while a question is parked |
+| Board abort | **OS kill-tree → `todo`** | `Orchestrator.abort/1`; CLI and PiRPC; not crash-retry |
 
 **Keep PiRPC timeout ≤ stall.** The runner uses a **wall-clock** deadline (streaming does not reset it), then aborts (JSONL `abort` → grace → `kill_tree`). Orchestrator stall also runs that same OS kill-tree (then exits the worker Task) so hung pi/node/git children are reaped even when `try/after` does not run. Agent Ports already have their own process group (OTP `erl_child_setup`, equivalent to `setsid`); if `pgrep` is missing (slim images), kill-tree signals that PGID (never the BEAM PGID). Raise both timeouts together for longer coding sessions.
 

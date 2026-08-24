@@ -162,6 +162,7 @@ GitHub App identity (bot comments): [docs/github-app.md](docs/github-app.md).
 - Optional **in-app `/setup`** (encrypted keys; file/env still work); human-wait visibility on board/dashboard
 - **Run console** on the ticket — typed narrative/tool/run chrome, late-join from durable log, deep link `/board?task=…&attach=1`
 - **Steer** — queue a mid-run note on a live **PiRPC** session from the console (same board auth as approve/answer; CLI unsupported; hidden while a Q&A is parked). Follow-up after settle is not shipped
+- **Abort** — stop a live CLI or PiRPC run from the console (same board auth as approve/steer; OS kill-tree; ticket returns to Todo). Mid-run budget kill of in-flight workers is not shipped
 - Optional **CI fail → fresh agent re-dispatch** with circuit breaker (default **off**; enable via WORKFLOW / `SVARM_CI_RESUME_*`)
 - **Review-resume** — Changes requested chip when GitHub reviews ask for changes; optional re-dispatch on first request (default **off**; `review_resume` / `SVARM_REVIEW_RESUME_ENABLED`; shares the CI resume circuit). Empty review-column fallback is capped at 50 PR rows; a GitHub list error skips that scan
 - **Review Station** — structured Evidence (PR, attempts, agent/model, cost, age) on selected review cards; PR/no-PR glance chips and a CI `pass` / `fail` / `pending` / `unknown` summary chip (N/A on the local tracker). Informational only — humans still merge on GitHub.

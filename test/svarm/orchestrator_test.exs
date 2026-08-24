@@ -34,6 +34,53 @@ defmodule Svarm.OrchestratorTest do
     end
   end
 
+  describe "board abort" do
+    test "not running returns {:error, :not_running}" do
+      assert {:error, :not_running} = Orchestrator.abort("sva_abort_missing")
+    end
+
+    test "kills worker, drops claim, does not crash-retry" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "abort no retry",
+          status: "in_progress",
+          assignee: "cody"
+        })
+
+      worker = spawn(fn -> Process.sleep(:infinity) end)
+      original = :sys.get_state(Orchestrator)
+      mref = Process.monitor(worker)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | running:
+              Map.put(state.running, task.id, %{
+                task: task,
+                pid: worker,
+                mref: mref,
+                started_mono_ms: System.monotonic_time(:millisecond),
+                started_at: System.system_time(:second)
+              }),
+            claimed: MapSet.put(state.claimed, task.id)
+        }
+      end)
+
+      try do
+        assert :ok = Orchestrator.abort(task.id)
+        refute Process.alive?(worker)
+        state = :sys.get_state(Orchestrator)
+        refute Map.has_key?(state.running, task.id)
+        refute MapSet.member?(state.claimed, task.id)
+        refute Map.has_key?(state.retry_attempts, task.id)
+        assert KanbanBridge.get_task(task.id).status == "todo"
+      after
+        if Process.alive?(worker), do: Process.exit(worker, :kill)
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+  end
+
   describe "run_exit handling" do
     test "orchestrator survives concurrent run_exit messages for unknown tasks" do
       send(Orchestrator, {:run_exit, "sva_nonexistent_a", :ok})
