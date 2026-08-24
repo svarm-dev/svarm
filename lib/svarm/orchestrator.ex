@@ -380,11 +380,19 @@ defmodule Svarm.Orchestrator do
         state = cancel_retry_for(state, task_id)
         drop_worker_monitor(entry)
         await_worker_exit(entry.pid, :board_abort)
-        Events.broadcast_agent_line(task_id, "\n[board] aborted\n")
-        state.tracker.update_status(state.tracker_config, task_id, "todo")
-        AgentQuestion.clear(task_id)
-        broadcast_status(state)
-        {:reply, :ok, state}
+
+        # Runner writes review/failed before {:run_exit}. A late Abort must
+        # not yank that finished ticket back to todo.
+        if already_terminal?(state, task_id) do
+          broadcast_status(state)
+          {:reply, {:error, :not_running}, state}
+        else
+          Events.broadcast_agent_line(task_id, "\n[board] aborted\n")
+          state.tracker.update_status(state.tracker_config, task_id, "todo")
+          AgentQuestion.clear(task_id)
+          broadcast_status(state)
+          {:reply, :ok, state}
+        end
     end
   end
 
@@ -542,6 +550,13 @@ defmodule Svarm.Orchestrator do
         Process.demonitor(ref, [:flush])
         Process.exit(pid, :kill)
         :ok
+    end
+  end
+
+  defp already_terminal?(state, task_id) do
+    case safe_get_issue(state.tracker, state.tracker_config, task_id) do
+      {:ok, issue} -> issue.status in state.terminal_states
+      _ -> false
     end
   end
 
