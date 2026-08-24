@@ -154,6 +154,9 @@ defmodule Svarm.ApprovalTest do
       FakeTracker.put(demo)
       FakeTracker.put(other)
 
+      Svarm.Budget.clear_hold("sva_pending")
+      Svarm.Budget.clear_hold("sva_demo")
+
       %{config: config}
     end
 
@@ -220,11 +223,15 @@ defmodule Svarm.ApprovalTest do
       :ok = Svarm.Budget.persist_hold("sva_pending")
       before = :sys.get_state(Svarm.Orchestrator).overage_once
 
-      assert {:error, :forbidden} = Approval.approve("sva_pending")
-      assert {:ok, %{status: "pending_approval"}} = FakeTracker.get_issue(%{}, "sva_pending")
-      assert Svarm.Budget.held?("sva_pending")
-      _ = :sys.get_state(Svarm.Orchestrator)
-      assert MapSet.equal?(:sys.get_state(Svarm.Orchestrator).overage_once, before)
+      try do
+        assert {:error, :forbidden} = Approval.approve("sva_pending")
+        assert {:ok, %{status: "pending_approval"}} = FakeTracker.get_issue(%{}, "sva_pending")
+        assert Svarm.Budget.held?("sva_pending")
+        _ = :sys.get_state(Svarm.Orchestrator)
+        assert MapSet.equal?(:sys.get_state(Svarm.Orchestrator).overage_once, before)
+      after
+        Svarm.Budget.clear_hold("sva_pending")
+      end
     end
   end
 
