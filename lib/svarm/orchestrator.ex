@@ -379,13 +379,13 @@ defmodule Svarm.Orchestrator do
 
         state = cancel_retry_for(state, task_id)
         drop_worker_monitor(entry)
-        await_worker_exit(entry.pid, :board_abort)
 
-        # Runner writes review/failed before {:run_exit}. A late Abort must
-        # not yank that finished ticket back to todo.
-        if already_terminal?(state, task_id) do
-          # Dropping `running` would skip {:run_exit} bookkeeping (PR capture /
-          # tracker run-summary). Finish that path without yanking to todo.
+        # Snapshot before kill. CLI/PiRPC write failed/review on port death;
+        # checking after kill_os_tree would treat a live Abort as a late finish.
+        late? = already_terminal?(state, task_id)
+        await_worker_exit(entry.pid)
+
+        if late? do
           state = finish_late_abort(state, entry, task_id)
           broadcast_status(state)
           {:reply, {:error, :not_running}, state}
@@ -539,11 +539,12 @@ defmodule Svarm.Orchestrator do
 
   defp drop_worker_monitor(_), do: true
 
-  # Kill-tree first (stall/timeout share this), then wait so a dying runner
-  # cannot overwrite the `todo` status we patch next.
-  defp await_worker_exit(pid, reason) when is_pid(pid) do
+  # Kill-tree first (Ports registry is keyed by the worker pid), then
+  # uncatchable `:kill` so the runner cannot write failed/review on port death.
+  defp await_worker_exit(pid) when is_pid(pid) do
     ref = Process.monitor(pid)
-    kill_worker(pid, reason)
+    AgentRunner.kill_os_tree(pid)
+    Process.exit(pid, :kill)
 
     receive do
       {:DOWN, ^ref, :process, ^pid, _} -> :ok
@@ -551,7 +552,6 @@ defmodule Svarm.Orchestrator do
       2_000 ->
         Logger.warning("abort: worker #{inspect(pid)} still alive after 2s")
         Process.demonitor(ref, [:flush])
-        Process.exit(pid, :kill)
         :ok
     end
   end

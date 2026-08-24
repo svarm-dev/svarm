@@ -180,8 +180,7 @@ defmodule Svarm.Runner.CliTest do
   end
 
   test "board abort: kill-tree reaps hang child and returns todo", %{
-    workspace_root: root,
-    statuses: statuses
+    workspace_root: root
   } do
     pidfile = Path.join(root, "abort.pid")
 
@@ -193,13 +192,17 @@ defmodule Svarm.Runner.CliTest do
       })
 
     issue = task(kb.id)
+    orch = :sys.get_state(Orchestrator)
 
     {:ok, runner} =
       Task.start(fn ->
         Cli.run(
           issue,
           agent_config("hang", %{"FAKE_CLI_PIDFILE" => pidfile}),
-          run_opts(root, statuses, timeout_ms: 30_000)
+          workspace_root: root,
+          tracker: orch.tracker,
+          tracker_config: orch.tracker_config,
+          timeout_ms: 30_000
         )
       end)
 
@@ -225,6 +228,7 @@ defmodule Svarm.Runner.CliTest do
       assert :ok = Orchestrator.abort(kb.id)
       refute OsPid.alive_after?(pid, 1_000), "abort left hang child pid #{pid} alive"
       assert KanbanBridge.get_task(kb.id).status == "todo"
+      refute KanbanBridge.get_task(kb.id).status == "failed"
       assert_agent_line(kb.id, "[board] aborted")
       state = :sys.get_state(Orchestrator)
       refute Map.has_key?(state.running, kb.id)
