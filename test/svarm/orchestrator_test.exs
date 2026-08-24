@@ -113,6 +113,8 @@ defmodule Svarm.OrchestratorTest do
         state = :sys.get_state(Orchestrator)
         refute Map.has_key?(state.running, task.id)
         refute MapSet.member?(state.claimed, task.id)
+        assert Map.has_key?(state.last_run_entries, task.id)
+        assert MapSet.member?(state.completed, task.id)
       after
         if Process.alive?(worker), do: Process.exit(worker, :kill)
         :sys.replace_state(Orchestrator, fn _ -> original end)

@@ -384,6 +384,9 @@ defmodule Svarm.Orchestrator do
         # Runner writes review/failed before {:run_exit}. A late Abort must
         # not yank that finished ticket back to todo.
         if already_terminal?(state, task_id) do
+          # Dropping `running` would skip {:run_exit} bookkeeping (PR capture /
+          # tracker run-summary). Finish that path without yanking to todo.
+          state = finish_late_abort(state, entry, task_id)
           broadcast_status(state)
           {:reply, {:error, :not_running}, state}
         else
@@ -558,6 +561,22 @@ defmodule Svarm.Orchestrator do
       {:ok, issue} -> issue.status in state.terminal_states
       _ -> false
     end
+  end
+
+  defp finish_late_abort(state, entry, task_id) do
+    state =
+      state
+      |> Map.update!(:last_run_entries, &Map.put(&1, task_id, entry))
+      |> Map.update!(:completed, &MapSet.put(&1, task_id))
+
+    result =
+      case safe_get_issue(state.tracker, state.tracker_config, task_id) do
+        {:ok, %{status: "failed"}} -> {:error, :already_finished}
+        _ -> :ok
+      end
+
+    post_run_summary(state, task_id, result)
+    state
   end
 
   defp cancel_retry_for(state, task_id) do
