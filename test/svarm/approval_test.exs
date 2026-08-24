@@ -214,6 +214,14 @@ defmodule Svarm.ApprovalTest do
       assert {:error, :forbidden} = Approval.reject("sva_pending")
       assert {:ok, %{status: "pending_approval"}} = FakeTracker.get_issue(%{}, "sva_pending")
     end
+
+    test "approve of a budget hold returns error when update_status fails" do
+      Approval.__override_tracker__(FailStatusTracker, %{kind: :github})
+      :ok = Svarm.Budget.persist_hold("sva_pending")
+
+      assert {:error, :forbidden} = Approval.approve("sva_pending")
+      assert {:ok, %{status: "pending_approval"}} = FakeTracker.get_issue(%{}, "sva_pending")
+    end
   end
 
   describe "local tracker path" do
