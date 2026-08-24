@@ -650,7 +650,21 @@ defmodule Svarm.Board do
       end
     end)
     |> merge_coord_wait(c)
+    |> merge_coord_attempts(c)
   end
+
+  # GitHub cards have no kanban attempts column. Overlay coordination when
+  # the card still looks like the GitHub default (0 / nil) so a retry is
+  # visible. Local already stores attempts on the task — do not clobber.
+  defp merge_coord_attempts(task, %{attempts: n})
+       when is_integer(n) and n > 0 do
+    case Map.get(task, :attempts) do
+      existing when is_integer(existing) and existing > 0 -> task
+      _ -> Map.put(task, :attempts, n)
+    end
+  end
+
+  defp merge_coord_attempts(task, _), do: task
 
   # Local cards already carry wait fields from the task row. GitHub cards
   # have no kanban row — overlay Coordination so the board can show the wait.

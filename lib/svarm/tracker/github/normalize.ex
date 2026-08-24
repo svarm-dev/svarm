@@ -1,8 +1,12 @@
 defmodule Svarm.Tracker.GitHub.Normalize do
   @moduledoc """
   Converts GitHub REST API issue responses to `%Svarm.Issue{}` structs.
+
+  GitHub issues have no native retry counter. `from_api_response/2` sets
+  `attempts: 0`. `attach_attempts/1` overlays `task_coordination.attempts`
+  (SQLite, not Orchestrator `retry_attempts`) onto the issue.
   """
-  alias Svarm.Issue
+  alias Svarm.{Coordination, Issue}
 
   @doc """
   Convert a GitHub API issue response to an Issue struct.
@@ -29,6 +33,28 @@ defmodule Svarm.Tracker.GitHub.Normalize do
       tracker: :github,
       raw: gh_issue
     }
+  end
+
+  @doc """
+  Overlay stored retry attempts from coordination onto normalized issues.
+
+  Missing rows stay `0`. Lists use one `get_many/1` (not N+1).
+  """
+  @spec attach_attempts(Issue.t()) :: Issue.t()
+  @spec attach_attempts([Issue.t()]) :: [Issue.t()]
+  def attach_attempts(%Issue{} = issue) do
+    hd(attach_attempts([issue]))
+  end
+
+  def attach_attempts(issues) when is_list(issues) do
+    by_id = Coordination.get_many(Enum.map(issues, & &1.id))
+
+    Enum.map(issues, fn issue ->
+      case Map.get(by_id, issue.id) do
+        %{attempts: n} when is_integer(n) and n >= 0 -> %{issue | attempts: n}
+        _ -> issue
+      end
+    end)
   end
 
   defp build_id(gh_issue) do

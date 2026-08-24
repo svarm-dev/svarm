@@ -305,4 +305,4 @@ rm -rf ~/svarm_workspaces/ && mix phx.server
 | Other trackers (Linear/Jira) | Not in OSS yet. GitHub + local only today |
 | Export costs to CSV/JSON | `mix svarm.export_usage --format csv` (or `json`; optional `--out path`). Costs also on the board and in GitHub comments |
 | Spend by outcome (API) | `Svarm.Usage.by_outcome(task_statuses: …)` — buckets `:merged` (status `done`, or GitHub PR `merged` when coordination recorded a PR), `:in_review`, `:other`. Query-time only (ledger stays append-only). Local / no-PR is status-based. Closed-unmerged and GitHub API errors do not invent merges. Estimated spend flagged. See `Svarm.Usage.Outcomes` |
-| Per-agent 24h cost / retry | [`/dashboard`](http://localhost:4000/dashboard) roster — wall-clock last 24 hours; estimated spend labeled; retry is n/a when attempts are not recorded (GitHub today) |
+| Per-agent 24h cost / retry | [`/dashboard`](http://localhost:4000/dashboard) roster — wall-clock last 24 hours; estimated spend labeled; retry is n/a when every assigned card still has `attempts == 0`. GitHub stores retry counts in `task_coordination` (not a GitHub label). |

@@ -1,10 +1,12 @@
 defmodule Svarm.Coordination do
   @moduledoc """
   Durable per-task coordination state (PR link, CI/review resume counters,
-  shared circuit, review-resume detection).
+  shared circuit, review-resume detection, GitHub retry attempts).
 
   Lives in SQLite so it works for both Local and GitHub trackers without
   stuffing GitHub issue bodies. Owned by this context — not KanbanBridge.
+  GitHub `Issue.attempts` is stored here (not a GitHub label) so Orchestrator
+  retries can exhaust after a re-fetch.
   """
   use Ecto.Schema
 
@@ -31,6 +33,7 @@ defmodule Svarm.Coordination do
     field(:review_context_summary, :string)
     field(:wait_reason, :string)
     field(:pending_question, :map)
+    field(:attempts, :integer, default: 0)
 
     timestamps(type: :utc_datetime)
   end
@@ -52,7 +55,8 @@ defmodule Svarm.Coordination do
     :review_last_head_sha,
     :review_context_summary,
     :wait_reason,
-    :pending_question
+    :pending_question,
+    :attempts
   ]
 
   @pr_url_re ~r{https://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)}i
@@ -266,6 +270,7 @@ defmodule Svarm.Coordination do
     row
     |> cast(normalize_attrs(attrs), @castable)
     |> validate_number(:ci_resume_count, greater_than_or_equal_to: 0)
+    |> validate_number(:attempts, greater_than_or_equal_to: 0)
   end
 
   defp normalize_attrs(attrs) when is_map(attrs) do
