@@ -564,19 +564,18 @@ defmodule Svarm.Orchestrator do
   end
 
   defp finish_late_abort(state, entry, task_id) do
-    state =
-      state
-      |> Map.update!(:last_run_entries, &Map.put(&1, task_id, entry))
-      |> Map.update!(:completed, &MapSet.put(&1, task_id))
+    state = Map.update!(state, :last_run_entries, &Map.put(&1, task_id, entry))
 
-    result =
-      case safe_get_issue(state.tracker, state.tracker_config, task_id) do
-        {:ok, %{status: "failed"}} -> {:error, :already_finished}
-        _ -> :ok
-      end
+    case safe_get_issue(state.tracker, state.tracker_config, task_id) do
+      {:ok, %{status: "failed"}} ->
+        # Same as handle_result error: do not session-skip via completed and
+        # do not post a run-summary (that is retry-exhaustion only).
+        state
 
-    post_run_summary(state, task_id, result)
-    state
+      _ ->
+        post_run_summary(state, task_id, :ok)
+        %{state | completed: MapSet.put(state.completed, task_id)}
+    end
   end
 
   defp cancel_retry_for(state, task_id) do

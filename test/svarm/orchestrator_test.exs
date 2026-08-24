@@ -120,6 +120,45 @@ defmodule Svarm.OrchestratorTest do
         :sys.replace_state(Orchestrator, fn _ -> original end)
       end
     end
+
+    test "failed late abort does not session-skip via completed" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "abort after fail",
+          status: "in_progress",
+          assignee: "cody"
+        })
+
+      worker = spawn(fn -> Process.sleep(:infinity) end)
+      original = :sys.get_state(Orchestrator)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | running:
+              Map.put(state.running, task.id, %{
+                task: task,
+                pid: worker,
+                mref: Process.monitor(worker),
+                started_mono_ms: System.monotonic_time(:millisecond),
+                started_at: System.system_time(:second)
+              }),
+            claimed: MapSet.put(state.claimed, task.id)
+        }
+      end)
+
+      try do
+        assert :ok = KanbanBridge.update_status(task.id, "failed")
+        assert {:error, :not_running} = Orchestrator.abort(task.id)
+        assert KanbanBridge.get_task(task.id).status == "failed"
+        state = :sys.get_state(Orchestrator)
+        refute Map.has_key?(state.running, task.id)
+        refute MapSet.member?(state.completed, task.id)
+      after
+        if Process.alive?(worker), do: Process.exit(worker, :kill)
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
   end
 
   describe "run_exit handling" do
