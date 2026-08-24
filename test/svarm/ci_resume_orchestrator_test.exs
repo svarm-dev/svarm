@@ -109,6 +109,48 @@ defmodule Svarm.CiResumeOrchestratorTest do
     def post_run_summary(_config, _id, _summary), do: :ok
   end
 
+  # PATCH reports failure; GET would look active if we mutated first.
+  defmodule PatchFailTracker do
+    def list_eligible(_config), do: {:ok, []}
+
+    def list_issues(_config, filters \\ []) do
+      issues = Application.get_env(:svarm, :ci_resume_test_issues, %{}) |> Map.values()
+      status = Keyword.get(filters, :status)
+      issues = if status, do: Enum.filter(issues, &(&1.status == status)), else: issues
+      {:ok, issues}
+    end
+
+    def get_issue(_config, id) do
+      issues = Application.get_env(:svarm, :ci_resume_test_issues, %{})
+
+      case Map.fetch(issues, id) do
+        {:ok, issue} -> {:ok, issue}
+        :error -> {:error, :not_found}
+      end
+    end
+
+    def update_status(_config, id, status) do
+      issues = Application.get_env(:svarm, :ci_resume_test_issues, %{})
+
+      case Map.fetch(issues, id) do
+        {:ok, issue} ->
+          Application.put_env(
+            :svarm,
+            :ci_resume_test_issues,
+            Map.put(issues, id, %{issue | status: status})
+          )
+
+          {:error, :forbidden}
+
+        :error ->
+          {:error, :forbidden}
+      end
+    end
+
+    def update_attempts(_config, _id, _n), do: :ok
+    def post_run_summary(_config, _id, _summary), do: :ok
+  end
+
   setup do
     KanbanBridge.delete_all_tasks()
     Repo.delete_all(Coordination)
@@ -323,6 +365,53 @@ defmodule Svarm.CiResumeOrchestratorTest do
     assert coord.ci_resume_count == 0
     assert coord.ci_last_head_sha == nil
     assert get_issue(task_id).status == "review"
+  end
+
+  test "PATCH error does not fingerprint even if GET would look active" do
+    task_id = "ci_patch_fail"
+    put_issue(task_id)
+
+    {:ok, _} =
+      Coordination.upsert(task_id, %{
+        pr_url: "https://github.com/o/r/pull/5",
+        pr_owner: "o",
+        pr_repo: "r",
+        pr_number: 5,
+        ci_resume_count: 0
+      })
+
+    Application.put_env(
+      :svarm,
+      :ci_resume_test_checks_result,
+      {:ok,
+       %{
+         conclusion: :failed,
+         head_sha: "sha_patch_fail",
+         failed_names: ["x"],
+         summary: "x",
+         draft: false,
+         check_count: 1
+       }}
+    )
+
+    orch = Process.whereis(Orchestrator)
+
+    :sys.replace_state(Orchestrator, fn state ->
+      %{state | tracker: PatchFailTracker, completed: MapSet.put(state.completed, task_id)}
+    end)
+
+    send(Orchestrator, :tick)
+    flush_orchestrator()
+
+    assert Process.whereis(Orchestrator) == orch
+    coord = Coordination.get(task_id)
+    # Poll ran (evidence stored) but reopen did not fingerprint.
+    assert coord.ci_last_conclusion == "failed"
+    assert get_issue(task_id).status == "todo"
+    assert coord.ci_resume_count == 0
+    assert coord.ci_last_head_sha == nil
+    refute MapSet.member?(:sys.get_state(Orchestrator).approved_once, task_id)
+    assert MapSet.member?(:sys.get_state(Orchestrator).completed, task_id)
   end
 
   test "disabled caps are no-op" do

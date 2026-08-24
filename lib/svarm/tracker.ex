@@ -43,9 +43,14 @@ defmodule Svarm.Tracker do
   @callback create_issue(config :: map(), attrs :: map()) :: {:ok, Issue.t()} | {:error, term()}
 
   @doc """
-  Updates the status of an issue. Returns `:ok`.
+  Updates the status of an issue.
+
+  Returns `:ok` when the tracker applied the move. Returns `{:error, reason}`
+  when it did not (HTTP failure, missing issue, etc.). Callers must not treat
+  an error as a completed status change.
   """
-  @callback update_status(config :: map(), id :: String.t(), status :: String.t()) :: :ok
+  @callback update_status(config :: map(), id :: String.t(), status :: String.t()) ::
+              :ok | {:error, term()}
 
   @doc """
   Updates the retry attempt counter for an issue. Returns `:ok`.
