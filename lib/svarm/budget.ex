@@ -100,12 +100,14 @@ defmodule Svarm.Budget do
   end
 
   defp apply_overage_unlock(task_id) do
-    # Permit first (sync) so a concurrent tick cannot re-park before overage_once lands.
-    Orchestrator.mark_overage_approved(task_id)
-    clear_hold(task_id)
-
     case Approval.tracker().update_status(Approval.tracker_config(), task_id, "todo") do
       :ok ->
+        # Permit after the tracker move so a failed PATCH cannot burn the hold
+        # or grant a spawn while GitHub is still pending_approval. A tick in
+        # the gap still sees held? and will not re-dispatch.
+        Orchestrator.mark_overage_approved(task_id)
+        clear_hold(task_id)
+
         Events.broadcast_task_updated(%{
           id: task_id,
           status: "todo",

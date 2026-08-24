@@ -218,9 +218,13 @@ defmodule Svarm.ApprovalTest do
     test "approve of a budget hold returns error when update_status fails" do
       Approval.__override_tracker__(FailStatusTracker, %{kind: :github})
       :ok = Svarm.Budget.persist_hold("sva_pending")
+      before = :sys.get_state(Svarm.Orchestrator).overage_once
 
       assert {:error, :forbidden} = Approval.approve("sva_pending")
       assert {:ok, %{status: "pending_approval"}} = FakeTracker.get_issue(%{}, "sva_pending")
+      assert Svarm.Budget.held?("sva_pending")
+      _ = :sys.get_state(Svarm.Orchestrator)
+      assert MapSet.equal?(:sys.get_state(Svarm.Orchestrator).overage_once, before)
     end
   end
 
