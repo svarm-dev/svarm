@@ -17,6 +17,8 @@ defmodule Svarm.Budget do
   alias Svarm.{Approval, Coordination, Events, KanbanBridge, Orchestrator}
   alias Svarm.Usage.Query
 
+  require Logger
+
   @wait_overage "budget_overage"
 
   @type caps :: %{
@@ -85,27 +87,39 @@ defmodule Svarm.Budget do
   @doc """
   Human unlock: move the ticket back to `todo` and permit **one** subsequent spawn.
   """
-  @spec approve_overage(String.t()) :: :ok | {:error, :not_held | :not_found}
+  @spec approve_overage(String.t()) :: :ok | {:error, term()}
   def approve_overage(task_id) when is_binary(task_id) do
     if held?(task_id) do
-      # Permit first (sync) so a concurrent tick cannot re-park before overage_once lands.
-      Orchestrator.mark_overage_approved(task_id)
-      clear_hold(task_id)
-      Approval.tracker().update_status(Approval.tracker_config(), task_id, "todo")
-
-      Events.broadcast_task_updated(%{
-        id: task_id,
-        status: "todo",
-        wait_reason: nil,
-        reason: :budget_overage
-      })
-
-      :ok
+      apply_overage_unlock(task_id)
     else
       case KanbanBridge.get_task(task_id) do
         nil -> {:error, :not_found}
         _ -> {:error, :not_held}
       end
+    end
+  end
+
+  defp apply_overage_unlock(task_id) do
+    case Approval.tracker().update_status(Approval.tracker_config(), task_id, "todo") do
+      :ok ->
+        # Permit after the tracker move so a failed PATCH cannot burn the hold
+        # or grant a spawn while GitHub is still pending_approval. A tick in
+        # the gap still sees held? and will not re-dispatch.
+        Orchestrator.mark_overage_approved(task_id)
+        clear_hold(task_id)
+
+        Events.broadcast_task_updated(%{
+          id: task_id,
+          status: "todo",
+          wait_reason: nil,
+          reason: :budget_overage
+        })
+
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("budget: update_status failed for #{task_id}: #{inspect(reason)}")
+        {:error, reason}
     end
   end
 

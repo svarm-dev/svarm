@@ -328,6 +328,62 @@ defmodule Svarm.OrchestratorTest do
       assert %{status: ^pending} = KanbanBridge.get_task(task.id)
     end
 
+    defmodule PatchFailTracker do
+      def list_eligible(config), do: Svarm.Tracker.Local.list_eligible(config)
+      def get_issue(config, id), do: Svarm.Tracker.Local.get_issue(config, id)
+      def list_issues(config, filters \\ []), do: Svarm.Tracker.Local.list_issues(config, filters)
+      def create_issue(config, attrs), do: Svarm.Tracker.Local.create_issue(config, attrs)
+      def update_status(_config, _id, _status), do: {:error, :forbidden}
+      def update_attempts(config, id, n), do: Svarm.Tracker.Local.update_attempts(config, id, n)
+      def claim(config, id), do: Svarm.Tracker.Local.claim(config, id)
+      def delete_all(config), do: Svarm.Tracker.Local.delete_all(config)
+      def post_run_summary(config, id, s), do: Svarm.Tracker.Local.post_run_summary(config, id, s)
+    end
+
+    test "failed pending_approval PATCH does not crash the poll loop or move status" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "gate patch fail",
+          status: "todo",
+          assignee: "cody"
+        })
+
+      original = :sys.get_state(Orchestrator)
+
+      local_config = %{
+        kind: :local,
+        active_states: ["todo", "in_progress"],
+        terminal_states: ["done", "failed", "review"],
+        ignored_assignees: []
+      }
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | tracker: PatchFailTracker,
+            tracker_config: local_config,
+            approval: %{mode: :all, trusted_assignees: MapSet.new()},
+            claimed: MapSet.delete(state.claimed, task.id),
+            running: Map.delete(state.running, task.id),
+            completed: MapSet.delete(state.completed, task.id),
+            approved_once: MapSet.new()
+        }
+      end)
+
+      try do
+        orch = Process.whereis(Orchestrator)
+        send(Orchestrator, :tick)
+        flush_orchestrator()
+
+        assert Process.whereis(Orchestrator) == orch
+        assert is_map(Orchestrator.status())
+        assert KanbanBridge.get_task(task.id).status == "todo"
+        refute task.id in Orchestrator.status().running_ids
+      after
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
     test "one-shot: approve skips re-pending; spawn clears bit; next cycle re-gates" do
       task =
         KanbanBridge.create_task(%{
@@ -538,6 +594,66 @@ defmodule Svarm.OrchestratorTest do
         assert Svarm.Budget.held?(task.id)
         refute task.id in Orchestrator.status().running_ids
         assert Orchestrator.status().last_budget_block.mode == :hold
+      after
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "failed budget-hold PATCH does not persist hold or crash the poll loop" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "budget patch fail",
+          status: "todo",
+          assignee: "demo"
+        })
+
+      Svarm.Usage.append(
+        run_id: "rb_patch_fail",
+        task_id: task.id,
+        source: "worker",
+        provider: "openrouter",
+        model_id: "x",
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        provider_cost_usd: 10.0,
+        estimated: false
+      )
+
+      original = :sys.get_state(Orchestrator)
+
+      local_config = %{
+        kind: :local,
+        active_states: ["todo", "in_progress"],
+        terminal_states: ["done", "failed", "review"],
+        ignored_assignees: []
+      }
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | tracker: PatchFailTracker,
+            tracker_config: local_config,
+            budget_caps: %{max_usd_per_ticket: 1.0},
+            budget_mode: :hold,
+            approval: %{mode: :off, trusted_assignees: MapSet.new()},
+            claimed: MapSet.delete(state.claimed, task.id),
+            running: Map.delete(state.running, task.id),
+            completed: MapSet.delete(state.completed, task.id),
+            overage_once: MapSet.new(),
+            last_budget_block: nil
+        }
+      end)
+
+      try do
+        orch = Process.whereis(Orchestrator)
+        send(Orchestrator, :tick)
+        flush_orchestrator()
+
+        assert Process.whereis(Orchestrator) == orch
+        assert is_map(Orchestrator.status())
+        assert KanbanBridge.get_task(task.id).status == "todo"
+        refute Svarm.Budget.held?(task.id)
+        refute task.id in Orchestrator.status().running_ids
       after
         :sys.replace_state(Orchestrator, fn _ -> original end)
       end

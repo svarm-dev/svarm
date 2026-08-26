@@ -103,6 +103,47 @@ defmodule Svarm.ReviewResumeOrchestratorTest do
     def post_run_summary(_config, _id, _summary), do: :ok
   end
 
+  defmodule PatchFailTracker do
+    def list_eligible(_config), do: {:ok, []}
+
+    def list_issues(_config, filters \\ []) do
+      issues = Application.get_env(:svarm, :review_resume_test_issues, %{}) |> Map.values()
+      status = Keyword.get(filters, :status)
+      issues = if status, do: Enum.filter(issues, &(&1.status == status)), else: issues
+      {:ok, issues}
+    end
+
+    def get_issue(_config, id) do
+      issues = Application.get_env(:svarm, :review_resume_test_issues, %{})
+
+      case Map.fetch(issues, id) do
+        {:ok, issue} -> {:ok, issue}
+        :error -> {:error, :not_found}
+      end
+    end
+
+    def update_status(_config, id, status) do
+      issues = Application.get_env(:svarm, :review_resume_test_issues, %{})
+
+      case Map.fetch(issues, id) do
+        {:ok, issue} ->
+          Application.put_env(
+            :svarm,
+            :review_resume_test_issues,
+            Map.put(issues, id, %{issue | status: status})
+          )
+
+          {:error, :forbidden}
+
+        :error ->
+          {:error, :forbidden}
+      end
+    end
+
+    def update_attempts(_config, _id, _n), do: :ok
+    def post_run_summary(_config, _id, _summary), do: :ok
+  end
+
   setup do
     KanbanBridge.delete_all_tasks()
     Repo.delete_all(Coordination)
@@ -676,5 +717,40 @@ defmodule Svarm.ReviewResumeOrchestratorTest do
     assert coord.ci_resume_count == 0
     assert coord.review_decision == "changes_requested"
     assert get_issue(task_id).status == "review"
+  end
+
+  test "PATCH error does not count a resume even if GET would look active" do
+    task_id = "review_spawn_patch_fail"
+    put_issue(task_id)
+    enable_review_spawn()
+
+    {:ok, _} =
+      Coordination.upsert(task_id, %{
+        pr_url: "https://github.com/o/r/pull/15",
+        pr_owner: "o",
+        pr_repo: "r",
+        pr_number: 15
+      })
+
+    put_changes_requested("sha_patch_fail")
+
+    orch = Process.whereis(Orchestrator)
+
+    :sys.replace_state(Orchestrator, fn state ->
+      %{state | tracker: PatchFailTracker, completed: MapSet.put(state.completed, task_id)}
+    end)
+
+    send(Orchestrator, :tick)
+    flush_orchestrator()
+
+    assert Process.whereis(Orchestrator) == orch
+    coord = Coordination.get(task_id)
+    # Detection ran, PATCH was attempted (in-memory todo), but count was not burned.
+    assert coord.review_decision == "changes_requested"
+    assert coord.review_last_head_sha == "sha_patch_fail"
+    assert get_issue(task_id).status == "todo"
+    assert coord.ci_resume_count == 0
+    refute MapSet.member?(:sys.get_state(Orchestrator).approved_once, task_id)
+    assert MapSet.member?(:sys.get_state(Orchestrator).completed, task_id)
   end
 end

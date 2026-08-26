@@ -674,20 +674,47 @@ defmodule Svarm.Orchestrator do
   end
 
   defp maybe_gate_or_spawn(state, task) do
-    if budget_held_without_permit?(state, task.id) do
-      state
-    else
-      one_shot? = MapSet.member?(state.approved_once, task.id)
+    cond do
+      budget_held_without_permit?(state, task.id) ->
+        state
 
-      if not one_shot? and Approval.required?(state.approval, task, state.agents) do
-        :ok =
-          state.tracker.update_status(state.tracker_config, task.id, Approval.pending_status())
+      not MapSet.member?(state.approved_once, task.id) and
+          Approval.required?(state.approval, task, state.agents) ->
+        hold_for_approval(state, task)
 
+      true ->
+        maybe_budget_or_spawn(state, task)
+    end
+  end
+
+  defp hold_for_approval(state, task) do
+    case state.tracker.update_status(state.tracker_config, task.id, Approval.pending_status()) do
+      :ok ->
         Logger.info("task #{task.id} held for human approval")
         state
-      else
-        maybe_budget_or_spawn(state, task)
-      end
+
+      {:error, reason} ->
+        Logger.warning(
+          "orchestrator: pending_approval status failed for #{task.id}: #{inspect(reason)}"
+        )
+
+        state
+    end
+  end
+
+  defp hold_for_budget_overage(state, task) do
+    case state.tracker.update_status(state.tracker_config, task.id, Approval.pending_status()) do
+      :ok ->
+        :ok = Budget.persist_hold(task.id)
+        Logger.info("task #{task.id} held for budget overage approval")
+        state
+
+      {:error, reason} ->
+        Logger.warning(
+          "orchestrator: budget hold status failed for #{task.id}: #{inspect(reason)}"
+        )
+
+        state
     end
   end
 
@@ -721,12 +748,7 @@ defmodule Svarm.Orchestrator do
 
     state =
       if state.budget_mode == :hold do
-        :ok =
-          state.tracker.update_status(state.tracker_config, task.id, Approval.pending_status())
-
-        :ok = Budget.persist_hold(task.id)
-        Logger.info("task #{task.id} held for budget overage approval")
-        state
+        hold_for_budget_overage(state, task)
       else
         state
       end
@@ -1019,8 +1041,13 @@ defmodule Svarm.Orchestrator do
   end
 
   defp reopen_for_resume(state, task_id) do
-    state.tracker.update_status(state.tracker_config, task_id, "todo")
+    case state.tracker.update_status(state.tracker_config, task_id, "todo") do
+      {:error, reason} -> {:error, reason}
+      :ok -> confirm_reopened_active(state, task_id)
+    end
+  end
 
+  defp confirm_reopened_active(state, task_id) do
     case safe_get_issue(state.tracker, state.tracker_config, task_id) do
       {:ok, %{status: status}} when is_binary(status) ->
         if status in state.active_states do

@@ -12,6 +12,8 @@ defmodule Svarm.Approval do
 
   alias Svarm.{Budget, ProfileRouter, Tracker}
 
+  require Logger
+
   @status_pending "pending_approval"
   @tracker_override {__MODULE__, :tracker_override}
 
@@ -126,21 +128,35 @@ defmodule Svarm.Approval do
   defp do_approve(adapter, config, task_id) do
     case adapter.get_issue(config, task_id) do
       {:ok, %{status: @status_pending}} ->
-        if Budget.held?(task_id) do
-          Budget.approve_overage(task_id)
-        else
-          :ok = adapter.update_status(config, task_id, "todo")
-          # One-shot: next poll may dispatch without re-entering pending_approval
-          Svarm.Orchestrator.mark_approved(task_id)
-          broadcast(:approved, task_id)
-          :ok
-        end
+        approve_pending(adapter, config, task_id)
 
       {:ok, %{status: other}} ->
         {:error, {:not_pending, other}}
 
       {:error, _} ->
         {:error, :not_found}
+    end
+  end
+
+  defp approve_pending(adapter, config, task_id) do
+    if Budget.held?(task_id) do
+      Budget.approve_overage(task_id)
+    else
+      apply_approve_move(adapter, config, task_id)
+    end
+  end
+
+  defp apply_approve_move(adapter, config, task_id) do
+    case adapter.update_status(config, task_id, "todo") do
+      :ok ->
+        # One-shot: next poll may dispatch without re-entering pending_approval
+        Svarm.Orchestrator.mark_approved(task_id)
+        broadcast(:approved, task_id)
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("approval: update_status failed for #{task_id}: #{inspect(reason)}")
+        {:error, reason}
     end
   end
 
@@ -156,16 +172,26 @@ defmodule Svarm.Approval do
   defp do_reject(adapter, config, task_id, to_status) do
     case adapter.get_issue(config, task_id) do
       {:ok, %{status: @status_pending}} ->
-        if Budget.held?(task_id), do: Budget.clear_hold(task_id)
-        :ok = adapter.update_status(config, task_id, to_status)
-        broadcast(:rejected, task_id)
-        :ok
+        apply_reject_move(adapter, config, task_id, to_status)
 
       {:ok, %{status: other}} ->
         {:error, {:not_pending, other}}
 
       {:error, _} ->
         {:error, :not_found}
+    end
+  end
+
+  defp apply_reject_move(adapter, config, task_id, to_status) do
+    case adapter.update_status(config, task_id, to_status) do
+      :ok ->
+        if Budget.held?(task_id), do: Budget.clear_hold(task_id)
+        broadcast(:rejected, task_id)
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("approval: update_status failed for #{task_id}: #{inspect(reason)}")
+        {:error, reason}
     end
   end
 

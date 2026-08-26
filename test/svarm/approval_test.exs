@@ -4,6 +4,11 @@ defmodule Svarm.ApprovalTest do
   alias Svarm.{Approval, Issue, KanbanBridge, Tracker}
   alias Svarm.Test.FakeTracker
 
+  defmodule FailStatusTracker do
+    def get_issue(config, id), do: FakeTracker.get_issue(config, id)
+    def update_status(_config, _id, _status), do: {:error, :forbidden}
+  end
+
   @agents %{
     "default" => %{command: "true", args: [], env: %{}},
     "cody" => %{command: "true", args: [], env: %{}}
@@ -149,6 +154,9 @@ defmodule Svarm.ApprovalTest do
       FakeTracker.put(demo)
       FakeTracker.put(other)
 
+      Svarm.Budget.clear_hold("sva_pending")
+      Svarm.Budget.clear_hold("sva_demo")
+
       %{config: config}
     end
 
@@ -191,6 +199,39 @@ defmodule Svarm.ApprovalTest do
 
     test "approve of missing issue returns not_found" do
       assert {:error, :not_found} = Approval.approve("sva_missing")
+    end
+
+    test "approve returns error and does not mark_approved when update_status fails" do
+      Approval.__override_tracker__(FailStatusTracker, %{kind: :github})
+
+      before = :sys.get_state(Svarm.Orchestrator).approved_once
+      assert {:error, :forbidden} = Approval.approve("sva_pending")
+      assert {:ok, %{status: "pending_approval"}} = FakeTracker.get_issue(%{}, "sva_pending")
+      _ = :sys.get_state(Svarm.Orchestrator)
+      assert MapSet.equal?(:sys.get_state(Svarm.Orchestrator).approved_once, before)
+    end
+
+    test "reject returns error and leaves status pending when update_status fails" do
+      Approval.__override_tracker__(FailStatusTracker, %{kind: :github})
+
+      assert {:error, :forbidden} = Approval.reject("sva_pending")
+      assert {:ok, %{status: "pending_approval"}} = FakeTracker.get_issue(%{}, "sva_pending")
+    end
+
+    test "approve of a budget hold returns error when update_status fails" do
+      Approval.__override_tracker__(FailStatusTracker, %{kind: :github})
+      :ok = Svarm.Budget.persist_hold("sva_pending")
+      before = :sys.get_state(Svarm.Orchestrator).overage_once
+
+      try do
+        assert {:error, :forbidden} = Approval.approve("sva_pending")
+        assert {:ok, %{status: "pending_approval"}} = FakeTracker.get_issue(%{}, "sva_pending")
+        assert Svarm.Budget.held?("sva_pending")
+        _ = :sys.get_state(Svarm.Orchestrator)
+        assert MapSet.equal?(:sys.get_state(Svarm.Orchestrator).overage_once, before)
+      after
+        Svarm.Budget.clear_hold("sva_pending")
+      end
     end
   end
 
