@@ -45,9 +45,9 @@ defmodule Svarm.Tracker do
   @doc """
   Updates the status of an issue.
 
-  `:ok` when the tracker persisted the status. `{:error, reason}` when it
-  did not (GitHub PATCH fail-closed). Callers must not assume Todo/review
-  after an error.
+  Returns `:ok` when the tracker applied the move. Returns `{:error, reason}`
+  when it did not (HTTP failure, missing issue, GitHub PATCH fail-closed).
+  Callers must not treat an error as a completed status change.
   """
   @callback update_status(config :: map(), id :: String.t(), status :: String.t()) ::
               :ok | {:error, term()}

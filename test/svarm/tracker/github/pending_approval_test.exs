@@ -118,6 +118,59 @@ defmodule Svarm.Tracker.GitHub.PendingApprovalTest do
     end
   end
 
+  describe "update_status/3 PATCH failures" do
+    test "200 is :ok" do
+      stub_issue(gh_issue(%{"labels" => [%{"name" => "status: review"}]}))
+      stub_patch({:ok, %{status: 200, body: %{}}})
+
+      assert :ok = GitHub.update_status(@config, "42", "todo")
+      assert_received {:http_patch, _url, _opts}
+    end
+
+    test "403 is {:error, reason}" do
+      stub_issue(gh_issue(%{"labels" => [%{"name" => "status: review"}]}))
+
+      stub_patch(
+        {:ok,
+         %{
+           status: 403,
+           headers: %{},
+           body: %{"message" => "Resource not accessible by integration"}
+         }}
+      )
+
+      assert {:error, reason} = GitHub.update_status(@config, "42", "todo")
+      assert reason.type == :forbidden
+      assert_received {:http_patch, _url, _opts}
+    end
+
+    test "5xx is {:error, reason}" do
+      stub_issue(gh_issue(%{"labels" => [%{"name" => "status: review"}]}))
+      stub_patch({:ok, %{status: 502, body: %{}}})
+
+      assert {:error, reason} = GitHub.update_status(@config, "42", "todo")
+      assert reason.type == :server_error
+      assert reason.message =~ "502"
+      assert_received {:http_patch, _url, _opts}
+    end
+
+    test "transport error is {:error, reason}" do
+      stub_issue(gh_issue(%{"labels" => [%{"name" => "status: review"}]}))
+      stub_patch({:error, :timeout})
+
+      assert {:error, reason} = GitHub.update_status(@config, "42", "todo")
+      assert reason.type == :network_error
+      assert_received {:http_patch, _url, _opts}
+    end
+
+    test "lookup miss is {:error, _} and does not PATCH" do
+      Process.put(:github_issue_response, {:ok, %{status: 404, body: %{}}})
+
+      assert {:error, :not_found} = GitHub.update_status(@config, "99", "todo")
+      refute_received {:http_patch, _, _}
+    end
+  end
+
   describe "Normalize.map_status / from_api_response" do
     test "reads status: pending-approval back as pending_approval via get_issue" do
       payload = gh_issue(%{"labels" => [%{"name" => "status: pending-approval"}]})
@@ -269,6 +322,33 @@ defmodule Svarm.Tracker.GitHub.PendingApprovalTest do
       refute "status: pending-approval" in opts[:json][:labels]
       assert opts[:json][:state] == "closed"
     end
+
+    test "approve returns error when PATCH is 403" do
+      stub_issue(gh_issue(%{"labels" => [%{"name" => "status: pending-approval"}]}))
+
+      stub_patch(
+        {:ok,
+         %{
+           status: 403,
+           headers: %{},
+           body: %{"message" => "Resource not accessible by integration"}
+         }}
+      )
+
+      before = :sys.get_state(Svarm.Orchestrator).approved_once
+      assert {:error, reason} = Approval.approve("42")
+      assert reason.type == :forbidden
+      flush_orchestrator()
+      assert MapSet.equal?(:sys.get_state(Svarm.Orchestrator).approved_once, before)
+    end
+
+    test "reject returns error when PATCH is 502" do
+      stub_issue(gh_issue(%{"labels" => [%{"name" => "status: pending-approval"}]}))
+      stub_patch({:ok, %{status: 502, body: %{}}})
+
+      assert {:error, reason} = Approval.reject("42")
+      assert reason.type == :server_error
+    end
   end
 
   defp stub_issue(body) do
@@ -277,6 +357,15 @@ defmodule Svarm.Tracker.GitHub.PendingApprovalTest do
 
   defp stub_list(issues) do
     Process.put(:github_list_response, {:ok, %{status: 200, body: issues}})
+  end
+
+  defp stub_patch(response) do
+    Process.put(:github_patch_response, response)
+  end
+
+  defp flush_orchestrator do
+    _ = :sys.get_state(Svarm.Orchestrator)
+    :ok
   end
 
   defp gh_issue(overrides) do

@@ -231,14 +231,14 @@ defmodule Svarm.Tracker.GitHub do
   def update_status(config, id, status) do
     {status_labels, reverse_labels} = resolved_label_maps(config)
 
-    case find_issue(config, id) do
-      nil ->
-        Logger.warning("github: cannot update_status for unknown issue #{id}")
-        :ok
-
-      issue ->
+    case get_issue(config, id) do
+      {:ok, issue} ->
         new_labels = labels_for_status(issue.labels, status, reverse_labels, status_labels)
         patch_issue(config, issue.source_id, new_labels, status)
+
+      {:error, reason} ->
+        Logger.warning("github: cannot update_status for #{id}: #{inspect(reason)}")
+        {:error, reason}
     end
   end
 
@@ -356,13 +356,20 @@ defmodule Svarm.Tracker.GitHub do
 
       {:ok, %{status: 403} = resp} ->
         Logger.warning("github: issue update forbidden: #{format_forbidden(resp)}")
+        {:error, error(:forbidden, "issue update forbidden")}
 
       other ->
         Logger.warning("github: issue update failed: #{inspect(other)}")
+        {:error, patch_error(other)}
     end
-
-    :ok
   end
+
+  defp patch_error({:ok, %{status: code}}) when is_integer(code),
+    do: error(:server_error, "GitHub API error #{code}")
+
+  defp patch_error({:error, _reason}), do: error(:network_error, "cannot reach GitHub API")
+
+  defp patch_error(_other), do: error(:server_error, "GitHub API error")
 
   defp maybe_close(body, status) when status in ["done", "failed"],
     do: Map.merge(body, %{state: "closed", state_reason: "completed"})
