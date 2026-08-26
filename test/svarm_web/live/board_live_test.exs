@@ -1,3 +1,17 @@
+defmodule SvarmWeb.BoardLiveAbortFailTracker do
+  @moduledoc false
+
+  def update_status(_config, _id, _status), do: {:error, :forbidden}
+  def list_eligible(_config), do: {:ok, []}
+
+  def get_issue(_config, id) do
+    case Svarm.KanbanBridge.get_task(id) do
+      nil -> {:error, :not_found}
+      task -> {:ok, task}
+    end
+  end
+end
+
 defmodule SvarmWeb.BoardLiveTest do
   use SvarmWeb.LiveCase, async: false
 
@@ -311,6 +325,41 @@ defmodule SvarmWeb.BoardLiveTest do
       assert KanbanBridge.get_task(task.id).status == "todo"
       refute Process.alive?(worker)
       assert Svarm.RunLog.get(task.id) =~ "[board] aborted"
+    after
+      if Process.alive?(worker), do: Process.exit(worker, :kill)
+      restore_orchestrator(original)
+    end
+  end
+
+  test "abort tracker PATCH failure flashes and does not claim Todo", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Abort patch fail",
+        status: "in_progress",
+        assignee: "demo"
+      })
+
+    worker = spawn(fn -> Process.sleep(:infinity) end)
+    original = put_orchestrator_running(task, worker)
+
+    :sys.replace_state(Svarm.Orchestrator, fn state ->
+      %{state | tracker: SvarmWeb.BoardLiveAbortFailTracker}
+    end)
+
+    try do
+      {:ok, view, _html} = live(conn, ~p"/board?task=#{task.id}")
+
+      view
+      |> element("#abort-run-#{task.id} button", "Abort")
+      |> render_click()
+
+      html = render(view)
+      assert html =~ "could not be moved to Todo"
+      refute html =~ "ticket returned to Todo"
+      assert KanbanBridge.get_task(task.id).status == "in_progress"
+      refute Process.alive?(worker)
     after
       if Process.alive?(worker), do: Process.exit(worker, :kill)
       restore_orchestrator(original)

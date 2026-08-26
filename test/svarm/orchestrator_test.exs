@@ -35,8 +35,62 @@ defmodule Svarm.OrchestratorTest do
   end
 
   describe "board abort" do
+    defmodule AbortFailTracker do
+      def update_status(_config, _id, _status), do: {:error, :forbidden}
+      def list_eligible(_config), do: {:ok, []}
+
+      def get_issue(_config, id) do
+        case KanbanBridge.get_task(id) do
+          nil -> {:error, :not_found}
+          task -> {:ok, task}
+        end
+      end
+    end
+
     test "not running returns {:error, :not_running}" do
       assert {:error, :not_running} = Orchestrator.abort("sva_abort_missing")
+    end
+
+    test "tracker PATCH failure does not claim todo or crash" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "abort patch fail",
+          status: "in_progress",
+          assignee: "cody"
+        })
+
+      worker = spawn(fn -> Process.sleep(:infinity) end)
+      original = :sys.get_state(Orchestrator)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | tracker: AbortFailTracker,
+            running:
+              Map.put(state.running, task.id, %{
+                task: task,
+                pid: worker,
+                mref: Process.monitor(worker),
+                started_mono_ms: System.monotonic_time(:millisecond),
+                started_at: System.system_time(:second)
+              }),
+            claimed: MapSet.put(state.claimed, task.id)
+        }
+      end)
+
+      try do
+        assert {:error, :forbidden} = Orchestrator.abort(task.id)
+        assert Process.whereis(Orchestrator)
+        refute Process.alive?(worker)
+        assert KanbanBridge.get_task(task.id).status == "in_progress"
+        refute Svarm.RunLog.get(task.id) =~ "[board] aborted"
+        state = :sys.get_state(Orchestrator)
+        refute Map.has_key?(state.running, task.id)
+        refute MapSet.member?(state.claimed, task.id)
+      after
+        if Process.alive?(worker), do: Process.exit(worker, :kill)
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
     end
 
     test "kills worker, drops claim, does not crash-retry" do

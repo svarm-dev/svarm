@@ -253,7 +253,10 @@ defmodule SvarmWeb.BoardLive do
              end)}
 
           {:error, :not_running} ->
-            {:noreply, put_flash(socket, :error, "No live run to abort")}
+            {:noreply, put_flash(socket, :error, Board.abort_flash_error(:not_running))}
+
+          {:error, reason} ->
+            {:noreply, put_flash(socket, :error, Board.abort_flash_error(reason))}
         end
     end
   end

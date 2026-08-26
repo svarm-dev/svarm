@@ -270,6 +270,7 @@ While a run is live (**CLI** or **PiRPC**), the console has **Abort**. That kill
 - Disabled when nothing is running.
 - Transcript shows a muted `[board] aborted` line.
 - Ticket returns to **Todo**. This is not crash-retry of the same run. Gated assignees re-enter the approval gate; trusted assignees may be picked up on the next poll — change status or assignee if you do not want a fresh spawn.
+- The kill-tree runs **before** the tracker PATCH. If GitHub (or another tracker) cannot move the ticket, Abort still stops the OS process but does **not** claim Todo — the card may stay `in_progress` with no live worker.
 
 ---
 

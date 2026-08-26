@@ -139,9 +139,13 @@ defmodule Svarm.Orchestrator do
 
   Invokes the shared OS kill-tree (`AgentRunner.kill_os_tree/1`) before
   exiting the worker, drops the task from the running set so `:DOWN` cannot
-  crash-retry the same run, and returns the ticket to `todo`.
+  crash-retry the same run, then PATCHes the ticket to `todo`.
+
+  Kill-tree runs **before** the tracker PATCH. If `update_status/3` returns
+  `{:error, reason}`, the OS tree may already be dead while the tracker
+  still shows `in_progress` — callers must not flash Todo.
   """
-  @spec abort(String.t()) :: :ok | {:error, :not_running}
+  @spec abort(String.t()) :: :ok | {:error, :not_running | term()}
   def abort(task_id) when is_binary(task_id) do
     # Kill-tree + worker wait (2s) + tracker patch; keep well under this.
     GenServer.call(__MODULE__, {:abort, task_id}, 15_000)
@@ -390,11 +394,7 @@ defmodule Svarm.Orchestrator do
           broadcast_status(state)
           {:reply, {:error, :not_running}, state}
         else
-          Events.broadcast_agent_line(task_id, "\n[board] aborted\n")
-          state.tracker.update_status(state.tracker_config, task_id, "todo")
-          AgentQuestion.clear(task_id)
-          broadcast_status(state)
-          {:reply, :ok, state}
+          apply_abort_todo(state, task_id)
         end
     end
   end
@@ -553,6 +553,25 @@ defmodule Svarm.Orchestrator do
         Logger.warning("abort: worker #{inspect(pid)} still alive after 2s")
         Process.demonitor(ref, [:flush])
         :ok
+    end
+  end
+
+  defp apply_abort_todo(state, task_id) do
+    case state.tracker.update_status(state.tracker_config, task_id, "todo") do
+      :ok ->
+        Events.broadcast_agent_line(task_id, "\n[board] aborted\n")
+        AgentQuestion.clear(task_id)
+        broadcast_status(state)
+        {:reply, :ok, state}
+
+      {:error, reason} ->
+        Logger.warning(
+          "abort: tracker did not move #{task_id} to todo (#{inspect(reason)}); OS tree already stopped"
+        )
+
+        AgentQuestion.clear(task_id)
+        broadcast_status(state)
+        {:reply, {:error, reason}, state}
     end
   end
 

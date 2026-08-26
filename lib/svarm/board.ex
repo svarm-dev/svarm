@@ -86,11 +86,20 @@ defmodule Svarm.Board do
   @doc """
   Abort a live agent run from the board.
 
-  Shared OS kill-tree, then the worker. Ticket returns to `todo`.
-  `{:error, :not_running}` when the orchestrator has no worker for `id`.
+  Shared OS kill-tree, then the worker. Ticket returns to `todo` only when
+  the tracker PATCH succeeds. `{:error, :not_running}` when the orchestrator
+  has no worker. Other `{:error, reason}` means the run may already be
+  stopped but the tracker did not move to `todo`.
   """
-  @spec abort_run(String.t()) :: :ok | {:error, :not_running}
+  @spec abort_run(String.t()) :: :ok | {:error, :not_running | term()}
   def abort_run(id) when is_binary(id), do: Orchestrator.abort(id)
+
+  @doc "User-facing flash for `abort_run/1` errors."
+  @spec abort_flash_error(:not_running | term()) :: String.t()
+  def abort_flash_error(:not_running), do: "No live run to abort"
+
+  def abort_flash_error(_reason),
+    do: "The run was stopped, but the ticket could not be moved to Todo."
 
   @doc """
   Agent configs for board UI (agents.toml + Settings overrides).
