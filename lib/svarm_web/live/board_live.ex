@@ -236,6 +236,31 @@ defmodule SvarmWeb.BoardLive do
     end
   end
 
+  def handle_event("abort_run", %{"id" => id}, socket) do
+    case authorize_board_mutation(socket) do
+      {:error, :unauthorized} ->
+        {:noreply, put_flash(socket, :error, unauthorized_mutation_flash("abort"))}
+
+      :ok ->
+        case Board.abort_run(id) do
+          :ok ->
+            {:noreply,
+             socket
+             |> put_flash(:info, "Aborted #{id} — ticket returned to Todo")
+             |> load_board()
+             |> then(fn s ->
+               if s.assigns.selected_task_id == id, do: select_task(s, id), else: s
+             end)}
+
+          {:error, :not_running} ->
+            {:noreply, put_flash(socket, :error, Board.abort_flash_error(:not_running))}
+
+          {:error, reason} ->
+            {:noreply, put_flash(socket, :error, Board.abort_flash_error(reason))}
+        end
+    end
+  end
+
   def handle_event("complete_review", %{"id" => id}, socket) do
     case authorize_board_mutation(socket) do
       {:error, :unauthorized} ->
@@ -516,6 +541,7 @@ defmodule SvarmWeb.BoardLive do
               running_started={@running_started}
               now_mono={@now_mono}
               focused={@console_focused?}
+              running?={@selected_task_id in Map.get(@orchestrator, :running_ids, [])}
             />
         <% end %>
       </div>
@@ -1193,6 +1219,7 @@ defmodule SvarmWeb.BoardLive do
   attr :running_started, :map, default: %{}
   attr :now_mono, :integer, default: 0
   attr :focused, :boolean, default: false
+  attr :running?, :boolean, default: false
 
   defp run_console(assigns) do
     identity = panel_identity(assigns)
@@ -1256,6 +1283,8 @@ defmodule SvarmWeb.BoardLive do
               adapter={@meta[:adapter] || @identity.adapter}
             />
           <% end %>
+
+          <.abort_control task_id={@task.id} running?={@running?} />
 
           <%= if @task.status == "review" do %>
             <% wait = Board.wait_reason(@task) %>
@@ -1802,6 +1831,42 @@ defmodule SvarmWeb.BoardLive do
         </button>
       </div>
       <p class="mt-1 text-[11px] opacity-60">One question at a time. Dismiss continues the run.</p>
+    </div>
+    """
+  end
+
+  attr :task_id, :string, required: true
+  attr :running?, :boolean, required: true
+
+  defp abort_control(assigns) do
+    ~H"""
+    <div id={"abort-run-#{@task_id}"} class="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        phx-click="abort_run"
+        phx-value-id={@task_id}
+        phx-disable-with="Aborting…"
+        class={[
+          "btn btn-sm btn-outline",
+          @running? && "btn-error"
+        ]}
+        disabled={not @running?}
+        aria-label={
+          if @running?,
+            do: "Abort this run. Ticket returns to Todo.",
+            else: "No live run to abort"
+        }
+        title={
+          if @running?,
+            do: "Stop this run. Ticket returns to Todo.",
+            else: "No live run to abort."
+        }
+      >
+        Abort
+      </button>
+      <p :if={@running?} class="text-xs opacity-60">
+        Stops this run. Ticket returns to Todo.
+      </p>
     </div>
     """
   end

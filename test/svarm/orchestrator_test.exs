@@ -34,6 +34,187 @@ defmodule Svarm.OrchestratorTest do
     end
   end
 
+  describe "board abort" do
+    defmodule AbortFailTracker do
+      def update_status(_config, _id, _status), do: {:error, :forbidden}
+      def list_eligible(_config), do: {:ok, []}
+
+      def get_issue(_config, id) do
+        case KanbanBridge.get_task(id) do
+          nil -> {:error, :not_found}
+          task -> {:ok, task}
+        end
+      end
+    end
+
+    test "not running returns {:error, :not_running}" do
+      assert {:error, :not_running} = Orchestrator.abort("sva_abort_missing")
+    end
+
+    test "tracker PATCH failure does not claim todo or crash" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "abort patch fail",
+          status: "in_progress",
+          assignee: "cody"
+        })
+
+      worker = spawn(fn -> Process.sleep(:infinity) end)
+      original = :sys.get_state(Orchestrator)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | tracker: AbortFailTracker,
+            running:
+              Map.put(state.running, task.id, %{
+                task: task,
+                pid: worker,
+                mref: Process.monitor(worker),
+                started_mono_ms: System.monotonic_time(:millisecond),
+                started_at: System.system_time(:second)
+              }),
+            claimed: MapSet.put(state.claimed, task.id)
+        }
+      end)
+
+      try do
+        assert {:error, :forbidden} = Orchestrator.abort(task.id)
+        assert Process.whereis(Orchestrator)
+        refute Process.alive?(worker)
+        assert KanbanBridge.get_task(task.id).status == "in_progress"
+        refute Svarm.RunLog.get(task.id) =~ "[board] aborted"
+        state = :sys.get_state(Orchestrator)
+        refute Map.has_key?(state.running, task.id)
+        refute MapSet.member?(state.claimed, task.id)
+      after
+        if Process.alive?(worker), do: Process.exit(worker, :kill)
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "kills worker, drops claim, does not crash-retry" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "abort no retry",
+          status: "in_progress",
+          assignee: "cody"
+        })
+
+      worker = spawn(fn -> Process.sleep(:infinity) end)
+      original = :sys.get_state(Orchestrator)
+      mref = Process.monitor(worker)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | running:
+              Map.put(state.running, task.id, %{
+                task: task,
+                pid: worker,
+                mref: mref,
+                started_mono_ms: System.monotonic_time(:millisecond),
+                started_at: System.system_time(:second)
+              }),
+            claimed: MapSet.put(state.claimed, task.id)
+        }
+      end)
+
+      try do
+        assert :ok = Orchestrator.abort(task.id)
+        refute Process.alive?(worker)
+        state = :sys.get_state(Orchestrator)
+        refute Map.has_key?(state.running, task.id)
+        refute MapSet.member?(state.claimed, task.id)
+        refute Map.has_key?(state.retry_attempts, task.id)
+        assert KanbanBridge.get_task(task.id).status == "todo"
+      after
+        if Process.alive?(worker), do: Process.exit(worker, :kill)
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "does not yank a finished ticket back to todo" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "abort after finish",
+          status: "in_progress",
+          assignee: "cody"
+        })
+
+      worker = spawn(fn -> Process.sleep(:infinity) end)
+      original = :sys.get_state(Orchestrator)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | running:
+              Map.put(state.running, task.id, %{
+                task: task,
+                pid: worker,
+                mref: Process.monitor(worker),
+                started_mono_ms: System.monotonic_time(:millisecond),
+                started_at: System.system_time(:second)
+              }),
+            claimed: MapSet.put(state.claimed, task.id)
+        }
+      end)
+
+      try do
+        assert :ok = KanbanBridge.update_status(task.id, "review")
+        assert {:error, :not_running} = Orchestrator.abort(task.id)
+        assert KanbanBridge.get_task(task.id).status == "review"
+        state = :sys.get_state(Orchestrator)
+        refute Map.has_key?(state.running, task.id)
+        refute MapSet.member?(state.claimed, task.id)
+        assert Map.has_key?(state.last_run_entries, task.id)
+        assert MapSet.member?(state.completed, task.id)
+      after
+        if Process.alive?(worker), do: Process.exit(worker, :kill)
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "failed late abort does not session-skip via completed" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "abort after fail",
+          status: "in_progress",
+          assignee: "cody"
+        })
+
+      worker = spawn(fn -> Process.sleep(:infinity) end)
+      original = :sys.get_state(Orchestrator)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | running:
+              Map.put(state.running, task.id, %{
+                task: task,
+                pid: worker,
+                mref: Process.monitor(worker),
+                started_mono_ms: System.monotonic_time(:millisecond),
+                started_at: System.system_time(:second)
+              }),
+            claimed: MapSet.put(state.claimed, task.id)
+        }
+      end)
+
+      try do
+        assert :ok = KanbanBridge.update_status(task.id, "failed")
+        assert {:error, :not_running} = Orchestrator.abort(task.id)
+        assert KanbanBridge.get_task(task.id).status == "failed"
+        state = :sys.get_state(Orchestrator)
+        refute Map.has_key?(state.running, task.id)
+        refute MapSet.member?(state.completed, task.id)
+      after
+        if Process.alive?(worker), do: Process.exit(worker, :kill)
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+  end
+
   describe "run_exit handling" do
     test "orchestrator survives concurrent run_exit messages for unknown tasks" do
       send(Orchestrator, {:run_exit, "sva_nonexistent_a", :ok})

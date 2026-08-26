@@ -262,6 +262,18 @@ While a **PiRPC** run is `in_progress` (and not waiting on a question), the cons
 
 ---
 
+## Abort a live run
+
+While a run is live (**CLI** or **PiRPC**), the console has **Abort**. That kills the agent OS process tree (the same kill-tree as stall and timeout), not only the BEAM worker.
+
+- Same board auth as approve / steer / answer (`APPROVALS_*` + `board_auth_at` TTL).
+- Disabled when nothing is running.
+- Transcript shows a muted `[board] aborted` line.
+- Ticket returns to **Todo**. This is not crash-retry of the same run. Gated assignees re-enter the approval gate; trusted assignees may be picked up on the next poll — change status or assignee if you do not want a fresh spawn.
+- The kill-tree runs **before** the tracker PATCH. If GitHub (or another tracker) cannot move the ticket, Abort still stops the OS process but does **not** claim Todo — the card may stay `in_progress` with no live worker.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Check |
@@ -269,7 +281,7 @@ While a **PiRPC** run is `in_progress` (and not waiting on a question), the cons
 | Container exits immediately | Check `docker compose logs`. `SECRET_KEY_BASE` is generated if unset; set it in `.env` only for stable sessions |
 | Config is a directory named `WORKFLOW.md` | Old file mounts. Use directory mount `./svarm-config:/app/config` (current compose) and delete the bogus dirs |
 | `/approvals` 404 text about APPROVALS_* | Set `APPROVALS_USER` and `APPROVALS_PASSWORD` in `.env` |
-| Board approve/reject/mark-done/answer/steer/overage blocked without auth flash | Production needs `APPROVALS_*`; sign in via `/approvals` then return to the board. Local Mix without credentials is open only when `dev_routes` is on. Sticky proof expires after 8h by default (`BOARD_AUTH_TTL_SECONDS`) — re-sign in if mid-session mutations start failing |
+| Board approve/reject/mark-done/answer/steer/abort/overage blocked without auth flash | Production needs `APPROVALS_*`; sign in via `/approvals` then return to the board. Local Mix without credentials is open only when `dev_routes` is on. Sticky proof expires after 8h by default (`BOARD_AUTH_TTL_SECONDS`) — re-sign in if mid-session mutations start failing |
 | `/approvals` 401 | Wrong Basic Auth credentials |
 | Nothing happens | `docker compose logs -f` (polling / eligibility) |
 | Tick never dispatches after a WORKFLOW edit | Invalid `workspace.isolation` (expected `path` or `worktree`) or invalid `tracker.status_labels` / `reverse_labels` fail closed; logs include the rejected value |

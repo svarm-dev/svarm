@@ -33,6 +33,7 @@ defmodule Svarm.Orchestrator do
   require Logger
 
   alias Svarm.{
+    AgentQuestion,
     AgentRunner,
     Approval,
     Budget,
@@ -132,6 +133,23 @@ defmodule Svarm.Orchestrator do
   Used by `/setup` Apply — no BEAM restart.
   """
   def reload_config, do: GenServer.call(__MODULE__, :reload_config)
+
+  @doc """
+  Abort a live agent run (board **Abort**).
+
+  Invokes the shared OS kill-tree (`AgentRunner.kill_os_tree/1`) before
+  exiting the worker, drops the task from the running set so `:DOWN` cannot
+  crash-retry the same run, then PATCHes the ticket to `todo`.
+
+  Kill-tree runs **before** the tracker PATCH. If `update_status/3` returns
+  `{:error, reason}`, the OS tree may already be dead while the tracker
+  still shows `in_progress` — callers must not flash Todo.
+  """
+  @spec abort(String.t()) :: :ok | {:error, :not_running | term()}
+  def abort(task_id) when is_binary(task_id) do
+    # Kill-tree + worker wait (2s) + tracker patch; keep well under this.
+    GenServer.call(__MODULE__, {:abort, task_id}, 15_000)
+  end
 
   ## init
 
@@ -351,6 +369,36 @@ defmodule Svarm.Orchestrator do
      %{state | overage_once: MapSet.put(state.overage_once || MapSet.new(), task_id)}}
   end
 
+  def handle_call({:abort, task_id}, _from, state) when is_binary(task_id) do
+    case Map.pop(state.running, task_id) do
+      {nil, _} ->
+        {:reply, {:error, :not_running}, state}
+
+      {entry, running} ->
+        state = %{
+          state
+          | running: running,
+            claimed: MapSet.delete(state.claimed, task_id)
+        }
+
+        state = cancel_retry_for(state, task_id)
+        drop_worker_monitor(entry)
+
+        # Snapshot before kill. CLI/PiRPC write failed/review on port death;
+        # checking after kill_os_tree would treat a live Abort as a late finish.
+        late? = already_terminal?(state, task_id)
+        await_worker_exit(entry.pid)
+
+        if late? do
+          state = finish_late_abort(state, entry, task_id)
+          broadcast_status(state)
+          {:reply, {:error, :not_running}, state}
+        else
+          apply_abort_todo(state, task_id)
+        end
+    end
+  end
+
   @impl true
   def handle_cast({:mark_approved, task_id}, state) when is_binary(task_id) do
     {:noreply, %{state | approved_once: MapSet.put(state.approved_once, task_id)}}
@@ -483,6 +531,81 @@ defmodule Svarm.Orchestrator do
   def kill_worker(pid, reason) when is_pid(pid) do
     AgentRunner.kill_os_tree(pid)
     Process.exit(pid, reason)
+  end
+
+  defp drop_worker_monitor(%{mref: mref}) when is_reference(mref) do
+    Process.demonitor(mref, [:flush])
+  end
+
+  defp drop_worker_monitor(_), do: true
+
+  # Kill-tree first (Ports registry is keyed by the worker pid), then
+  # uncatchable `:kill` so the runner cannot write failed/review on port death.
+  defp await_worker_exit(pid) when is_pid(pid) do
+    ref = Process.monitor(pid)
+    AgentRunner.kill_os_tree(pid)
+    Process.exit(pid, :kill)
+
+    receive do
+      {:DOWN, ^ref, :process, ^pid, _} -> :ok
+    after
+      2_000 ->
+        Logger.warning("abort: worker #{inspect(pid)} still alive after 2s")
+        Process.demonitor(ref, [:flush])
+        :ok
+    end
+  end
+
+  defp apply_abort_todo(state, task_id) do
+    case state.tracker.update_status(state.tracker_config, task_id, "todo") do
+      :ok ->
+        Events.broadcast_agent_line(task_id, "\n[board] aborted\n")
+        AgentQuestion.clear(task_id)
+        broadcast_status(state)
+        {:reply, :ok, state}
+
+      {:error, reason} ->
+        Logger.warning(
+          "abort: tracker did not move #{task_id} to todo (#{inspect(reason)}); OS tree already stopped"
+        )
+
+        AgentQuestion.clear(task_id)
+        broadcast_status(state)
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  defp already_terminal?(state, task_id) do
+    case safe_get_issue(state.tracker, state.tracker_config, task_id) do
+      {:ok, issue} -> issue.status in state.terminal_states
+      _ -> false
+    end
+  end
+
+  defp finish_late_abort(state, entry, task_id) do
+    state = Map.update!(state, :last_run_entries, &Map.put(&1, task_id, entry))
+
+    case safe_get_issue(state.tracker, state.tracker_config, task_id) do
+      {:ok, %{status: "failed"}} ->
+        # Same as handle_result error: do not session-skip via completed and
+        # do not post a run-summary (that is retry-exhaustion only).
+        state
+
+      _ ->
+        post_run_summary(state, task_id, :ok)
+        %{state | completed: MapSet.put(state.completed, task_id)}
+    end
+  end
+
+  defp cancel_retry_for(state, task_id) do
+    case Map.pop(state.retry_attempts, task_id) do
+      {nil, map} ->
+        %{state | retry_attempts: map}
+
+      {entry, map} ->
+        if is_reference(entry[:timer]), do: Process.cancel_timer(entry.timer)
+        %{state | retry_attempts: map}
+    end
   end
 
   ## dispatch

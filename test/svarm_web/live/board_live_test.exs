@@ -1,3 +1,17 @@
+defmodule SvarmWeb.BoardLiveAbortFailTracker do
+  @moduledoc false
+
+  def update_status(_config, _id, _status), do: {:error, :forbidden}
+  def list_eligible(_config), do: {:ok, []}
+
+  def get_issue(_config, id) do
+    case Svarm.KanbanBridge.get_task(id) do
+      nil -> {:error, :not_found}
+      task -> {:ok, task}
+    end
+  end
+end
+
 defmodule SvarmWeb.BoardLiveTest do
   use SvarmWeb.LiveCase, async: false
 
@@ -282,6 +296,128 @@ defmodule SvarmWeb.BoardLiveTest do
 
     assert render(view) =~ "Authentication required"
     refute_received {:steer, _}
+  end
+
+  test "authorized abort on a running task succeeds", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Abort me",
+        status: "in_progress",
+        assignee: "demo"
+      })
+
+    worker = spawn(fn -> Process.sleep(:infinity) end)
+    original = put_orchestrator_running(task, worker)
+
+    try do
+      {:ok, view, _html} = live(conn, ~p"/board?task=#{task.id}")
+      assert has_element?(view, "#abort-run-#{task.id} button:not([disabled])")
+
+      view
+      |> element("#abort-run-#{task.id} button", "Abort")
+      |> render_click()
+
+      html = render(view)
+      assert html =~ "Aborted #{task.id} — ticket returned to Todo"
+      assert html =~ "[board] aborted"
+      assert KanbanBridge.get_task(task.id).status == "todo"
+      refute Process.alive?(worker)
+      assert Svarm.RunLog.get(task.id) =~ "[board] aborted"
+    after
+      if Process.alive?(worker), do: Process.exit(worker, :kill)
+      restore_orchestrator(original)
+    end
+  end
+
+  test "abort tracker PATCH failure flashes and does not claim Todo", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Abort patch fail",
+        status: "in_progress",
+        assignee: "demo"
+      })
+
+    worker = spawn(fn -> Process.sleep(:infinity) end)
+    original = put_orchestrator_running(task, worker)
+
+    :sys.replace_state(Svarm.Orchestrator, fn state ->
+      %{state | tracker: SvarmWeb.BoardLiveAbortFailTracker}
+    end)
+
+    try do
+      {:ok, view, _html} = live(conn, ~p"/board?task=#{task.id}")
+
+      view
+      |> element("#abort-run-#{task.id} button", "Abort")
+      |> render_click()
+
+      html = render(view)
+      assert html =~ "could not be moved to Todo"
+      refute html =~ "ticket returned to Todo"
+      assert KanbanBridge.get_task(task.id).status == "in_progress"
+      refute Process.alive?(worker)
+    after
+      if Process.alive?(worker), do: Process.exit(worker, :kill)
+      restore_orchestrator(original)
+    end
+  end
+
+  test "unauthorized abort flashes and does not kill the run", %{conn: conn} do
+    prev_auth = Application.get_env(:svarm, :approvals_auth)
+    Application.put_env(:svarm, :approvals_auth, %{username: "op", password: "secret"})
+
+    on_exit(fn ->
+      if prev_auth == nil,
+        do: Application.delete_env(:svarm, :approvals_auth),
+        else: Application.put_env(:svarm, :approvals_auth, prev_auth)
+    end)
+
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Auth abort",
+        status: "in_progress",
+        assignee: "demo"
+      })
+
+    worker = spawn(fn -> Process.sleep(:infinity) end)
+    original = put_orchestrator_running(task, worker)
+
+    try do
+      {:ok, view, _html} = live(conn, ~p"/board?task=#{task.id}")
+
+      view
+      |> element("#abort-run-#{task.id} button", "Abort")
+      |> render_click()
+
+      assert render(view) =~ "Authentication required"
+      assert Process.alive?(worker)
+      assert KanbanBridge.get_task(task.id).status == "in_progress"
+      refute Svarm.RunLog.get(task.id) =~ "[board] aborted"
+    after
+      if Process.alive?(worker), do: Process.exit(worker, :kill)
+      restore_orchestrator(original)
+    end
+  end
+
+  test "not-running ticket shows Abort disabled", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Idle abort",
+        status: "todo",
+        assignee: "demo"
+      })
+
+    {:ok, view, html} = live(conn, ~p"/board?task=#{task.id}")
+    assert html =~ "No live run to abort"
+    assert has_element?(view, "#abort-run-#{task.id} button[disabled]")
   end
 
   test "auth configured without credentials blocks approve", %{conn: conn} do
@@ -1315,5 +1451,30 @@ defmodule SvarmWeb.BoardLiveTest do
     # task_cost_summary renders total_cost_usd for known models
     assert html =~ "$"
     assert has_element?(view, "#task-#{task.id}")
+  end
+
+  defp put_orchestrator_running(task, worker) do
+    original = :sys.get_state(Svarm.Orchestrator)
+
+    :sys.replace_state(Svarm.Orchestrator, fn state ->
+      %{
+        state
+        | running:
+            Map.put(state.running, task.id, %{
+              task: task,
+              pid: worker,
+              mref: Process.monitor(worker),
+              started_mono_ms: System.monotonic_time(:millisecond),
+              started_at: System.system_time(:second)
+            }),
+          claimed: MapSet.put(state.claimed, task.id)
+      }
+    end)
+
+    original
+  end
+
+  defp restore_orchestrator(original) do
+    :sys.replace_state(Svarm.Orchestrator, fn _ -> original end)
   end
 end

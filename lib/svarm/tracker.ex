@@ -46,8 +46,8 @@ defmodule Svarm.Tracker do
   Updates the status of an issue.
 
   Returns `:ok` when the tracker applied the move. Returns `{:error, reason}`
-  when it did not (HTTP failure, missing issue, etc.). Callers must not treat
-  an error as a completed status change.
+  when it did not (HTTP failure, missing issue, GitHub PATCH fail-closed).
+  Callers must not treat an error as a completed status change.
   """
   @callback update_status(config :: map(), id :: String.t(), status :: String.t()) ::
               :ok | {:error, term()}
