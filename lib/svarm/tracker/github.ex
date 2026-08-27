@@ -25,6 +25,25 @@ defmodule Svarm.Tracker.GitHub do
   scan is a single page (`per_page: 100`). Transferring an issue to
   another repository is not followed (no GraphQL `node(id:)`).
 
+  Batch lookup (`get_issues/2`, used by Orchestrator reconcile and
+  `depends_on` gating): for **more than one id**, one `list_issues/2`
+  (`state: all`, `per_page: 100`) is the tick snapshot. Ids found there
+  (by `Issue.id` or numeric `source_id`) do **not** issue extra
+  `GET /issues/{number}`. Residual REST limits — not a GraphQL migration:
+
+  - List is a **single page of 100**; ids off that page still GET.
+  - Ids absent from the snapshot (not board-visible, wrong repo, or
+    `node_id` not on the page) still fall back to `get_issue/2`.
+    Numeric misses GET `/issues/{n}`; `node_id` misses after a successful
+    list are `:not_found` (the same one-page scan `get_issue/2` would do).
+  - A failed list (rate-limit / network / 5xx / repo 404) returns
+    `{:error, reason}` for the whole batch — no per-id GET fan-out.
+    Orchestrator treats that as transient and keeps in-flight work
+    (a repo 404 must not look like every issue vanished).
+  - A **single** id stays one-shot (`get_issue/2`) — no extra list.
+  - Each `get_issues/2` call may list once; reconcile and dependency
+    prefetch are separate calls (two lists per tick worst case).
+
   Uses `X-GitHub-Api-Version: 2026-03-10` header.
   """
   @behaviour Svarm.Tracker
@@ -114,6 +133,26 @@ defmodule Svarm.Tracker.GitHub do
     end
   end
 
+  @impl true
+  def get_issues(_config, []), do: {:ok, %{}}
+
+  def get_issues(config, [id]) when is_binary(id) do
+    {:ok, %{id => get_issue(config, id)}}
+  end
+
+  def get_issues(config, ids) when is_list(ids) do
+    case ids |> Enum.filter(&is_binary/1) |> Enum.uniq() do
+      [] ->
+        {:ok, %{}}
+
+      [one] ->
+        {:ok, %{one => get_issue(config, one)}}
+
+      many ->
+        resolve_issues_from_list(config, many)
+    end
+  end
+
   # GraphQL node_id is not a REST issue number. Match Issue.id against
   # board-visible issues (`list_issues`, state: all) — not list_eligible.
   # Preserve tagged list errors (rate_limit / network / 5xx). Mapping them
@@ -126,6 +165,52 @@ defmodule Svarm.Tracker.GitHub do
       end
     end
   end
+
+  # One list snapshot for the batch. Hits skip GET. Numeric misses still GET
+  # (off-page / not board-visible). node_id misses after a successful list
+  # are :not_found — the same one-page scan get_issue/2 would perform.
+  # A failed list is returned as a whole-batch error so Orchestrator keeps
+  # in-flight work (repo 404 / 429 must not become per-id :not_found).
+  defp resolve_issues_from_list(config, ids) do
+    case list_issues(config, include_body: false) do
+      {:ok, issues} ->
+        snapshot = index_listed_issues(issues)
+
+        {:ok,
+         Map.new(ids, fn id ->
+           {id, resolve_listed_or_get(config, id, snapshot)}
+         end)}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp resolve_listed_or_get(config, id, snapshot) do
+    case Map.fetch(snapshot, id) do
+      {:ok, issue} ->
+        {:ok, issue}
+
+      :error ->
+        case Integer.parse(id) do
+          {_number, ""} -> get_issue(config, id)
+          _ -> {:error, :not_found}
+        end
+    end
+  end
+
+  defp index_listed_issues(issues) when is_list(issues) do
+    Enum.reduce(issues, %{}, fn issue, acc ->
+      acc
+      |> put_snapshot_key(issue.id, issue)
+      |> put_snapshot_key(issue.source_id, issue)
+    end)
+  end
+
+  defp put_snapshot_key(map, key, issue) when is_binary(key) and key != "",
+    do: Map.put(map, key, issue)
+
+  defp put_snapshot_key(map, _key, _issue), do: map
 
   @impl true
   def list_issues(config, filters \\ []) do

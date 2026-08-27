@@ -32,7 +32,23 @@ defmodule Svarm.KanbanBridge do
   ]
 
   def create_task(attrs), do: GenServer.call(__MODULE__, {:create, attrs})
-  def get_task(id), do: GenServer.call(__MODULE__, {:get, id})
+
+  def get_task(id) do
+    emit_call(:get, 1)
+    GenServer.call(__MODULE__, {:get, id})
+  end
+
+  @doc """
+  Fetch many tasks in one GenServer/Ecto round-trip (`WHERE id IN (...)`).
+
+  Returns a map of found id => task map. Missing ids are omitted.
+  An empty id list does not hit the database.
+  """
+  @spec get_tasks([String.t()]) :: %{String.t() => map()}
+  def get_tasks(ids) when is_list(ids) do
+    emit_call(:get_many, length(ids))
+    GenServer.call(__MODULE__, {:get_many, ids})
+  end
 
   @doc """
   List tasks matching filters.
@@ -116,6 +132,21 @@ defmodule Svarm.KanbanBridge do
       end
 
     {:reply, task, state}
+  end
+
+  def handle_call({:get_many, ids}, _from, state) do
+    ids = ids |> Enum.filter(&is_binary/1) |> Enum.uniq()
+
+    tasks =
+      if ids == [] do
+        %{}
+      else
+        from(t in Task, where: t.id in ^ids)
+        |> Repo.all()
+        |> Map.new(fn t -> {t.id, task_to_map(t)} end)
+      end
+
+    {:reply, tasks, state}
   end
 
   def handle_call({:list, filters, opts}, _from, state) do
@@ -224,6 +255,10 @@ defmodule Svarm.KanbanBridge do
   end
 
   # -- helpers --
+
+  defp emit_call(op, n) do
+    :telemetry.execute([:svarm, :kanban_bridge, :call], %{count: 1, n: n}, %{op: op})
+  end
 
   defp task_to_map(%Task{} = t) do
     %{

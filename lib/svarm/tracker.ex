@@ -30,6 +30,21 @@ defmodule Svarm.Tracker do
   @callback get_issue(config :: map(), id :: String.t()) :: {:ok, Issue.t()} | {:error, term()}
 
   @doc """
+  Returns statuses for many ids in one adapter round-trip.
+
+  The map MUST contain an entry for every requested id: `{:ok, Issue.t()}`
+  or `{:error, reason}` (same reasons as `get_issue/2`). Empty `ids`
+  returns `{:ok, %{}}`.
+
+  Optional — adapters that omit this callback are called via `get_issue/2`
+  per id (test doubles). Local uses `WHERE id IN (...)`. GitHub consults
+  the current list snapshot before per-id REST GETs.
+  """
+  @callback get_issues(config :: map(), ids :: [String.t()]) ::
+              {:ok, %{optional(String.t()) => {:ok, Issue.t()} | {:error, term()}}}
+              | {:error, term()}
+
+  @doc """
   Returns all issues matching the given filters (keyword list).
   Returns `{:ok, [Issue.t()]}` or `{:error, reason}`.
   """
@@ -90,5 +105,5 @@ defmodule Svarm.Tracker do
   """
   @callback capabilities() :: [capability()]
 
-  @optional_callbacks capabilities: 0
+  @optional_callbacks capabilities: 0, get_issues: 2
 end

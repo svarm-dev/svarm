@@ -101,7 +101,10 @@ defmodule Svarm.Orchestrator do
     review_resume_caps: %{enabled: false},
     last_run_entries: %{},
     last_tick_mono_ms: nil,
-    task_supervisor: Svarm.TaskSup
+    task_supervisor: Svarm.TaskSup,
+    # Tick-scoped id => {:ok, issue} | {:error, reason}. Filled by
+    # get_issues/2 during reconcile + depends_on prefetch; not in status/0.
+    issue_cache: %{}
   ]
 
   ## API
@@ -205,11 +208,12 @@ defmodule Svarm.Orchestrator do
 
   @impl true
   def handle_info(:tick, state) do
+    state = %{state | issue_cache: %{}}
     state = reconcile(state)
     state = maybe_ci_resume(state)
     state = maybe_review_resume(state)
     state = if valid_preflight?(state), do: dispatch(state), else: state
-    state = %{state | last_tick_mono_ms: System.monotonic_time(:millisecond)}
+    state = %{state | last_tick_mono_ms: System.monotonic_time(:millisecond), issue_cache: %{}}
     Process.send_after(self(), :tick, state.poll_interval_ms)
     broadcast_status(state)
     {:noreply, state}
@@ -455,8 +459,10 @@ defmodule Svarm.Orchestrator do
       (Map.keys(state.running) ++ MapSet.to_list(state.claimed) ++ Map.keys(state.retry_attempts))
       |> Enum.uniq()
 
+    state = prefetch_issues(state, ids)
+
     Enum.reduce(ids, state, fn task_id, acc ->
-      case safe_get_issue(acc.tracker, acc.tracker_config, task_id) do
+      case lookup_issue(acc, task_id) do
         {:ok, issue} -> maybe_release_if_terminal(acc, task_id, issue)
         {:error, reason} -> reconcile_get_issue_error(acc, task_id, reason)
       end
@@ -505,6 +511,79 @@ defmodule Svarm.Orchestrator do
       | claimed: MapSet.delete(state.claimed, task_id),
         retry_attempts: Map.delete(state.retry_attempts, task_id)
     }
+  end
+
+  defp prefetch_issues(state, []), do: state
+
+  defp prefetch_issues(state, ids) when is_list(ids) do
+    missing =
+      ids
+      |> Enum.filter(&is_binary/1)
+      |> Enum.uniq()
+      |> Enum.reject(&Map.has_key?(state.issue_cache || %{}, &1))
+
+    case tracker_get_issues(state.tracker, state.tracker_config, missing) do
+      {:ok, results} ->
+        %{state | issue_cache: Map.merge(state.issue_cache || %{}, results)}
+
+      {:error, reason} ->
+        # Never copy a batch-level :not_found onto every id — that would
+        # look like the whole in-flight set vanished. Wrap as tracker_error
+        # so reconcile keeps work (same as a transient get_issue failure).
+        wrapped = wrap_batch_error(reason)
+        filled = Map.new(missing, fn id -> {id, wrapped} end)
+        %{state | issue_cache: Map.merge(state.issue_cache || %{}, filled)}
+    end
+  end
+
+  defp wrap_batch_error({:tracker_error, _} = reason), do: {:error, reason}
+  defp wrap_batch_error(reason), do: {:error, {:tracker_error, reason}}
+
+  defp lookup_issue(state, id) do
+    case Map.fetch(state.issue_cache || %{}, id) do
+      {:ok, result} -> result
+      :error -> safe_get_issue(state.tracker, state.tracker_config, id)
+    end
+  end
+
+  defp tracker_get_issues(_tracker, _config, []), do: {:ok, %{}}
+
+  defp tracker_get_issues(tracker, config, ids) do
+    _ = Code.ensure_loaded?(tracker)
+
+    if function_exported?(tracker, :get_issues, 2) do
+      safe_get_issues(tracker, config, ids)
+    else
+      {:ok, Map.new(ids, fn id -> {id, safe_get_issue(tracker, config, id)} end)}
+    end
+  end
+
+  defp safe_get_issues(tracker, config, ids) do
+    case tracker.get_issues(config, ids) do
+      {:ok, results} when is_map(results) ->
+        {:ok, fill_issue_results(tracker, config, ids, results)}
+
+      {:error, reason} ->
+        {:error, reason}
+
+      other ->
+        Logger.warning(
+          "tracker get_issues returned #{inspect(Svarm.Redact.map(%{unexpected: other}))}"
+        )
+
+        {:error, {:tracker_error, :unexpected}}
+    end
+  end
+
+  defp fill_issue_results(tracker, config, ids, results) do
+    Map.new(ids, &issue_result(tracker, config, results, &1))
+  end
+
+  defp issue_result(tracker, config, results, id) do
+    case Map.fetch(results, id) do
+      {:ok, result} -> {id, result}
+      :error -> {id, safe_get_issue(tracker, config, id)}
+    end
   end
 
   defp safe_get_issue(tracker, config, id) do
@@ -734,6 +813,13 @@ defmodule Svarm.Orchestrator do
 
     case state.tracker.list_eligible(state.tracker_config) do
       {:ok, candidates} ->
+        dep_ids =
+          candidates
+          |> Enum.flat_map(fn task -> List.wrap(Map.get(task, :depends_on) || []) end)
+          |> Enum.filter(&is_binary/1)
+          |> Enum.uniq()
+
+        state = prefetch_issues(state, dep_ids)
         Enum.reduce_while(candidates, state, &dispatch_candidate/2)
 
       {:error, reason} ->
@@ -786,7 +872,7 @@ defmodule Svarm.Orchestrator do
   defp dependency_met?(dep_id, acc) do
     case acc.running[dep_id] do
       nil ->
-        case acc.tracker.get_issue(acc.tracker_config, dep_id) do
+        case lookup_issue(acc, dep_id) do
           {:ok, dep} -> dep.status in acc.terminal_states
           _ -> true
         end
@@ -1833,6 +1919,7 @@ defimpl Inspect, for: Svarm.Orchestrator do
       |> Map.update(:tracker_config, %{}, &Svarm.Redact.map/1)
       |> Map.update(:workflow, nil, &redact_workflow/1)
       |> Map.update(:agents, %{}, &redact_agents/1)
+      |> Map.put(:issue_cache, :redacted)
 
     Inspect.Algebra.concat(["%Svarm.Orchestrator", Inspect.Algebra.to_doc(data, opts)])
   end

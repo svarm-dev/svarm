@@ -172,6 +172,85 @@ defmodule Svarm.Tracker.GitHub.GetIssueTest do
     end
   end
 
+  describe "get_issues/2 list snapshot" do
+    test "multiple ids in the list snapshot issue no per-id GET" do
+      a = gh_issue(%{"number" => 11, "node_id" => "I_11", "state" => "open"})
+      b = gh_issue(%{"number" => 12, "node_id" => "I_12", "state" => "open"})
+      stub_list([a, b])
+      stub_eligible([])
+      stub_issue_missing()
+      flush_http()
+
+      assert {:ok, results} = GitHub.get_issues(@config, ["11", "I_12", "11"])
+      assert {:ok, %{source_id: "11", id: "I_11"}} = results["11"]
+      assert {:ok, %{source_id: "12", id: "I_12"}} = results["I_12"]
+      assert map_size(results) == 2
+
+      gets = drain_http_gets([])
+
+      list_gets =
+        Enum.filter(gets, fn {url, opts} -> list_url?(url) and list_state(opts) == "all" end)
+
+      assert match?([_], list_gets)
+      refute Enum.any?(gets, fn {url, _} -> single_issue_url?(url) end)
+    end
+
+    test "numeric id missing from the snapshot still GETs /issues/{n}" do
+      listed = gh_issue(%{"number" => 11, "node_id" => "I_11", "state" => "open"})
+      missing = gh_issue(%{"number" => 99, "node_id" => "I_99", "state" => "open"})
+      stub_list([listed])
+      stub_issue(missing)
+      flush_http()
+
+      assert {:ok, results} = GitHub.get_issues(@config, ["11", "99"])
+      assert {:ok, %{id: "I_11"}} = results["11"]
+      assert {:ok, %{id: "I_99", source_id: "99"}} = results["99"]
+
+      gets = drain_http_gets([])
+      assert Enum.any?(gets, fn {url, _} -> url =~ ~r{/issues/99$} end)
+      refute Enum.any?(gets, fn {url, _} -> url =~ ~r{/issues/11$} end)
+    end
+
+    test "node_id missing from a successful list is not_found without a per-id GET" do
+      listed = gh_issue(%{"number" => 11, "node_id" => "I_11", "state" => "open"})
+      stub_list([listed])
+      stub_issue_missing()
+      flush_http()
+
+      assert {:ok, results} = GitHub.get_issues(@config, ["I_11", "I_missing"])
+      assert {:ok, %{id: "I_11"}} = results["I_11"]
+      assert {:error, :not_found} = results["I_missing"]
+
+      gets = drain_http_gets([])
+      refute Enum.any?(gets, fn {url, _} -> single_issue_url?(url) end)
+    end
+
+    test "failed list is a whole-batch error (no per-id GET fan-out)" do
+      stub_list_response({:ok, %{status: 429, headers: %{"retry-after" => ["15"]}}})
+      stub_issue_missing()
+      flush_http()
+
+      assert {:error, reason} = GitHub.get_issues(@config, ["42", "I_pending"])
+      assert reason.type == :rate_limit
+
+      gets = drain_http_gets([])
+      refute Enum.any?(gets, fn {url, _} -> single_issue_url?(url) end)
+    end
+
+    test "a single id stays one-shot get_issue (no list)" do
+      payload = gh_issue(%{"number" => 42, "node_id" => "I_42", "state" => "open"})
+      stub_issue(payload)
+      stub_list([])
+      flush_http()
+
+      assert {:ok, %{"42" => {:ok, %{id: "I_42"}}}} = GitHub.get_issues(@config, ["42"])
+
+      gets = drain_http_gets([])
+      assert Enum.any?(gets, fn {url, _} -> url =~ ~r{/issues/42$} end)
+      refute Enum.any?(gets, fn {url, opts} -> list_url?(url) and list_state(opts) == "all" end)
+    end
+  end
+
   describe "Approval.approve/1 with GitHub node_id" do
     setup do
       Approval.__override_tracker__(GitHub, @config)
@@ -230,6 +309,27 @@ defmodule Svarm.Tracker.GitHub.GetIssueTest do
 
   defp stub_issue(body) do
     Process.put(:github_issue_response, {:ok, %{status: 200, body: body}})
+  end
+
+  defp stub_issue_missing do
+    Process.put(:github_issue_response, {:ok, %{status: 404, body: %{}}})
+  end
+
+  defp single_issue_url?(url) do
+    match?({_n, ""}, Integer.parse(Path.basename(url)))
+  end
+
+  defp list_url?(url), do: url =~ ~r{/issues$} or url =~ ~r{/issues\?}
+
+  defp list_state(opts), do: opts |> Keyword.get(:params, %{}) |> Map.get(:state)
+
+  defp drain_http_gets(acc) do
+    receive do
+      {:http_get, url, opts} -> drain_http_gets([{url, opts} | acc])
+      {:http_patch, _, _} -> drain_http_gets(acc)
+    after
+      0 -> Enum.reverse(acc)
+    end
   end
 
   defp stub_list(issues) do

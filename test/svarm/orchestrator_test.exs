@@ -19,6 +19,45 @@ defmodule Svarm.OrchestratorTest do
     Wait.until(fun, attempts: attempts)
   end
 
+  defp with_kb_calls(fun) when is_function(fun, 0) do
+    parent = self()
+    handler_id = "orch-kb-calls-#{System.unique_integer([:positive])}"
+
+    :ok =
+      :telemetry.attach(
+        handler_id,
+        [:svarm, :kanban_bridge, :call],
+        fn _event, meas, meta, _cfg ->
+          send(parent, {:kb_call, meta[:op], meas[:n] || 1})
+        end,
+        nil
+      )
+
+    try do
+      result = fun.()
+      {drain_kb_calls([]), result}
+    after
+      :telemetry.detach(handler_id)
+    end
+  end
+
+  defp drain_kb_calls(acc) do
+    receive do
+      {:kb_call, op, n} -> drain_kb_calls([{op, n} | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
+  defp drain_http_gets(acc) do
+    receive do
+      {:http_get, url} -> drain_http_gets([url | acc])
+      {:http_get, url, _opts} -> drain_http_gets([url | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
   # ponytail: one runnable check for the non-trivial logic.
   describe "Workspace.sanitize/1" do
     test "only allows [A-Za-z0-9._-], replaces the rest with _" do
@@ -1713,6 +1752,534 @@ defmodule Svarm.OrchestratorTest do
       after
         if Process.alive?(worker), do: Process.exit(worker, :kill)
         :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+  end
+
+  describe "batched tracker status reads" do
+    setup do
+      KanbanBridge.delete_all_tasks()
+      :ok
+    end
+
+    @local_config %{
+      kind: :local,
+      active_states: ["todo", "in_progress"],
+      terminal_states: ["done", "failed", "review"],
+      ignored_assignees: []
+    }
+
+    defp demo_agent do
+      %{
+        command: "true",
+        args: [],
+        env: %{},
+        adapter: "cli",
+        display_name: "Demo",
+        name: "demo"
+      }
+    end
+
+    defp local_dispatch_state(state, extra) do
+      Map.merge(
+        %{
+          tracker: Svarm.Tracker.Local,
+          tracker_config: @local_config,
+          approval: %{mode: :off, trusted_assignees: MapSet.new()},
+          agents: Map.put(state.agents, "demo", demo_agent()),
+          budget_caps: %{},
+          stall_timeout_ms: 0,
+          claimed: MapSet.new(),
+          running: %{},
+          completed: MapSet.new(),
+          retry_attempts: %{},
+          approved_once: MapSet.new(),
+          last_budget_block: nil,
+          issue_cache: %{}
+        },
+        extra
+      )
+    end
+
+    defp put_running(_state, tasks) do
+      running =
+        Map.new(tasks, fn task ->
+          worker = spawn(fn -> Process.sleep(:infinity) end)
+
+          {task.id,
+           %{
+             task: task,
+             pid: worker,
+             mref: Process.monitor(worker),
+             started_mono_ms: System.monotonic_time(:millisecond),
+             started_at: System.system_time(:second)
+           }}
+        end)
+
+      claimed = MapSet.new(Map.keys(running))
+      {running, claimed}
+    end
+
+    defp stop_running_workers(running) when is_map(running) do
+      Enum.each(running, fn {_id, entry} ->
+        if is_pid(entry.pid) and Process.alive?(entry.pid), do: Process.exit(entry.pid, :kill)
+      end)
+    end
+
+    test "reconcile of N in-flight ids uses fewer KanbanBridge reads than N" do
+      tasks =
+        for i <- 1..3 do
+          KanbanBridge.create_task(%{
+            title: "batch in-flight #{i}",
+            status: "in_progress",
+            assignee: "demo"
+          })
+        end
+
+      original = :sys.get_state(Orchestrator)
+      {running, claimed} = put_running(%{}, tasks)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        Map.merge(state, local_dispatch_state(state, %{running: running, claimed: claimed}))
+      end)
+
+      try do
+        {calls, _} =
+          with_kb_calls(fn ->
+            send(Orchestrator, :tick)
+            flush_orchestrator()
+          end)
+
+        get_calls = for {:get, _} <- calls, do: :get
+        get_many = for {:get_many, n} <- calls, do: n
+        assert get_calls == []
+        assert get_many == [3]
+
+        state = :sys.get_state(Orchestrator)
+
+        Enum.each(tasks, fn task ->
+          assert Map.has_key?(state.running, task.id)
+        end)
+      after
+        stop_running_workers(running)
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "does not dispatch while a depends_on id is non-terminal" do
+      dep =
+        KanbanBridge.create_task(%{
+          title: "dep still todo",
+          status: "todo",
+          assignee: "demo"
+        })
+
+      task =
+        KanbanBridge.create_task(%{
+          title: "blocked by dep",
+          status: "todo",
+          assignee: "demo"
+        })
+
+      :ok = KanbanBridge.update_depends_on(task.id, [dep.id])
+      original = :sys.get_state(Orchestrator)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        Map.merge(state, local_dispatch_state(state, %{}))
+      end)
+
+      try do
+        send(Orchestrator, :tick)
+        flush_orchestrator()
+
+        state = :sys.get_state(Orchestrator)
+        refute Map.has_key?(state.running, task.id)
+        refute MapSet.member?(state.claimed, task.id)
+        assert KanbanBridge.get_task(task.id).status == "todo"
+      after
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "does not dispatch while a depends_on id is running" do
+      dep =
+        KanbanBridge.create_task(%{
+          title: "dep running",
+          status: "in_progress",
+          assignee: "demo"
+        })
+
+      task =
+        KanbanBridge.create_task(%{
+          title: "blocked by running dep",
+          status: "todo",
+          assignee: "demo"
+        })
+
+      :ok = KanbanBridge.update_depends_on(task.id, [dep.id])
+      original = :sys.get_state(Orchestrator)
+      {running, claimed} = put_running(%{}, [dep])
+
+      :sys.replace_state(Orchestrator, fn state ->
+        Map.merge(state, local_dispatch_state(state, %{running: running, claimed: claimed}))
+      end)
+
+      try do
+        send(Orchestrator, :tick)
+        flush_orchestrator()
+
+        state = :sys.get_state(Orchestrator)
+        refute Map.has_key?(state.running, task.id)
+        refute MapSet.member?(state.claimed, task.id)
+        assert KanbanBridge.get_task(task.id).status == "todo"
+        assert Map.has_key?(state.running, dep.id)
+      after
+        stop_running_workers(running)
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "dispatches when depends_on is terminal and not running" do
+      dep =
+        KanbanBridge.create_task(%{
+          title: "dep done",
+          status: "done",
+          assignee: "demo"
+        })
+
+      task =
+        KanbanBridge.create_task(%{
+          title: "unblocked by done dep",
+          status: "todo",
+          assignee: "demo"
+        })
+
+      :ok = KanbanBridge.update_depends_on(task.id, [dep.id])
+      original = :sys.get_state(Orchestrator)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        Map.merge(state, local_dispatch_state(state, %{}))
+      end)
+
+      try do
+        send(Orchestrator, :tick)
+
+        assert wait_until(fn ->
+                 st = :sys.get_state(Orchestrator)
+                 t = KanbanBridge.get_task(task.id)
+
+                 Map.has_key?(st.running, task.id) or MapSet.member?(st.claimed, task.id) or
+                   t.status in ["in_progress", "review", "done", "failed"]
+               end)
+      after
+        running = :sys.get_state(Orchestrator).running
+        stop_running_workers(running)
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "depends_on prefetch for N deps is fewer KanbanBridge reads than N" do
+      deps =
+        for i <- 1..3 do
+          KanbanBridge.create_task(%{
+            title: "dep done #{i}",
+            status: "done",
+            assignee: "demo"
+          })
+        end
+
+      task =
+        KanbanBridge.create_task(%{
+          title: "needs three deps",
+          status: "todo",
+          assignee: "demo"
+        })
+
+      :ok = KanbanBridge.update_depends_on(task.id, Enum.map(deps, & &1.id))
+      original = :sys.get_state(Orchestrator)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        Map.merge(state, local_dispatch_state(state, %{max_concurrent: 0}))
+      end)
+
+      try do
+        {calls, _} =
+          with_kb_calls(fn ->
+            send(Orchestrator, :tick)
+            flush_orchestrator()
+          end)
+
+        get_count = Enum.count(calls, fn {op, _} -> op == :get end)
+        get_many_count = Enum.count(calls, fn {op, _} -> op == :get_many end)
+        assert get_many_count >= 1
+        assert get_count + get_many_count < 3
+
+        assert KanbanBridge.get_task(task.id).status == "todo"
+      after
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "batch get_issues {:error, :not_found} does not mass-release in-flight work" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "batch not_found keep",
+          status: "in_progress",
+          assignee: "demo"
+        })
+
+      worker = spawn(fn -> Process.sleep(:infinity) end)
+      original = :sys.get_state(Orchestrator)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | tracker: Svarm.OrchestratorTest.BatchErrorTracker,
+            running: %{
+              task.id => %{
+                task: task,
+                pid: worker,
+                mref: Process.monitor(worker),
+                started_mono_ms: System.monotonic_time(:millisecond),
+                started_at: System.system_time(:second)
+              }
+            },
+            claimed: MapSet.new([task.id]),
+            stall_timeout_ms: 0,
+            agents: %{},
+            issue_cache: %{}
+        }
+      end)
+
+      try do
+        send(Orchestrator, :tick)
+        flush_orchestrator()
+
+        state = :sys.get_state(Orchestrator)
+        assert Map.has_key?(state.running, task.id)
+        assert MapSet.member?(state.claimed, task.id)
+        assert Process.alive?(worker)
+      after
+        if Process.alive?(worker), do: Process.exit(worker, :kill)
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "GitHub tick does not GET /issues/{n} for ids in the list snapshot" do
+      Svarm.OrchestratorTest.GhTickReq.reset(self())
+
+      payloads =
+        for n <- [21, 22, 23] do
+          %{
+            "number" => n,
+            "node_id" => "I_#{n}",
+            "title" => "gh #{n}",
+            "body" => "",
+            "labels" => [%{"name" => "status: in-progress"}],
+            "assignee" => nil,
+            "user" => %{"login" => "alice"},
+            "created_at" => "2026-01-01T00:00:00Z",
+            "repository_url" => "https://api.github.com/repos/acme/widgets",
+            "state" => "open"
+          }
+        end
+
+      Svarm.OrchestratorTest.GhTickReq.put_list(payloads)
+      original = :sys.get_state(Orchestrator)
+
+      running =
+        Map.new(payloads, fn p ->
+          id = Integer.to_string(p["number"])
+          worker = spawn(fn -> Process.sleep(:infinity) end)
+
+          {id,
+           %{
+             task: %{id: id, status: "in_progress", assignee: "demo"},
+             pid: worker,
+             mref: Process.monitor(worker),
+             started_mono_ms: System.monotonic_time(:millisecond),
+             started_at: System.system_time(:second)
+           }}
+        end)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | tracker: Svarm.Tracker.GitHub,
+            tracker_config: %{
+              owner: "acme",
+              repo: "widgets",
+              api_key: "t",
+              req: Svarm.OrchestratorTest.GhTickReq,
+              kind: :github,
+              active_states: ["todo", "in_progress"],
+              terminal_states: ["done", "failed", "review"]
+            },
+            running: running,
+            claimed: MapSet.new(Map.keys(running)),
+            stall_timeout_ms: 0,
+            agents: %{},
+            retry_attempts: %{},
+            issue_cache: %{}
+        }
+      end)
+
+      try do
+        send(Orchestrator, :tick)
+        flush_orchestrator()
+
+        gets = drain_http_gets([])
+        list_gets = Enum.filter(gets, &String.ends_with?(&1, "/issues"))
+        assert list_gets != []
+
+        refute Enum.any?(gets, fn url -> url =~ ~r{/issues/\d+$} end),
+               "unexpected per-id GETs: #{inspect(gets)}"
+
+        state = :sys.get_state(Orchestrator)
+
+        Enum.each(Map.keys(running), fn id ->
+          assert Map.has_key?(state.running, id)
+        end)
+      after
+        stop_running_workers(running)
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "GitHub list 429 keeps in-flight work (no mass-release)" do
+      Svarm.OrchestratorTest.GhTickReq.reset(self())
+
+      Svarm.OrchestratorTest.GhTickReq.put_list_error(
+        {:ok, %{status: 429, headers: %{"retry-after" => ["15"]}}}
+      )
+
+      original = :sys.get_state(Orchestrator)
+
+      ids = ["21", "22"]
+
+      running =
+        Map.new(ids, fn id ->
+          worker = spawn(fn -> Process.sleep(:infinity) end)
+
+          {id,
+           %{
+             task: %{id: id, status: "in_progress", assignee: "demo"},
+             pid: worker,
+             mref: Process.monitor(worker),
+             started_mono_ms: System.monotonic_time(:millisecond),
+             started_at: System.system_time(:second)
+           }}
+        end)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | tracker: Svarm.Tracker.GitHub,
+            tracker_config: %{
+              owner: "acme",
+              repo: "widgets",
+              api_key: "t",
+              req: Svarm.OrchestratorTest.GhTickReq,
+              kind: :github,
+              active_states: ["todo", "in_progress"],
+              terminal_states: ["done", "failed", "review"]
+            },
+            running: running,
+            claimed: MapSet.new(ids),
+            stall_timeout_ms: 0,
+            agents: %{},
+            retry_attempts: %{},
+            issue_cache: %{}
+        }
+      end)
+
+      try do
+        send(Orchestrator, :tick)
+        flush_orchestrator()
+
+        state = :sys.get_state(Orchestrator)
+
+        Enum.each(ids, fn id ->
+          assert Map.has_key?(state.running, id)
+          assert MapSet.member?(state.claimed, id)
+        end)
+      after
+        stop_running_workers(running)
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+  end
+
+  defmodule BatchErrorTracker do
+    def capabilities, do: []
+    def get_issues(_config, _ids), do: {:error, :not_found}
+    def get_issue(_config, _id), do: {:error, :network_error}
+    def list_eligible(_config), do: {:ok, []}
+    def list_issues(_config, _filters \\ []), do: {:ok, []}
+    def create_issue(_config, attrs), do: {:ok, struct(Svarm.Issue, Map.to_list(attrs))}
+    def update_status(_config, _id, _status), do: :ok
+    def update_attempts(_config, _id, _n), do: :ok
+    def claim(_config, _id), do: :ok
+    def delete_all(_config), do: :ok
+    def post_run_summary(_config, _id, _s), do: :ok
+  end
+
+  defmodule GhTickReq do
+    @table :svarm_gh_tick_req
+
+    def reset(pid) do
+      ensure!()
+      :ets.delete_all_objects(@table)
+      :ets.insert(@table, {:pid, pid})
+      :ets.insert(@table, {:list, {:ok, %{status: 200, body: []}}})
+      :ets.insert(@table, {:eligible, {:ok, %{status: 200, body: []}}})
+      :ets.insert(@table, {:issue, {:ok, %{status: 404, body: %{}}}})
+      :ok
+    end
+
+    def put_list(issues) when is_list(issues) do
+      ensure!()
+      :ets.insert(@table, {:list, {:ok, %{status: 200, body: issues}}})
+      :ok
+    end
+
+    def put_list_error(resp) do
+      ensure!()
+      :ets.insert(@table, {:list, resp})
+      :ok
+    end
+
+    def get(url, opts) do
+      ensure!()
+
+      case :ets.lookup(@table, :pid) do
+        [{:pid, pid}] -> send(pid, {:http_get, url})
+        _ -> :ok
+      end
+
+      cond do
+        match?({_n, ""}, Integer.parse(Path.basename(url))) ->
+          lookup(:issue)
+
+        opts |> Keyword.get(:params, %{}) |> Map.get(:state) == "open" ->
+          lookup(:eligible)
+
+        true ->
+          lookup(:list)
+      end
+    end
+
+    defp lookup(key) do
+      case :ets.lookup(@table, key) do
+        [{^key, resp}] -> resp
+        [] -> {:ok, %{status: 404, body: %{}}}
+      end
+    end
+
+    defp ensure! do
+      case :ets.whereis(@table) do
+        :undefined -> :ets.new(@table, [:named_table, :public, :set])
+        _ -> :ok
       end
     end
   end
