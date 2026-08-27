@@ -2020,6 +2020,44 @@ defmodule Svarm.OrchestratorTest do
       end
     end
 
+    test "batch tracker_error does not treat depends_on as met" do
+      dep =
+        KanbanBridge.create_task(%{
+          title: "dep still running in tracker",
+          status: "todo",
+          assignee: "demo"
+        })
+
+      task =
+        KanbanBridge.create_task(%{
+          title: "must wait through batch error",
+          status: "todo",
+          assignee: "demo"
+        })
+
+      :ok = KanbanBridge.update_depends_on(task.id, [dep.id])
+      original = :sys.get_state(Orchestrator)
+
+      :sys.replace_state(Orchestrator, fn state ->
+        Map.merge(
+          state,
+          local_dispatch_state(state, %{tracker: Svarm.OrchestratorTest.BatchGatingTracker})
+        )
+      end)
+
+      try do
+        send(Orchestrator, :tick)
+        flush_orchestrator()
+
+        state = :sys.get_state(Orchestrator)
+        refute Map.has_key?(state.running, task.id)
+        refute MapSet.member?(state.claimed, task.id)
+        assert KanbanBridge.get_task(task.id).status == "todo"
+      after
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
     test "batch get_issues {:error, :not_found} does not mass-release in-flight work" do
       task =
         KanbanBridge.create_task(%{
@@ -2208,6 +2246,23 @@ defmodule Svarm.OrchestratorTest do
         :sys.replace_state(Orchestrator, fn _ -> original end)
       end
     end
+  end
+
+  defmodule BatchGatingTracker do
+    def capabilities, do: []
+    def list_eligible(config), do: Svarm.Tracker.Local.list_eligible(config)
+    def get_issues(_config, _ids), do: {:error, :network_error}
+    def get_issue(config, id), do: Svarm.Tracker.Local.get_issue(config, id)
+    def list_issues(config, filters \\ []), do: Svarm.Tracker.Local.list_issues(config, filters)
+    def create_issue(config, attrs), do: Svarm.Tracker.Local.create_issue(config, attrs)
+
+    def update_status(config, id, status),
+      do: Svarm.Tracker.Local.update_status(config, id, status)
+
+    def update_attempts(config, id, n), do: Svarm.Tracker.Local.update_attempts(config, id, n)
+    def claim(config, id), do: Svarm.Tracker.Local.claim(config, id)
+    def delete_all(config), do: Svarm.Tracker.Local.delete_all(config)
+    def post_run_summary(config, id, s), do: Svarm.Tracker.Local.post_run_summary(config, id, s)
   end
 
   defmodule BatchErrorTracker do

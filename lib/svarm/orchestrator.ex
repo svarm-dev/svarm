@@ -874,6 +874,9 @@ defmodule Svarm.Orchestrator do
       nil ->
         case lookup_issue(acc, dep_id) do
           {:ok, dep} -> dep.status in acc.terminal_states
+          # Batch/transient tracker errors must not look like "dep is gone".
+          # Missing issues still fail-open (`_ -> true`) as before.
+          {:error, {:tracker_error, _}} -> false
           _ -> true
         end
 
