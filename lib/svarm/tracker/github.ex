@@ -15,6 +15,18 @@ defmodule Svarm.Tracker.GitHub do
   `update_attempts/3` upserts that row; `Normalize.attach_attempts/1` reads
   it back on fetch so retries increment and exhaust like Local.
 
+  Dispatch dependencies (`Issue.depends_on`) are stored as an HTML comment
+  in the GitHub issue body (not SQLite coordination):
+
+      <!-- svarm-depends-on: I_abc,I_def -->
+
+  That marker is operator-visible and **editable** on GitHub (collaborators
+  and agents with issues write). It is sequencing metadata, not a signed
+  lock. `Normalize` unions every marker in the body, allowlists id
+  characters, and caps the list. Parsed **before** `list_issues` may strip
+  bodies so Orchestrator `dependencies_met?/2` sees GitHub-wired deps.
+  Local keeps KanbanBridge.
+
   Issue lookup (`get_issue/2`, shared by `update_status/3`, `claim/2`, and
   `post_run_summary/3`): an integer-string id hits REST
   `GET /repos/{owner}/{repo}/issues/{number}`. A GraphQL `node_id`
@@ -203,19 +215,26 @@ defmodule Svarm.Tracker.GitHub do
     repo = Map.fetch!(config, :repo)
 
     url = "#{@base_url}/repos/#{owner}/#{repo}/issues"
+    req = req_mod(config)
 
     body = %{
       title: Map.get(attrs, :title, "Untitled"),
-      body: Map.get(attrs, :body, ""),
+      body:
+        Normalize.put_depends_on_marker(
+          Map.get(attrs, :body, "") || "",
+          depends_on_ids(attrs)
+        ),
       labels: build_create_labels(attrs, config)
     }
 
-    case Req.post(url, json: body, headers: headers(config)) do
+    case req.post(url, json: body, headers: headers(config)) do
       {:ok, %{status: 201, body: gh_issue}} ->
         issue =
           gh_issue
           |> Normalize.from_api_response(with_status_labels(config))
           |> Normalize.attach_attempts()
+          |> overlay_create_priority(attrs)
+          |> overlay_create_depends_on(attrs)
 
         {:ok, issue}
 
@@ -268,6 +287,21 @@ defmodule Svarm.Tracker.GitHub do
   end
 
   @impl true
+  def update_depends_on(config, id, depends_on) when is_binary(id) and is_list(depends_on) do
+    case get_issue(config, id) do
+      {:ok, issue} ->
+        patch_issue_body(
+          config,
+          issue.source_id,
+          Normalize.put_depends_on_marker(issue.body || "", depends_on)
+        )
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @impl true
   def claim(config, id) do
     case find_issue(config, id) do
       nil ->
@@ -280,7 +314,7 @@ defmodule Svarm.Tracker.GitHub do
         url = "#{@base_url}/repos/#{owner}/#{repo}/issues/#{issue.source_id}"
         labels = ["claimed" | issue.labels] |> Enum.uniq()
 
-        Req.patch(url, json: %{labels: labels}, headers: headers(config))
+        req_mod(config).patch(url, json: %{labels: labels}, headers: headers(config))
         :ok
     end
   end
@@ -336,6 +370,26 @@ defmodule Svarm.Tracker.GitHub do
     case get_issue(config, id) do
       {:ok, issue} -> issue
       _ -> nil
+    end
+  end
+
+  defp patch_issue_body(config, source_id, body) do
+    owner = Map.fetch!(config, :owner)
+    repo = Map.fetch!(config, :repo)
+    url = "#{@base_url}/repos/#{owner}/#{repo}/issues/#{source_id}"
+    req = req_mod(config)
+
+    case req.patch(url, json: %{body: body}, headers: headers(config)) do
+      {:ok, %{status: 200}} ->
+        :ok
+
+      {:ok, %{status: 403} = resp} ->
+        Logger.warning("github: depends_on update forbidden: #{format_forbidden(resp)}")
+        {:error, error(:forbidden, "issue update forbidden")}
+
+      other ->
+        Logger.warning("github: depends_on update failed: #{inspect(other)}")
+        {:error, patch_error(other)}
     end
   end
 
@@ -449,6 +503,30 @@ defmodule Svarm.Tracker.GitHub do
         Map.values(reverse_labels) ++
         Map.keys(status_labels)
     )
+  end
+
+  defp depends_on_ids(attrs) when is_map(attrs) do
+    case Map.get(attrs, :depends_on, []) do
+      ids when is_list(ids) -> Enum.map(ids, &to_string/1)
+      _ -> []
+    end
+  end
+
+  defp overlay_create_priority(issue, attrs) when is_map(attrs) do
+    case Map.get(attrs, :priority) do
+      n when is_integer(n) -> %{issue | priority: n}
+      _ -> issue
+    end
+  end
+
+  defp overlay_create_depends_on(issue, attrs) when is_map(attrs) do
+    case Map.get(attrs, :depends_on) do
+      ids when is_list(ids) and ids != [] ->
+        %{issue | depends_on: Enum.map(ids, &to_string/1)}
+
+      _ ->
+        issue
+    end
   end
 
   defp build_create_labels(attrs, config) do

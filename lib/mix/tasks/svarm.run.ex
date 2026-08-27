@@ -32,26 +32,42 @@ defmodule Mix.Tasks.Svarm.Run do
     case Svarm.Decompose.run(%{goal: goal, research: research}) do
       {:ok, %{tasks: tasks}} ->
         Mix.shell().info("Decomposed into #{length(tasks)} tasks")
+        dispatch_and_report(goal, tasks)
 
-        {:ok, %{created_count: count}} = Svarm.Dispatch.run(%{tasks: tasks, goal: goal})
+      {:error, reason} ->
+        Mix.shell().error("Decompose failed: #{inspect(reason)}")
+        System.halt(1)
+    end
+  end
+
+  defp dispatch_and_report(goal, tasks) do
+    case Svarm.Dispatch.run(%{tasks: tasks, goal: goal}) do
+      {:ok, %{created_count: count}} ->
         Mix.shell().info("Dispatched #{count} tasks to the board")
-
         Mix.shell().info("\nTasks created:")
-
-        {adapter, config} = Svarm.Tracker.Resolve.adapter_and_config()
-        {:ok, issues} = adapter.list_issues(config, [])
-
-        Enum.each(issues, fn t ->
-          Mix.shell().info("  [#{t.assignee}] (#{t.type}) #{t.title} (#{t.status})")
-        end)
+        report_created_issues()
 
         Mix.shell().info("\nStart the orchestrator to pick these up:")
         Mix.shell().info("  mix phx.server")
         Mix.shell().info("  # then open http://localhost:4000/board")
 
       {:error, reason} ->
-        Mix.shell().error("Decompose failed: #{inspect(reason)}")
+        Mix.shell().error("Dispatch failed: #{inspect(reason)}")
         System.halt(1)
+    end
+  end
+
+  defp report_created_issues do
+    {adapter, config} = Svarm.Tracker.Resolve.adapter_and_config()
+
+    case adapter.list_issues(config, []) do
+      {:ok, issues} ->
+        Enum.each(issues, fn t ->
+          Mix.shell().info("  [#{t.assignee}] (#{t.type}) #{t.title} (#{t.status})")
+        end)
+
+      {:error, reason} ->
+        Mix.shell().error("Could not list issues: #{inspect(reason)}")
     end
   end
 end

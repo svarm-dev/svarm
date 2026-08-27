@@ -58,6 +58,19 @@ defmodule Svarm.Tracker do
   @callback update_attempts(config :: map(), id :: String.t(), attempts :: integer()) :: :ok
 
   @doc """
+  Persists `depends_on` ids on the active tracker.
+
+  Local writes `KanbanBridge`. GitHub stores an HTML comment in the issue
+  body (`<!-- svarm-depends-on: id1,id2 -->`) so fetch/list fill
+  `Issue.depends_on` for Orchestrator `dependencies_met?/2`.
+  """
+  @callback update_depends_on(
+              config :: map(),
+              id :: String.t(),
+              depends_on :: [String.t()]
+            ) :: :ok | {:error, term()}
+
+  @doc """
   Claims an issue for dispatch. Returns `:ok`.
   """
   @callback claim(config :: map(), id :: String.t()) :: :ok
