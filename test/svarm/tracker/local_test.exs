@@ -159,6 +159,33 @@ defmodule Svarm.Tracker.LocalTest do
     end
   end
 
+  describe "get_issues/2" do
+    test "one KanbanBridge round-trip for multiple ids, including misses" do
+      a = KanbanBridge.create_task(%{title: "batch a", status: "todo", assignee: "demo"})
+      b = KanbanBridge.create_task(%{title: "batch b", status: "done", assignee: "demo"})
+
+      {calls, {:ok, results}} =
+        with_kb_calls(fn ->
+          Local.get_issues(@config, [a.id, b.id, "sva_missing_xyz", a.id])
+        end)
+
+      assert [{:get_many, n}] = calls
+      assert n == 3
+
+      assert {:ok, %Issue{id: id_a, status: "todo"}} = results[a.id]
+      assert id_a == a.id
+      assert {:ok, %Issue{status: "done"}} = results[b.id]
+      assert {:error, :not_found} = results["sva_missing_xyz"]
+      assert map_size(results) == 3
+    end
+
+    test "empty ids is an empty map without looking up tasks" do
+      {calls, {:ok, results}} = with_kb_calls(fn -> Local.get_issues(@config, []) end)
+      assert results == %{}
+      assert calls == []
+    end
+  end
+
   describe "list_issues/2 and delete_all/1" do
     test "lists with filters and clears the board" do
       KanbanBridge.create_task(%{title: "a", status: "todo", assignee: "demo"})
@@ -178,5 +205,35 @@ defmodule Svarm.Tracker.LocalTest do
 
   test "post_run_summary is a no-op success" do
     assert :ok = Local.post_run_summary(@config, "sva_x", %{run_id: "r1", result: :ok})
+  end
+
+  defp with_kb_calls(fun) when is_function(fun, 0) do
+    parent = self()
+    handler_id = "local-kb-calls-#{System.unique_integer([:positive])}"
+
+    :ok =
+      :telemetry.attach(
+        handler_id,
+        [:svarm, :kanban_bridge, :call],
+        fn _event, meas, meta, _cfg ->
+          send(parent, {:kb_call, meta[:op], meas[:n] || 1})
+        end,
+        nil
+      )
+
+    try do
+      result = fun.()
+      {drain_kb_calls([]), result}
+    after
+      :telemetry.detach(handler_id)
+    end
+  end
+
+  defp drain_kb_calls(acc) do
+    receive do
+      {:kb_call, op, n} -> drain_kb_calls([{op, n} | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
   end
 end
