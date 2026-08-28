@@ -43,6 +43,23 @@ defmodule Svarm.KanbanBridgeTest do
     end
   end
 
+  describe "get_tasks/1" do
+    test "returns found tasks keyed by id and omits missing ids" do
+      a = KanbanBridge.create_task(%{title: "batch a", status: "todo"})
+      b = KanbanBridge.create_task(%{title: "batch b", status: "review"})
+
+      found = KanbanBridge.get_tasks([a.id, b.id, "sva_missing", a.id])
+      assert Map.keys(found) |> Enum.sort() == Enum.sort([a.id, b.id])
+      assert found[a.id].title == "batch a"
+      assert found[b.id].status == "review"
+      refute Map.has_key?(found, "sva_missing")
+    end
+
+    test "empty list is an empty map" do
+      assert KanbanBridge.get_tasks([]) == %{}
+    end
+  end
+
   describe "list_tasks/1" do
     test "returns all tasks ordered by priority then created_at" do
       low = KanbanBridge.create_task(%{title: "low", status: "todo", priority: 5})

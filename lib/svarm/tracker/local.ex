@@ -30,6 +30,24 @@ defmodule Svarm.Tracker.Local do
   end
 
   @impl true
+  def get_issues(_config, []), do: {:ok, %{}}
+
+  def get_issues(_config, ids) when is_list(ids) do
+    ids = ids |> Enum.filter(&is_binary/1) |> Enum.uniq()
+    found = KanbanBridge.get_tasks(ids)
+
+    results =
+      Map.new(ids, fn id ->
+        case Map.fetch(found, id) do
+          {:ok, map} -> {id, {:ok, Normalize.from_map(map)}}
+          :error -> {id, {:error, :not_found}}
+        end
+      end)
+
+    {:ok, results}
+  end
+
+  @impl true
   def list_issues(_config, filters \\ []) do
     {include_body, filters} = Keyword.pop(filters, :include_body, true)
 

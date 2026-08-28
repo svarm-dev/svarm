@@ -82,6 +82,11 @@ defmodule Svarm.Test.FakeTracker do
   end
 
   @impl true
+  def get_issues(config, ids) when is_list(ids) do
+    {:ok, Map.new(Enum.uniq(ids), fn id -> {id, get_issue(config, id)} end)}
+  end
+
+  @impl true
   def list_issues(_config, filters \\ []) do
     ensure_table()
     status = Keyword.get(filters, :status)
