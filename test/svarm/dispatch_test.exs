@@ -115,7 +115,7 @@ defmodule Svarm.DispatchTest do
     wave1 = Enum.filter(created, &(&1.priority == 1))
     p2 = Enum.find(created, &(&1.title == "second"))
 
-    assert length(wave1) == 3
+    assert match?([_, _, _], wave1)
     assert Enum.all?(wave1, &(&1.depends_on == []))
     assert Enum.sort(p2.depends_on) == Enum.sort(Enum.map(wave1, & &1.id))
     refute Enum.any?(created, &(&1.priority == 0))
