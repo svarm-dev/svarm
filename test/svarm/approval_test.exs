@@ -237,9 +237,20 @@ defmodule Svarm.ApprovalTest do
 
   describe "local tracker path" do
     setup do
+      original = :sys.get_state(Svarm.Orchestrator)
+
+      :sys.replace_state(Svarm.Orchestrator, fn state ->
+        %{state | max_concurrent: 0}
+      end)
+
       # Default resolve is Local when no override and no github settings.
       :ok = Tracker.Local.delete_all(%{})
-      on_exit(fn -> Tracker.Local.delete_all(%{}) end)
+
+      on_exit(fn ->
+        :ok = Tracker.Local.delete_all(%{})
+        :sys.replace_state(Svarm.Orchestrator, fn _ -> original end)
+      end)
+
       :ok
     end
 

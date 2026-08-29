@@ -76,6 +76,11 @@ defmodule Svarm.Tracker.Local do
   end
 
   @impl true
+  def update_depends_on(_config, id, depends_on) do
+    KanbanBridge.update_depends_on(id, depends_on)
+  end
+
+  @impl true
   def claim(_config, _id), do: :ok
 
   @impl true

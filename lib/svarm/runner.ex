@@ -101,7 +101,7 @@ defmodule Svarm.Runner do
   Kill the OS agent tree registered for a worker Task pid.
 
   No-op when the worker has not opened an agent Port. Orchestrator calls this
-  via `Svarm.AgentRunner.kill_os_tree/1` before `Process.exit/2`.
+  via `Svarm.AgentRunner.kill_os_tree/1` while stopping the worker.
   """
   @spec kill_for_worker(pid()) :: :ok
   def kill_for_worker(worker_pid) when is_pid(worker_pid) do
