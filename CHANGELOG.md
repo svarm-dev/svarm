@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.6] - 2026-08-29
 
-Review Station, outcome ROI, worktree isolation, Abort, Steer, Path B GitHub durability, soft budget hold. No breaking env change (new optional keys only).
+Review Station, outcome ROI, worktree isolation, Abort, Steer, GitHub Issues reliability, soft budget hold. No breaking env change (new optional keys only).
 
 ### Added
 
@@ -138,7 +138,7 @@ Run console & CI resume. Optional CI-fail re-dispatch (default **off**). Review-
 
 ## [0.1.3] - 2026-08-02
 
-Governance trust floor for self-hosted operators: honest docs, board mutation auth, hard spend caps, usage export, allowlisted agent env, and one-shot approval — plus Path B dogfood and demo hardening since 0.1.2.
+Governance trust floor for self-hosted operators: honest docs, board mutation auth, hard spend caps, usage export, allowlisted agent env, and one-shot approval — plus GitHub dogfood and demo hardening since 0.1.2.
 
 **Breaking:** empty agent `env` no longer inherits the full host process environment. List API keys explicitly in `agents.toml` (e.g. `OPENROUTER_API_KEY = "$OPENROUTER_API_KEY"`). Default agent block was updated; custom agents need the same.
 
@@ -227,7 +227,7 @@ First **public** try path: Docker demo profile, approvals env, journey docs, ins
 ### Fixed
 
 - Orchestrator poll loop survives tracker `list_eligible` errors (e.g. GitHub rate limit) instead of MatchError crash
-- Path A Docker demo no longer starts the non-demo service on the same host port
+- Local Docker demo no longer starts the non-demo service on the same host port
 - **pi RPC** runner: wall-clock timeout, process-tree cleanup on abort, oversized JSONL line protection, clearer fail-fast when `pi` is missing; operator notes in GETTING-STARTED / `docs/agents.md`
 
 ## [0.1.0] - 2026-07-15
