@@ -100,6 +100,27 @@ defmodule Svarm.DispatchTest do
     assert FakeTracker.get(p2.id).depends_on == [p1.id]
   end
 
+  test "omitted or zero priority does not gate priority-1 work" do
+    {:ok, %{tasks: created}} =
+      Dispatch.run(%{
+        goal: "omit-pri",
+        tasks: [
+          %{title: "no-pri", body: "dropped", type: "code", assignee: "demo"},
+          %{title: "zero", body: "explicit-0", type: "code", priority: 0, assignee: "demo"},
+          %{title: "first", body: "p1", type: "code", priority: 1, assignee: "demo"},
+          %{title: "second", body: "p2", type: "code", priority: 2, assignee: "demo"}
+        ]
+      })
+
+    wave1 = Enum.filter(created, &(&1.priority == 1))
+    p2 = Enum.find(created, &(&1.title == "second"))
+
+    assert length(wave1) == 3
+    assert Enum.all?(wave1, &(&1.depends_on == []))
+    assert Enum.sort(p2.depends_on) == Enum.sort(Enum.map(wave1, & &1.id))
+    refute Enum.any?(created, &(&1.priority == 0))
+  end
+
   test "returns tagged error when create_issue fails" do
     assert {:error, :auth_failure} =
              Dispatch.run(

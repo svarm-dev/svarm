@@ -5,7 +5,9 @@ defmodule Svarm.Dispatch do
   Keeps an explicit task assignee when present; otherwise routes via ProfileRouter.
   Auto-wires dependencies: priority N tasks depend on all priority N-1 tasks,
   passed into `create_issue` as `depends_on` (Local: KanbanBridge column;
-  GitHub: issue-body marker). Expected tracker failures return `{:error, reason}`.
+  GitHub: issue-body marker). Omitted, non-integer, or `< 1` priority is treated
+  as **1** (foundational) so a dropped LLM field cannot gate priority-1 work.
+  Expected tracker failures return `{:error, reason}`.
   """
   alias Svarm.ProfileRouter
   alias Svarm.Tracker
@@ -50,7 +52,7 @@ defmodule Svarm.Dispatch do
         body: t[:body],
         type: t[:type] || "code",
         assignee: resolve_assignee(t),
-        priority: t[:priority] || 0,
+        priority: t.priority,
         depends_on: depends_on,
         created_by: "svarm",
         tenant: goal
@@ -75,9 +77,12 @@ defmodule Svarm.Dispatch do
       body: get.(:body),
       type: get.(:type),
       assignee: get.(:assignee),
-      priority: get.(:priority) || 0
+      priority: normalize_priority(get.(:priority))
     }
   end
+
+  defp normalize_priority(n) when is_integer(n) and n >= 1, do: n
+  defp normalize_priority(_), do: 1
 
   defp resolve_assignee(%{assignee: assignee}) when is_binary(assignee) do
     case String.trim(assignee) do
