@@ -149,7 +149,7 @@ GitHub App identity (bot comments): [docs/github-app.md](docs/github-app.md).
 
 ## Status
 
-**Current release: v0.1.5** (mid-run Q&A + review-resume).
+**Current release: v0.1.6** (Review Station, Abort, Steer, Path B durability).
 
 **Working now:**
 
