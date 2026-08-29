@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-08-29
+
+Review Station, outcome ROI, worktree isolation, Abort, Steer, Path B GitHub durability, soft budget hold. No breaking env change (new optional keys only).
+
 ### Added
 
 - **Review Station** ([#155](https://github.com/svarm-dev/svarm/issues/155), [#156](https://github.com/svarm-dev/svarm/issues/156), epic [#152](https://github.com/svarm-dev/svarm/issues/152)): structured **Evidence** on selected review cards (PR, attempts, agent/model, cost, age) plus PR/no-PR glance chips; GitHub always polls Checks for a `pass` / `fail` / `pending` / `unknown` summary chip (N/A on the local tracker). Informational only — humans still merge on GitHub.
@@ -22,10 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **RunLog stream append** ([#182](https://github.com/svarm-dev/svarm/issues/182)): `RunLog.append/2` returns once the redacted chunk is visible to `get/1` and no longer waits on SQLite. Persist still uses SQL `content || ?` (no full-row rewrite). A pending-bytes cap applies back-pressure when the database is slow.
 - **Tracker resolve single path** ([#169](https://github.com/svarm-dev/svarm/pull/169)): kind → adapter mapping lives only in `Svarm.Tracker.Resolve`; Orchestrator uses adapter capabilities instead of `== Tracker.Local` branches. Mix `svarm.demo` pins the local tracker so a GitHub WORKFLOW/Settings overlay cannot pull the isolated demo off its temp board.
+- **Orchestrator batches tracker status reads** ([#213](https://github.com/svarm-dev/svarm/pull/213)): reconcile of N in-flight ids uses one `get_many` instead of N `get_issue` calls.
+- **Dashboard ROI one ledger scan** ([#183](https://github.com/svarm-dev/svarm/issues/183), [#199](https://github.com/svarm-dev/svarm/pull/199)): `/dashboard` ROI snapshot scans the usage ledger once per window, not per agent.
+- **Usage `task_cost` SQL aggregates** ([#190](https://github.com/svarm-dev/svarm/issues/190), [#200](https://github.com/svarm-dev/svarm/pull/200)): run-finish totals use SQL aggregates instead of loading every ledger row.
+- **Redact once on persist** ([#192](https://github.com/svarm-dev/svarm/issues/192), [#196](https://github.com/svarm-dev/svarm/pull/196)): stream chunks are redacted before buffer/DB, not twice.
+- README Status is **Current release: v0.1.6**
 
 ### Fixed
 
-- **Dispatch GitHub create + depends_on** ([#180](https://github.com/svarm-dev/svarm/issues/180)): `Dispatch.run/2` passes the resolved tracker config into `create_issue` (GitHub no longer `Map.fetch!`s `:owner` on `%{}`). Multi-priority `depends_on` is written through the active tracker: Local still uses KanbanBridge; GitHub stores `<!-- svarm-depends-on: id1,id2 -->` in the issue body, parsed onto `Issue.depends_on` before list-path body strip so Orchestrator `dependencies_met?/2` honors it.
+- **Dispatch GitHub create + depends_on** ([#180](https://github.com/svarm-dev/svarm/issues/180), [#212](https://github.com/svarm-dev/svarm/pull/212)): `Dispatch.run/2` passes the resolved tracker config into `create_issue` (GitHub no longer `Map.fetch!`s `:owner` on `%{}`). Multi-priority `depends_on` is written through the active tracker: Local still uses KanbanBridge; GitHub stores `<!-- svarm-depends-on: id1,id2 -->` in the issue body, parsed onto `Issue.depends_on` before list-path body strip so Orchestrator `dependencies_met?/2` honors it. Omitted, non-integer, or `< 1` priority is treated as **1** so a dropped LLM field cannot gate priority-1 work.
 - **GitHub retry attempts persist** ([#175](https://github.com/svarm-dev/svarm/issues/175)): `Tracker.GitHub.update_attempts/3` writes `task_coordination.attempts`; `Normalize` reads that row back on fetch so Orchestrator retries increment and exhaust after `max_retries` like Local. Board cards are not stuck at `attempts: 0` after a GitHub retry. Honesty: tracker-durable coordination (not an `attempts: N` GitHub label, not in-memory `retry_attempts`). Default backoff / `max_retries` unchanged.
 - **Orchestrator stall kills the OS agent tree** ([#179](https://github.com/svarm-dev/svarm/issues/179)): stall and tracker-terminal stop call the same kill-tree as PiRPC/CLI timeout abort. Agent Ports already have their own process group, so a missing `pgrep` still reaps descendants via PGID kill (never the BEAM PGID).
 - **GitHub `get_issue` for non-eligible statuses** ([#174](https://github.com/svarm-dev/svarm/issues/174)): lookup by GraphQL `node_id` scans `list_issues` (`state: all`, board-visible) instead of `list_eligible` (open + dispatchable). Approve / complete-review / retry re-fetch of a GitHub card still resolve after the issue leaves the eligible set. Numeric `source_id` still uses REST `GET /issues/{number}`. Tagged list errors (`rate_limit`, `network_error`, 5xx) are not rewritten as `:not_found` (that would release in-flight work). Residual: both paths are bound to the configured owner/repo and the list scan is a single page — transferring an issue to another repository is not followed (no GraphQL `node(id:)`). Numeric REST GET still maps non-200 to `:not_found`.
@@ -40,6 +49,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Worktree teardown + git timeout** ([#162](https://github.com/svarm-dev/svarm/issues/162)): `Workspace.cleanup/3` runs `git worktree remove` (force if dirty); add/list/remove share a bounded Port helper (default 30s → `{:error, :git_timeout}` with best-effort leftover cleanup so the next ensure is not stuck).
 - **Board / dashboard first paint** ([#163](https://github.com/svarm-dev/svarm/issues/163)): dead GET `/board` and `/dashboard` render real cards instead of a skeleton, so the stock LiveView "Attempting to reconnect" banner no longer flashes on every visit. `instance_status/1` can reuse already-loaded agents/task count.
 - **Budget hold unlocks**: trust `/approvals` Approve on an over-budget ticket now grants the overage permit; Reject clears the hold; raising the cap no longer resurrects rejected cards; overage permit is recorded before `todo` so a concurrent tick cannot re-park.
+- **GitHub `update_status` PATCH** ([#184](https://github.com/svarm-dev/svarm/issues/184), [#210](https://github.com/svarm-dev/svarm/pull/210)): non-200 PATCH is an error, not a silent success.
+
+### Security
+
+- **GitHub App installation tokens** ([#188](https://github.com/svarm-dev/svarm/issues/188), [#195](https://github.com/svarm-dev/svarm/pull/195)): cached in GenServer state instead of public ETS.
+
+### Dependencies
+
+- daisyUI v5.7.8 → v5.7.19 ([#148](https://github.com/svarm-dev/svarm/pull/148), [#208](https://github.com/svarm-dev/svarm/pull/208))
+- `req_llm` 1.17.1 → 1.20.0 ([#147](https://github.com/svarm-dev/svarm/pull/147))
+- `phoenix_live_dashboard` 0.8.7 → 0.9.0 ([#149](https://github.com/svarm-dev/svarm/pull/149))
 
 ## [0.1.5] - 2026-08-14
 
@@ -243,7 +263,8 @@ Shipped surface in this cut: **local board + GitHub Issues + pi/CLI + OpenRouter
 
 - Agent credentials and API keys must come from the environment; never written into task metadata, PubSub events, or tracked config files
 
-[Unreleased]: https://github.com/svarm-dev/svarm/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/svarm-dev/svarm/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/svarm-dev/svarm/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/svarm-dev/svarm/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/svarm-dev/svarm/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/svarm-dev/svarm/compare/v0.1.2...v0.1.3
