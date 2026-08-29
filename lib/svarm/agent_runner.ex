@@ -41,7 +41,7 @@ defmodule Svarm.AgentRunner do
   Kill the OS agent process tree registered for a worker Task pid.
 
   Orchestrator stall, tracker-terminal stop, and board abort call this
-  before `Process.exit/2`. Shell-out stays in `Svarm.Runner` (`kill_tree/1` —
+  alongside `Process.exit/2`. Shell-out stays in `Svarm.Runner` (`kill_tree/1` —
   process-group / PGID when `pgrep` is absent). No-op if the worker never
   opened an agent Port.
   """

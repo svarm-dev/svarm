@@ -608,8 +608,12 @@ defmodule Svarm.Orchestrator do
   @doc false
   @spec kill_worker(pid(), term()) :: true
   def kill_worker(pid, reason) when is_pid(pid) do
+    # An uncatchable exit prevents the runner from interpreting our OS-tree
+    # shutdown as an agent failure and overwriting a tracker-terminal status.
+    Process.exit(pid, :kill)
     AgentRunner.kill_os_tree(pid)
-    Process.exit(pid, reason)
+    Logger.debug("stopped worker #{inspect(pid)}: #{inspect(reason)}")
+    true
   end
 
   defp drop_worker_monitor(%{mref: mref}) when is_reference(mref) do
@@ -618,12 +622,13 @@ defmodule Svarm.Orchestrator do
 
   defp drop_worker_monitor(_), do: true
 
-  # Kill-tree first (Ports registry is keyed by the worker pid), then
-  # uncatchable `:kill` so the runner cannot write failed/review on port death.
+  # Kill the worker first so it cannot write failed/review on port death. The
+  # registry entry is still available synchronously, and its monitor reaper is
+  # a fallback if the worker exits before lookup.
   defp await_worker_exit(pid) when is_pid(pid) do
     ref = Process.monitor(pid)
-    AgentRunner.kill_os_tree(pid)
     Process.exit(pid, :kill)
+    AgentRunner.kill_os_tree(pid)
 
     receive do
       {:DOWN, ^ref, :process, ^pid, _} -> :ok
