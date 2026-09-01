@@ -229,6 +229,70 @@ defmodule SvarmWeb.BoardLiveTest do
     assert render(view) =~ "Authentication required"
   end
 
+  test "selected task dismisses a parked question via the console Dismiss control", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Dismiss me",
+        status: "in_progress",
+        assignee: "demo"
+      })
+
+    assert {:ok, _} =
+             AgentQuestion.park(task.id, %{
+               "id" => "q-dismiss",
+               "method" => "confirm",
+               "message" => "Ship it?"
+             })
+
+    {:ok, view, html} = live(conn, ~p"/board?task=#{task.id}")
+    assert html =~ "Agent asked a question"
+
+    view
+    |> element("#agent-question-#{task.id} button[phx-click=cancel_agent_question]")
+    |> render_click()
+
+    html = render(view)
+    assert html =~ "Question dismissed — run continues"
+    refute html =~ "Agent asked a question"
+  end
+
+  test "unauthorized dismiss mutation flashes like approve/reject", %{conn: conn} do
+    prev_auth = Application.get_env(:svarm, :approvals_auth)
+    Application.put_env(:svarm, :approvals_auth, %{username: "op", password: "secret"})
+
+    on_exit(fn ->
+      if prev_auth == nil,
+        do: Application.delete_env(:svarm, :approvals_auth),
+        else: Application.put_env(:svarm, :approvals_auth, prev_auth)
+    end)
+
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Auth dismiss",
+        status: "in_progress",
+        assignee: "demo"
+      })
+
+    assert {:ok, _} =
+             KanbanBridge.put_pending_question(task.id, %{
+               prompt: "Ship it?",
+               method: "confirm",
+               request_id: "q-dismiss-auth"
+             })
+
+    {:ok, view, _html} = live(conn, ~p"/board?task=#{task.id}")
+
+    view
+    |> element("#agent-question-#{task.id} button[phx-click=cancel_agent_question]")
+    |> render_click()
+
+    assert render(view) =~ "Authentication required"
+  end
+
   test "selected in_progress PiRPC task steers via RunSteer", %{conn: conn} do
     KanbanBridge.delete_all_tasks()
 
