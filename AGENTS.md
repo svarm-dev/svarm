@@ -22,7 +22,8 @@ Svärm is a **self-hosted control plane** for external coding agents on your tic
 svarm/
 ├── lib/
 │   ├── svarm/                    # Orchestration backend
-│   │   ├── orchestrator.ex       # GenServer poll loop (the brain)
+│   │   ├── orchestrator.ex       # Thin GenServer: state + handle_* (the brain)
+│   │   ├── orchestrator/         # Reconcile, Dispatch, Resume, RunExit, Issues, Status
 │   │   ├── tracker.ex            # Tracker behaviour
 │   │   ├── tracker/resolve.ex    # kind → {adapter, config} (only kind→module map)
 │   │   ├── agent_runner.ex       # Runner facade: load agents, resolve adapter, dispatch
