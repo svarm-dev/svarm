@@ -79,6 +79,7 @@ tracker:
   auth: token
   api_key: $GITHUB_TOKEN
   required_labels: ["ai-task"]
+  # agent_assignees: ["svarm-bot[bot]"]  # optional; unassigned stays eligible
 ```
 
 Leave `approval.mode: untrusted` unless this is a throwaway smoke box.
@@ -91,7 +92,8 @@ On your test repo, open an issue with label **`ai-task`**, for example:
 
 - **Title:** `Initialize project scaffold`  
 - **Body:** `Scaffold a minimal Node.js project: package.json, src/index.js hello-world HTTP server (Node http), README.`  
-- **Labels:** `ai-task`
+- **Labels:** `ai-task`  
+- **Assignee:** leave unassigned (or a login listed in `tracker.agent_assignees`)
 
 ### 4. Start Svärm
 
@@ -287,7 +289,7 @@ While a run is live (**CLI** or **PiRPC**), the console has **Abort**. That kill
 | Tick never dispatches after a WORKFLOW edit | Invalid `workspace.isolation` (expected `path` or `worktree`) or invalid `tracker.status_labels` / `reverse_labels` fail closed; logs include the rejected value |
 | Stuck before agent runs | `/approvals` (default is untrusted). On GitHub the issue should have `status: pending-approval` and appear under **Needs approval** |
 | 401/403 from GitHub | PAT `repo` scope; token in `.env`. `/board`, `/dashboard`, and `/` show **Cannot load GitHub issues** — that is not a healthy empty kanban |
-| No eligible issues | Issue has `ai-task`; `required_labels` matches |
+| No eligible issues | Issue has `ai-task`; `required_labels` matches; unassigned or assignee in `tracker.agent_assignees` (human assignees are shown on the board but not dispatched) |
 | pi not found (local) | `which pi`; Docker image includes pi |
 | OpenRouter errors | `OPENROUTER_API_KEY` set |
 | Empty board | Demo (`--profile demo`) or Seed demo; the real tracker loop needs a labeled issue. A GitHub API error (401/403/rate-limit) shows **Cannot load GitHub issues**, not a silent empty board |

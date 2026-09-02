@@ -2,6 +2,13 @@ defmodule Svarm.Tracker.GitHub.Eligibility do
   @moduledoc """
   Pure eligibility / board-visibility predicates for GitHub issues.
   No side effects, no API calls, no database lookups.
+
+  Dispatch (`eligible?/2`) skips issues assigned to anyone not listed in
+  `config.agent_assignees` (GitHub logins, case-insensitive). Unassigned
+  issues stay eligible. That allowlist is WORKFLOW `tracker.agent_assignees`
+  — not `agents.toml` names and not `approval.trusted_assignees` (those are
+  board/agent keys, not GitHub logins). `board_visible?/2` does not apply
+  the filter, so human-owned labeled issues still appear on the board.
   """
   alias Svarm.Issue
 
@@ -14,7 +21,7 @@ defmodule Svarm.Tracker.GitHub.Eligibility do
       has_required_labels?(issue.labels, Map.get(config, :required_labels, [])) and
       not pull_request?(issue) and
       not blocked?(issue.labels) and
-      has_assignee_or_open?(issue)
+      dispatchable_assignee?(issue, config)
   end
 
   @doc """
@@ -51,8 +58,17 @@ defmodule Svarm.Tracker.GitHub.Eligibility do
 
   defp blocked?(labels), do: "blocked" in labels
 
-  # Only dispatch issues that have an assignee matching our agents, or are unassigned.
-  # This prevents Svärm from claiming issues assigned to human team members.
-  defp has_assignee_or_open?(%Issue{assignee: nil}), do: true
-  defp has_assignee_or_open?(%Issue{assignee: _}), do: true
+  # Unassigned, or assigned to a login in tracker.agent_assignees.
+  # GitHub logins are case-insensitive. Empty allowlist → only unassigned.
+  defp dispatchable_assignee?(%Issue{assignee: assignee}, _config)
+       when assignee in [nil, ""],
+       do: true
+
+  defp dispatchable_assignee?(%Issue{assignee: assignee}, config) do
+    needle = String.downcase(assignee)
+
+    config
+    |> Map.get(:agent_assignees, [])
+    |> Enum.any?(&(String.downcase(&1) == needle))
+  end
 end

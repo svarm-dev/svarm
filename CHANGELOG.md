@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **GitHub skip human assignees** ([#185](https://github.com/svarm-dev/svarm/issues/185)): dispatch no longer claims issues assigned to people. Unassigned stays eligible; a login listed in WORKFLOW `tracker.agent_assignees` (case-insensitive GitHub login, not `agents.toml` / `trusted_assignees`) stays eligible. Human-owned labeled issues still show on the board.
+
 ## [0.1.6] - 2026-08-29
 
 Review Station, outcome ROI, worktree isolation, Abort, Steer, GitHub Issues reliability, soft budget hold. No breaking env change (new optional keys only).
