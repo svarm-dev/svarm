@@ -8,6 +8,10 @@ tracker:
   auth: token
   api_key: $GITHUB_TOKEN
   required_labels: ["ai-task"]
+  # GitHub logins that may own a ticket (case-insensitive). Unassigned
+  # stays eligible. Anyone else — humans — is skipped for dispatch but
+  # still shown on the board. Not agents.toml names / trusted_assignees.
+  # agent_assignees: ["svarm-bot[bot]"]
   active_states: ["todo", "in_progress"]
   terminal_states: ["done", "failed", "review"]
 

@@ -38,6 +38,35 @@ defmodule Svarm.Tracker.GitHub.EligibilityTest do
     struct!(Issue, Map.merge(defaults, attrs))
   end
 
+  describe "eligible?/2" do
+    test "unassigned labeled issues are eligible" do
+      assert Eligibility.eligible?(issue(%{}), @config)
+    end
+
+    test "blank assignee is treated as unassigned" do
+      assert Eligibility.eligible?(issue(%{assignee: ""}), @config)
+    end
+
+    test "human assignees are skipped" do
+      refute Eligibility.eligible?(issue(%{assignee: "alice"}), @config)
+    end
+
+    test "configured agent login is eligible" do
+      config = Map.put(@config, :agent_assignees, ["svarm-bot[bot]"])
+      assert Eligibility.eligible?(issue(%{assignee: "svarm-bot[bot]"}), config)
+    end
+
+    test "agent login match is case-insensitive" do
+      config = Map.put(@config, :agent_assignees, ["Svarm-Bot[bot]"])
+      assert Eligibility.eligible?(issue(%{assignee: "svarm-bot[bot]"}), config)
+    end
+
+    test "unlisted agent-looking login is still skipped" do
+      config = Map.put(@config, :agent_assignees, ["svarm-bot[bot]"])
+      refute Eligibility.eligible?(issue(%{assignee: "other-bot[bot]"}), config)
+    end
+  end
+
   describe "board_visible?/2" do
     test "keeps open labeled issues" do
       assert Eligibility.board_visible?(issue(%{}), @config)
@@ -91,6 +120,10 @@ defmodule Svarm.Tracker.GitHub.EligibilityTest do
     test "without required_labels, open issues still show" do
       config = Map.put(@config, :required_labels, [])
       assert Eligibility.board_visible?(issue(%{labels: []}), config)
+    end
+
+    test "human-assigned labeled issues still show" do
+      assert Eligibility.board_visible?(issue(%{assignee: "alice"}), @config)
     end
   end
 end

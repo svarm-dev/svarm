@@ -313,6 +313,27 @@ defmodule Svarm.WorkflowTest do
       assert cfg.auth == :token
     end
 
+    test "parses agent_assignees and defaults to empty" do
+      cfg =
+        Config.tracker_config(%{
+          "tracker" => %{
+            "kind" => "github",
+            "owner" => "acme",
+            "repo" => "demo",
+            "agent_assignees" => ["svarm-bot[bot]", "demo"]
+          }
+        })
+
+      assert cfg.agent_assignees == ["svarm-bot[bot]", "demo"]
+
+      omitted =
+        Config.tracker_config(%{
+          "tracker" => %{"kind" => "github", "owner" => "a", "repo" => "b"}
+        })
+
+      assert omitted.agent_assignees == []
+    end
+
     test "validate rejects incomplete app auth" do
       # Host .env may set SVARM_GITHUB_*; clear for this assertion.
       keys =
