@@ -167,7 +167,8 @@ defmodule Svarm.Workflow.Config do
               "SVARM_GITHUB_APP_KEY_PATH"
             ),
           private_key: System.get_env("SVARM_GITHUB_APP_PRIVATE_KEY"),
-          required_labels: get_list(tracker, ["required_labels"], [])
+          required_labels: get_list(tracker, ["required_labels"], []),
+          agent_assignees: get_list(tracker, ["agent_assignees"], [])
         })
 
       :local ->

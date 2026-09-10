@@ -21,6 +21,7 @@ tracker:
   # # installation_id: $SVARM_GITHUB_INSTALLATION_ID
   # # private_key_path: $SVARM_GITHUB_APP_KEY_PATH
   # required_labels: ["ai-task"]  # only issues with these labels are eligible
+  # agent_assignees: ["svarm-bot[bot]"]  # GitHub logins that may own a ticket; others skip dispatch
   # Status ↔ GitHub labels (optional). Defaults include
   # pending_approval → "status: pending-approval". Budget hold reuses that
   # status plus wait_reason — no extra GitHub label.

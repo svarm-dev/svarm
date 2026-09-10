@@ -158,7 +158,7 @@ defmodule Svarm.Test.GitHubIssuesReq do
       "title" => title,
       "body" => body,
       "labels" => encode_labels(labels),
-      "assignee" => %{"login" => "demo"},
+      "assignee" => nil,
       "user" => %{"login" => "svarm"},
       "created_at" => "2026-01-01T00:00:00Z",
       "repository_url" => "https://api.github.com/repos/acme/widgets",

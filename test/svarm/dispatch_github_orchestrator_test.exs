@@ -15,7 +15,8 @@ defmodule Svarm.DispatchGitHubOrchestratorTest do
     req: GitHubIssuesReq,
     kind: :github,
     active_states: ["todo", "in_progress"],
-    terminal_states: ["done", "failed", "review"]
+    terminal_states: ["done", "failed", "review"],
+    agent_assignees: ["demo"]
   }
 
   setup do

@@ -61,7 +61,7 @@ defmodule Svarm.Orchestrator.Dispatch do
 
   # Eligibility is checked in two layers:
   # 1. Adapter level (Eligibility.eligible?): tracker-specific rules
-  #    (e.g., GitHub: required labels, exclude PRs, blocked status)
+  #    (e.g., GitHub: required labels, exclude PRs, skip human assignees)
   # 2. Orchestrator level (process_candidate): cross-cutting rules
   #    (running/claimed, terminal states, pending approval)
   # This ensures the orchestrator never dispatches an issue that's already
