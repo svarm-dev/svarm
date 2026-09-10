@@ -34,20 +34,22 @@ defmodule Svarm.Tracker.GitHub do
   board-visible) — not `list_eligible/1`, which is only open +
   dispatchable (so it misses `pending_approval`, `review`, `done`, and
   `failed`). Both paths are bound to the configured owner/repo; the list
-  scan is a single page (`per_page: 100`). Transferring an issue to
-  another repository is not followed (no GraphQL `node(id:)`).
+  scan follows `Link: rel=next` up to `HTTP.max_list_pages/0` (10 × 100 =
+  1000 issues). Transferring an issue to another repository is not
+  followed (no GraphQL `node(id:)`).
 
   Batch lookup (`get_issues/2`, used by Orchestrator reconcile and
   `depends_on` gating): for **more than one id**, one `list_issues/2`
-  (`state: all`, `per_page: 100`) is the tick snapshot. Ids found there
+  (`state: all`, paginated) is the tick snapshot. Ids found there
   (by `Issue.id` or numeric `source_id`) do **not** issue extra
   `GET /issues/{number}`. Residual REST limits — not a GraphQL migration:
 
-  - List is a **single page of 100**; ids off that page still GET.
+  - List walks at most **10 pages (1000 issues)**; numeric ids off that
+    cap still GET.
   - Ids absent from the snapshot (not board-visible, wrong repo, or
     `node_id` not on the page) still fall back to `get_issue/2`.
     Numeric misses GET `/issues/{n}`; `node_id` misses after a successful
-    list are `:not_found` (the same one-page scan `get_issue/2` would do).
+    list are `:not_found` (the same capped list scan `get_issue/2` would do).
   - A failed list (rate-limit / network / 5xx / repo 404) returns
     `{:error, reason}` for the whole batch — no per-id GET fan-out.
     Orchestrator treats that as transient and keeps in-flight work
@@ -62,8 +64,7 @@ defmodule Svarm.Tracker.GitHub do
 
   alias Svarm.Coordination
   alias Svarm.GitHub.AppAuth
-  alias Svarm.Tracker.GitHub.Eligibility
-  alias Svarm.Tracker.GitHub.Normalize
+  alias Svarm.Tracker.GitHub.{Eligibility, HTTP, Normalize}
 
   require Logger
 
@@ -94,26 +95,15 @@ defmodule Svarm.Tracker.GitHub do
 
   @impl true
   def list_eligible(config) do
-    owner = Map.fetch!(config, :owner)
-    repo = Map.fetch!(config, :repo)
+    with {:ok, issues} <- fetch_listed_pages(config, %{state: "open", per_page: HTTP.page_size()}) do
+      normalized_config = with_status_labels(config)
 
-    url = "#{@base_url}/repos/#{owner}/#{repo}/issues"
-    params = %{state: "open", per_page: 100}
-    req = req_mod(config)
-
-    map_list_http(
-      req.get(url, params: params, headers: headers(config)),
-      owner,
-      repo,
-      fn issues ->
-        normalized_config = with_status_labels(config)
-
-        issues
-        |> Enum.map(&Normalize.from_api_response(&1, normalized_config))
-        |> Normalize.attach_attempts()
-        |> Enum.filter(&Eligibility.eligible?(&1, config))
-      end
-    )
+      {:ok,
+       issues
+       |> Enum.map(&Normalize.from_api_response(&1, normalized_config))
+       |> Normalize.attach_attempts()
+       |> Enum.filter(&Eligibility.eligible?(&1, config))}
+    end
   end
 
   @impl true
@@ -180,7 +170,7 @@ defmodule Svarm.Tracker.GitHub do
 
   # One list snapshot for the batch. Hits skip GET. Numeric misses still GET
   # (off-page / not board-visible). node_id misses after a successful list
-  # are :not_found — the same one-page scan get_issue/2 would perform.
+  # are :not_found — the same capped list scan get_issue/2 would perform.
   # A failed list is returned as a whole-batch error so Orchestrator keeps
   # in-flight work (repo 404 / 429 must not become per-id :not_found).
   defp resolve_issues_from_list(config, ids) do
@@ -227,21 +217,70 @@ defmodule Svarm.Tracker.GitHub do
   @impl true
   def list_issues(config, filters \\ []) do
     {include_body, filters} = Keyword.pop(filters, :include_body, true)
+
+    with {:ok, issues} <- fetch_listed_pages(config, build_list_params(filters, config)) do
+      {:ok, normalize_listed_issues(issues, config, include_body)}
+    end
+  end
+
+  defp fetch_listed_pages(config, params) do
     owner = Map.fetch!(config, :owner)
     repo = Map.fetch!(config, :repo)
-
     url = "#{@base_url}/repos/#{owner}/#{repo}/issues"
-    params = build_list_params(filters, config)
-    req = req_mod(config)
 
-    map_list_http(
-      req.get(url, params: params, headers: headers(config)),
+    walk_listed_pages(
+      req_mod(config),
+      url,
+      [params: params, headers: headers(config)],
       owner,
       repo,
-      fn issues ->
-        normalize_listed_issues(issues, config, include_body)
-      end
+      1,
+      []
     )
+  end
+
+  defp walk_listed_pages(req, url, opts, owner, repo, page, acc) do
+    case req.get(url, opts) do
+      {:ok, %{status: 200, body: issues} = resp} when is_list(issues) ->
+        continue_listed_pages(
+          req,
+          opts,
+          owner,
+          repo,
+          page,
+          acc ++ issues,
+          Map.get(resp, :headers, %{})
+        )
+
+      other ->
+        map_list_http(other, owner, repo, &Function.identity/1)
+    end
+  end
+
+  defp continue_listed_pages(req, opts, owner, repo, page, acc, headers) do
+    case HTTP.next_issues_url(headers, owner, repo) do
+      nil ->
+        {:ok, acc}
+
+      next_url ->
+        if page >= HTTP.max_list_pages() do
+          Logger.warning(
+            "github tracker: list capped at #{HTTP.max_list_pages()} pages (#{length(acc)} issues) for #{owner}/#{repo}"
+          )
+
+          {:ok, acc}
+        else
+          walk_listed_pages(
+            req,
+            next_url,
+            [headers: Keyword.get(opts, :headers, [])],
+            owner,
+            repo,
+            page + 1,
+            acc
+          )
+        end
+    end
   end
 
   defp req_mod(config) when is_map(config) do
@@ -528,10 +567,10 @@ defmodule Svarm.Tracker.GitHub do
     end
   end
 
-  defp build_list_params([], _config), do: %{state: "all", per_page: 100}
+  defp build_list_params([], _config), do: %{state: "all", per_page: HTTP.page_size()}
 
   defp build_list_params(filters, config) do
-    params = %{state: "all", per_page: 100}
+    params = %{state: "all", per_page: HTTP.page_size()}
     reverse = resolved_reverse_labels(config)
 
     Enum.reduce(filters, params, fn
