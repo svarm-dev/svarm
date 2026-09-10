@@ -15,24 +15,29 @@ defmodule Svarm.Tracker.GitHub.ListIssuesTest do
     end
 
     defp page_num(url, opts) do
-      from_query =
-        case URI.parse(url).query do
-          q when is_binary(q) -> URI.decode_query(q)["page"]
-          _ -> nil
-        end
+      parse_page(
+        query_page(URI.parse(url).query) ||
+          param_page(Keyword.get(opts, :params, %{}))
+      )
+    end
 
-      from_params =
-        case Keyword.get(opts, :params, %{}) do
-          %{page: n} -> n
-          %{"page" => n} -> n
-          _ -> nil
-        end
+    defp query_page(q) when is_binary(q), do: URI.decode_query(q)["page"]
+    defp query_page(_), do: nil
 
-      case Integer.parse(to_string(from_query || from_params || 1)) do
-        {n, ""} -> n
+    defp param_page(%{page: n}), do: n
+    defp param_page(%{"page" => n}), do: n
+    defp param_page(_), do: nil
+
+    defp parse_page(n) when is_integer(n) and n > 0, do: n
+
+    defp parse_page(n) when is_binary(n) do
+      case Integer.parse(n) do
+        {i, ""} when i > 0 -> i
         _ -> 1
       end
     end
+
+    defp parse_page(_), do: 1
   end
 
   @config %{owner: "acme", repo: "widgets", api_key: "t", req: StubReq}
@@ -126,6 +131,15 @@ defmodule Svarm.Tracker.GitHub.ListIssuesTest do
       assert Enum.map(issues, & &1.source_id) == ["1", "2"]
       assert_received {:github_list_page, 1, _}
       assert_received {:github_list_page, 2, _}
+    end
+
+    test "follows GitHub /repositories/{id}/issues Link next" do
+      repo_next = "https://api.github.com/repositories/1300192/issues?page=2"
+      stub_page(1, [gh_issue(1, "First")], %{"link" => [~s(<#{repo_next}>; rel="next")]})
+      stub_page(2, [gh_issue(2, "Second")], %{})
+
+      assert {:ok, issues} = GitHub.list_eligible(@paged_config)
+      assert Enum.map(issues, & &1.source_id) == ["1", "2"]
     end
 
     test "two pages via Link rel=next are both listed" do

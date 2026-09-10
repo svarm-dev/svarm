@@ -165,7 +165,7 @@ defmodule Svarm.Tracker.GitHub.HTTP do
 
   defp list_collection_path?(path, owner, repo) when is_binary(path) do
     path == "/repos/#{owner}/#{repo}/issues" or
-      match?([_, _id], Regex.run(~r"^/repositories/\d+/issues$", path))
+      String.match?(path, ~r/^\/repositories\/\d+\/issues$/)
   end
 
   defp list_collection_path?(_, _, _), do: false
