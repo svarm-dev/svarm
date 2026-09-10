@@ -1759,6 +1759,15 @@ defmodule Svarm.OrchestratorTest do
   describe "batched tracker status reads" do
     setup do
       KanbanBridge.delete_all_tasks()
+
+      # Earlier hold-mode tests persist Coordination wait_reason rows and do
+      # not always clear them. Tick then calls get_issue per leftover hold
+      # (Dispatch.maybe_release_budget_holds/1), which is a :get the
+      # reconcile-batch assertion must not see.
+      for row <- Svarm.Coordination.list_by_wait_reason(Svarm.Budget.wait_reason()) do
+        Svarm.Budget.clear_hold(row.task_id)
+      end
+
       :ok
     end
 
