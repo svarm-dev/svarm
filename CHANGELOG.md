@@ -9,12 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **OpenCode Go/Zen provider registry** ([#231](https://github.com/svarm-dev/svarm/issues/231), [#234](https://github.com/svarm-dev/svarm/pull/234)): `priv/providers.toml` advertises OpenRouter plus OpenCode Go (`opencode-go`) and Zen (`opencode`) with a shared OpenAI-compat adapter. Decompose resolves `provider.<id>`; unset stays OpenRouter; unknown ids fail closed. Settings secret `provider.<id>` then `auth_env`. Prefer API `usage.cost` as `provider_cost_usd`. Default agent stays OpenRouter.
+- **Setup advertised provider keys** ([#232](https://github.com/svarm-dev/svarm/issues/232), [#235](https://github.com/svarm-dev/svarm/pull/235)): `/setup` selects an advertised registry id; encrypted Settings secret per provider; `test_provider/1` runs `list_models` on that adapter. `provider_configured?` is true when any advertised key resolves (Settings or `OPENCODE_API_KEY`). Keyless Apply does not rewrite the live default agent (no model merge onto the previous provider). Default agent `provider` + `model` follow the selected row only when that provider has a key.
+- **Grok Build CLI harness** ([#55](https://github.com/svarm-dev/svarm/issues/55), [#236](https://github.com/svarm-dev/svarm/pull/236)): documented `[agent.grok]` via `adapter = "cli"` (headless flags, `XAI_API_KEY`). CLI runner records tokens from a JSON `usage` line; otherwise **estimated**. Does not replace pi RPC as the default runner.
+- **OpenCode Go/Zen as a pi provider** ([#230](https://github.com/svarm-dev/svarm/issues/230), [#233](https://github.com/svarm-dev/svarm/pull/233)): operator docs and a commented `agents.toml` example for `OPENCODE_API_KEY` / `opencode-go` / `opencode`. Live `[agent.default]` stays OpenRouter.
 - **Optional board/dashboard read auth** ([#77](https://github.com/svarm-dev/svarm/issues/77)): `BOARD_READ_AUTH=true` requires the same `APPROVALS_*` Basic Auth for `/board` and `/dashboard` reads (HTTP 401 + LiveView mount). Default **off**. `/health` stays open. Flag without credentials fails closed.
+
+### Changed
+
+- **Orchestrator module split** ([#221](https://github.com/svarm-dev/svarm/pull/221)): thin GenServer plus focused `Svarm.Orchestrator.*` modules (reconcile, dispatch, resume, run-exit). Callers still use `Svarm.Orchestrator`.
+- **BoardLive module split** ([#222](https://github.com/svarm-dev/svarm/pull/222)): LiveView shell plus `BoardLive.*` components (chrome, run console, helpers). Routes and assigns are unchanged.
 
 ### Fixed
 
 - **GitHub list pagination** ([#177](https://github.com/svarm-dev/svarm/issues/177)): `list_eligible/1` and `list_issues/2` follow `Link: rel=next` (`per_page: 100`, same page size as Checks/Reviews). Cap is **10 pages (1000 issues)** so a huge repo cannot stall the tick; later pages wait for a later poll. Page-1 eligibility is unchanged. Extra list GETs use the same REST rate budget as other poll reads (`get_issues/2` already batches #69; this is not GraphQL). Off-origin or non-collection `Link` targets are ignored.
 - **GitHub skip human assignees** ([#185](https://github.com/svarm-dev/svarm/issues/185)): dispatch no longer claims issues assigned to people. Unassigned stays eligible; a login listed in WORKFLOW `tracker.agent_assignees` (case-insensitive GitHub login, not `agents.toml` / `trusted_assignees`) stays eligible. Human-owned labeled issues still show on the board.
+
+### Dependencies
+
+- daisyUI v5.7.19 → v5.7.27 ([#217](https://github.com/svarm-dev/svarm/pull/217), [#227](https://github.com/svarm-dev/svarm/pull/227))
+- `req_llm` 1.20.0 → 1.21.1 ([#220](https://github.com/svarm-dev/svarm/pull/220))
+- `dns_cluster` 0.2.0 → 0.3.0 ([#218](https://github.com/svarm-dev/svarm/pull/218))
+- `telemetry_metrics` 1.1.0 → 1.2.0 ([#219](https://github.com/svarm-dev/svarm/pull/219))
+- Hex patches: `bandit` 1.12.4 → 1.12.5, `phoenix` / `phoenix_live_view` ([#216](https://github.com/svarm-dev/svarm/pull/216)); `ex_doc` 0.40.3 → 0.40.4, `phoenix_live_dashboard` 0.9.0 → 0.9.1, `reach` 2.8.2 → 2.8.3 ([#226](https://github.com/svarm-dev/svarm/pull/226))
 
 ## [0.1.6] - 2026-08-29
 
