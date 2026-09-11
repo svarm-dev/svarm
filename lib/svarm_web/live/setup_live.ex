@@ -1,10 +1,12 @@
 defmodule SvarmWeb.SetupLive do
   @moduledoc """
-  In-app setup preflight: OpenRouter, tracker, default agent model, Apply to live swarm.
+  In-app setup preflight: advertised LLM providers, tracker, default agent model,
+  Apply to live swarm.
   """
   use SvarmWeb, :live_view
 
   alias Svarm.{Orchestrator, Settings}
+  alias Svarm.Provider.Resolve, as: ProviderResolve
 
   @impl true
   def mount(_params, _session, socket) do
@@ -13,12 +15,15 @@ defmodule SvarmWeb.SetupLive do
 
   @impl true
   def handle_event("validate", %{"setup" => params}, socket) do
-    form = normalize_params(params)
-    readiness = readiness(form, socket.assigns)
+    form = params |> normalize_params() |> sync_provider_selection(socket.assigns.form)
+    provider = load_provider_section(form["provider_id"])
+    assigns = Map.put(socket.assigns, :provider, provider)
+    readiness = readiness(form, assigns)
 
     {:noreply,
      socket
      |> assign(:form, form)
+     |> assign(:provider, provider)
      |> assign(:dirty?, form_dirty?(form, socket.assigns.baseline))
      |> assign(:readiness, readiness)
      |> assign(:next_step, next_step(readiness, form, socket.assigns.status))}
@@ -43,21 +48,24 @@ defmodule SvarmWeb.SetupLive do
   def handle_event("test_provider", _params, socket) do
     socket = assign(socket, :testing, :provider)
 
-    case Settings.test_provider() do
+    id = socket.assigns.form["provider_id"] || "openrouter"
+    label = ProviderResolve.label(id)
+
+    case Settings.test_provider(id) do
       {:ok, %{count: count, models: models}} ->
         {:noreply,
          socket
          |> assign(:testing, nil)
          |> assign(:provider_test, {:ok, count})
          |> assign(:model_suggestions, models)
-         |> put_flash(:info, "OpenRouter OK — #{count} models available")}
+         |> put_flash(:info, "#{label} OK — #{count} models available")}
 
       {:error, reason} ->
         {:noreply,
          socket
          |> assign(:testing, nil)
          |> assign(:provider_test, {:error, reason})
-         |> put_flash(:error, "OpenRouter test failed: #{reason}")}
+         |> put_flash(:error, "#{label} test failed: #{reason}")}
     end
   end
 
@@ -127,8 +135,8 @@ defmodule SvarmWeb.SetupLive do
           <p class="text-xs font-medium text-base-content/55">Preflight</p>
           <h1 class="mt-0.5 text-2xl font-semibold tracking-tight">Setup</h1>
           <p class="mt-2 text-sm text-base-content/70 max-w-prose">
-            Connect OpenRouter and your tracker, then apply to the live orchestrator.
-            Secrets stay encrypted; file/env config still works when empty.
+            Connect an advertised LLM provider and your tracker, then apply to the live
+            orchestrator. Secrets stay encrypted; file/env config still works when empty.
           </p>
         </header>
 
@@ -145,7 +153,7 @@ defmodule SvarmWeb.SetupLive do
             title="1 · Provider"
             badge={@readiness.provider.badge}
             ready?={@readiness.provider.ready?}
-            hint="OpenRouter API key for agent LLM calls."
+            hint={provider_hint(@form["provider_id"])}
           >
             <:actions>
               <button
@@ -156,9 +164,26 @@ defmodule SvarmWeb.SetupLive do
                 aria-busy={@testing == :provider}
                 phx-disable-with="Testing…"
               >
-                Test connection
+                Test {ProviderResolve.label(@form["provider_id"])}
               </button>
             </:actions>
+
+            <label class="form-control w-full gap-1" for="setup-provider-id">
+              <span class="label-text text-xs text-base-content/55">Provider</span>
+              <select
+                id="setup-provider-id"
+                name="setup[provider_id]"
+                class="select select-bordered select-sm w-full"
+              >
+                <option
+                  :for={row <- @providers}
+                  value={row.id}
+                  selected={@form["provider_id"] == row.id}
+                >
+                  {ProviderResolve.label(row)}
+                </option>
+              </select>
+            </label>
 
             <label class="form-control w-full gap-1" for="setup-provider-api-key">
               <span class="label-text text-xs text-base-content/55">API key</span>
@@ -168,7 +193,7 @@ defmodule SvarmWeb.SetupLive do
                 name="setup[provider_api_key]"
                 class="input input-bordered input-sm w-full font-mono"
                 value={@form["provider_api_key"]}
-                placeholder={provider_placeholder(@provider, @status)}
+                placeholder={provider_placeholder(@provider, @form["provider_id"])}
                 autocomplete="off"
               />
             </label>
@@ -304,8 +329,6 @@ defmodule SvarmWeb.SetupLive do
             ready?={@readiness.agent.ready?}
             hint="Model for the default agent only (overrides file config for default)."
           >
-            <input type="hidden" name="setup[agent_provider]" value="openrouter" />
-
             <p :if={@effective_model} class="text-xs font-mono text-base-content/55">
               Live default: <span class="text-base-content">{@effective_model}</span>
             </p>
@@ -318,7 +341,7 @@ defmodule SvarmWeb.SetupLive do
                 name="setup[agent_model]"
                 value={@form["agent_model"]}
                 class="input input-bordered input-sm w-full font-mono"
-                placeholder="openrouter/free"
+                placeholder={provider_default_model(@form["provider_id"])}
                 autocomplete="off"
               />
             </label>
@@ -347,7 +370,8 @@ defmodule SvarmWeb.SetupLive do
             </div>
 
             <p class="text-xs text-base-content/55">
-              Test connection to load model chips, or paste an OpenRouter model id.
+              Test {ProviderResolve.label(@form["provider_id"])} to load model chips, or paste a
+              model id this adapter can complete.
             </p>
           </.connection_section>
 
@@ -520,11 +544,10 @@ defmodule SvarmWeb.SetupLive do
   ## data
 
   defp assign_setup(socket) do
-    provider =
-      case Settings.get_section("provider.openrouter") do
-        {:ok, m} -> m
-        :error -> %{}
-      end
+    providers = ProviderResolve.advertised()
+    agent = load_default_agent()
+    provider_id = advertised_id(agent["provider"] || "openrouter")
+    provider = load_provider_section(provider_id)
 
     tracker =
       case Settings.get_section("tracker") do
@@ -532,21 +555,15 @@ defmodule SvarmWeb.SetupLive do
         :error -> %{"kind" => "local"}
       end
 
-    agents =
-      case Settings.get_section("agents") do
-        {:ok, m} -> m
-        :error -> %{}
-      end
-
-    agent = agents["default"] || %{}
     status = Settings.status()
-    form = build_form(provider, tracker, agent)
+    form = build_form(provider, tracker, agent, provider_id)
     baseline = form_snapshot(form, provider, tracker)
     assigns_base = %{provider: provider, tracker: tracker, agent: agent, status: status}
     readiness = readiness(form, assigns_base)
 
     socket
     |> assign(:status, status)
+    |> assign(:providers, providers)
     |> assign(:provider, provider)
     |> assign(:tracker, tracker)
     |> assign(:agent, agent)
@@ -564,20 +581,22 @@ defmodule SvarmWeb.SetupLive do
     |> assign_new(:model_suggestions, fn -> [] end)
   end
 
-  defp build_form(provider, tracker, agent) do
+  defp build_form(provider, tracker, agent, provider_id) do
     provider = stringify_map(provider)
     tracker = stringify_map(tracker)
     agent = stringify_map(agent)
 
     %{
+      "provider_id" => provider_id,
       "provider_api_key" => "",
       "tracker_kind" => to_string(tracker["kind"] || "local"),
       "tracker_owner" => tracker["owner"] || "",
       "tracker_repo" => tracker["repo"] || "",
       "tracker_api_key" => "",
       "tracker_labels" => labels_to_csv(tracker["required_labels"]),
-      "agent_provider" => agent["provider"] || "openrouter",
-      "agent_model" => agent["model"] || provider["default_model"] || ""
+      "agent_provider" => provider_id,
+      "agent_model" =>
+        agent["model"] || provider["default_model"] || provider_default_model(provider_id)
     }
   end
 
@@ -601,7 +620,10 @@ defmodule SvarmWeb.SetupLive do
   defp labels_to_csv(_), do: ""
 
   defp normalize_params(params) when is_map(params) do
+    provider_id = advertised_id(params["provider_id"] || params["agent_provider"])
+
     %{
+      "provider_id" => provider_id,
       "provider_api_key" => blank_to_empty(params["provider_api_key"]),
       "tracker_kind" =>
         if(params["tracker_kind"] in ["local", "github"],
@@ -612,7 +634,7 @@ defmodule SvarmWeb.SetupLive do
       "tracker_repo" => blank_to_empty(params["tracker_repo"]),
       "tracker_api_key" => blank_to_empty(params["tracker_api_key"]),
       "tracker_labels" => blank_to_empty(params["tracker_labels"]),
-      "agent_provider" => agent_provider_param(params["agent_provider"]),
+      "agent_provider" => provider_id,
       "agent_model" => blank_to_empty(params["agent_model"])
     }
   end
@@ -620,15 +642,53 @@ defmodule SvarmWeb.SetupLive do
   defp blank_to_empty(v) when is_binary(v), do: v
   defp blank_to_empty(_), do: ""
 
-  defp agent_provider_param(v) do
-    case blank_to_empty(v) do
-      "" -> "openrouter"
-      other -> other
+  defp advertised_id(id) do
+    ids = Enum.map(ProviderResolve.advertised(), & &1.id)
+
+    if id in ids do
+      id
+    else
+      "openrouter"
+    end
+  end
+
+  defp sync_provider_selection(%{"provider_id" => id} = form, %{"provider_id" => id}) do
+    Map.put(form, "agent_provider", id)
+  end
+
+  defp sync_provider_selection(%{"provider_id" => id} = form, _prev) do
+    form
+    |> Map.put("agent_provider", id)
+    |> Map.put("agent_model", provider_default_model(id))
+  end
+
+  defp load_default_agent do
+    agents =
+      case Settings.get_section("agents") do
+        {:ok, m} -> m
+        :error -> %{}
+      end
+
+    stringify_map(agents["default"] || %{})
+  end
+
+  defp load_provider_section(id) do
+    case Settings.get_section("provider.#{id}") do
+      {:ok, m} -> m
+      :error -> %{}
+    end
+  end
+
+  defp provider_default_model(id) do
+    case ProviderResolve.entry(id) do
+      %{default_model: model} when is_binary(model) -> model
+      _ -> ""
     end
   end
 
   defp form_snapshot(form, provider, tracker) do
     %{
+      "provider_id" => form["provider_id"],
       "tracker_kind" => form["tracker_kind"],
       "tracker_owner" => form["tracker_owner"],
       "tracker_repo" => form["tracker_repo"],
@@ -642,6 +702,7 @@ defmodule SvarmWeb.SetupLive do
   defp form_dirty?(form, baseline) do
     form["provider_api_key"] != "" or
       form["tracker_api_key"] != "" or
+      form["provider_id"] != baseline["provider_id"] or
       form["tracker_kind"] != baseline["tracker_kind"] or
       form["tracker_owner"] != baseline["tracker_owner"] or
       form["tracker_repo"] != baseline["tracker_repo"] or
@@ -711,8 +772,8 @@ defmodule SvarmWeb.SetupLive do
   defp readiness_badge(true, false), do: "ready"
   defp readiness_badge(false, false), do: "needed"
 
-  defp next_step(%{provider: %{ready?: false}}, _form, _status) do
-    "Add an OpenRouter API key, then apply."
+  defp next_step(%{provider: %{ready?: false}}, form, _status) do
+    "Add a #{ProviderResolve.label(form["provider_id"])} API key, then apply."
   end
 
   defp next_step(%{tracker: %{badge: "needed"}}, %{"tracker_kind" => "github"}, _status) do
@@ -759,11 +820,14 @@ defmodule SvarmWeb.SetupLive do
     }
 
     agent_attrs = %{
-      "provider" => form["agent_provider"] || "openrouter",
+      "provider" => form["provider_id"] || "openrouter",
       "model" => form["agent_model"]
     }
 
-    with {:ok, _} <- save_section(:provider, fn -> Settings.put_provider(provider_attrs) end),
+    with {:ok, _} <-
+           save_section(:provider, fn ->
+             Settings.put_provider(form["provider_id"] || "openrouter", provider_attrs)
+           end),
          {:ok, _} <- save_section(:tracker, fn -> Settings.put_tracker(tracker_attrs) end),
          {:ok, _} <- save_section(:agent, fn -> Settings.put_default_agent(agent_attrs) end) do
       :ok
@@ -786,13 +850,27 @@ defmodule SvarmWeb.SetupLive do
 
   defp parse_labels(_), do: []
 
-  defp provider_placeholder(provider, status) do
+  defp provider_placeholder(provider, id) do
     cond do
-      provider[:api_key_set?] -> "•••• set — leave blank to keep"
-      status.provider_configured? -> "Configured via file/env — paste to replace"
-      true -> "sk-or-…"
+      provider[:api_key_set?] ->
+        "•••• set — leave blank to keep"
+
+      match?(key when is_binary(key) and key != "", Settings.Resolve.provider_api_key(id)) ->
+        "Configured via file/env — paste to replace"
+
+      true ->
+        "API key"
     end
   end
+
+  defp provider_hint("opencode-go"),
+    do: "OpenCode Go key (OPENCODE_API_KEY). Same key as Zen. Used for in-app LLM calls."
+
+  defp provider_hint("opencode"),
+    do: "OpenCode Zen key (OPENCODE_API_KEY). Same key as Go. Used for in-app LLM calls."
+
+  defp provider_hint(_),
+    do: "OpenRouter API key for in-app LLM calls."
 
   defp tracker_placeholder(tracker) do
     if tracker[:api_key_set?], do: "•••• set — leave blank to keep", else: "ghp_…"

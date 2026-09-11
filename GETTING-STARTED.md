@@ -32,7 +32,7 @@ docker compose --profile demo up --build
 
 When you’re done watching cards move, go to the **real tracker loop** for a real issue → PR loop.
 
-**Optional UI setup:** after demo, open `/setup` to store OpenRouter + GitHub PAT + default model in the app DB (encrypted). File/env config still works when Settings is empty. In Docker, `/setup` uses the same Basic Auth as `/approvals`.
+**Optional UI setup:** after demo, open `/setup` to store an advertised provider key (OpenRouter, OpenCode Go, or OpenCode Zen) + GitHub PAT + default model in the app DB (encrypted). File/env config still works when Settings is empty. In Docker, `/setup` uses the same Basic Auth as `/approvals`. An OpenCode key in `/setup` or `OPENCODE_API_KEY` in `.env` is enough for in-app Decompose; dispatched **pi** still needs `OPENCODE_API_KEY` listed in that agent's `env` block.
 
 ---
 
@@ -60,7 +60,7 @@ cp .env.example .env
 | `BOARD_READ_AUTH` | Optional, default **off** | Set `true` to require the same `APPROVALS_*` Basic Auth for `/board` and `/dashboard` reads (HTTP + LiveView). `/health` stays open. Requires `APPROVALS_USER` / `APPROVALS_PASSWORD` or reads fail closed. Local Mix and the demo profile leave this unset |
 | `GITHUB_TOKEN` | For GitHub tracker | Classic PAT with `repo` scope |
 | `OPENROUTER_API_KEY` | For real agents (default) | From [openrouter.ai/keys](https://openrouter.ai/keys). List it in the agent `env` block — empty `env` does not inherit the host |
-| `OPENCODE_API_KEY` | Optional; required only if an agent uses OpenCode | Shared by **Go** (subscription, `https://opencode.ai/zen/go/v1`) and **Zen** (pay-per-use, `https://opencode.ai/zen/v1`). List it in the agent `env` block — empty `env` does not inherit the host. In-app Decompose follows `priv/providers.toml` (default OpenRouter). `/setup` stays OpenRouter-only. See [docs/agents.md](docs/agents.md) |
+| `OPENCODE_API_KEY` | Optional; required only if an agent uses OpenCode | Shared by **Go** (subscription, `https://opencode.ai/zen/go/v1`) and **Zen** (pay-per-use, `https://opencode.ai/zen/v1`). Store it in `/setup` or here. List it in the agent `env` block for **pi dispatch** — empty `env` does not inherit the host. In-app Decompose follows `priv/providers.toml` (default OpenRouter). See [docs/agents.md](docs/agents.md) |
 | `SVARM_BASE_URL` | Optional | Public board origin (e.g. `http://localhost:4000`). Used for GitHub comment console links **only** when the opt-in below is on |
 | `SVARM_COMMENT_CONSOLE_LINKS` | Optional, default **off** | Set `true` to embed `/board?task=…&attach=1` in GitHub run comments. While board reads are unauthenticated (default), anyone who can read the issue can open the console. Safer together with `BOARD_READ_AUTH=true`. Leave unset on public repos (see [SECURITY.md](SECURITY.md)) |
 | `PHX_SECURE_COOKIES` | For plain-HTTP local `app` only | Prod/compose **app** defaults Secure (`true`). On `http://localhost` with `--profile app`, set `PHX_SECURE_COOKIES=false` in `.env` so sessions work. Demo profile sets this for you. |

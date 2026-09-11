@@ -102,7 +102,13 @@ defmodule Svarm.Provider.OpenAICompat do
   defp req_get(url, opts), do: Req.get(url, compact_req(opts))
 
   defp compact_req(opts) do
-    Keyword.reject(opts, fn {_k, v} -> is_nil(v) end)
+    opts
+    |> Keyword.put(:plug, request_plug(opts))
+    |> Keyword.reject(fn {_k, v} -> is_nil(v) end)
+  end
+
+  defp request_plug(opts) do
+    Keyword.get(opts, :plug) || Application.get_env(:svarm, :provider_req_plug)
   end
 
   defp handle_error(id, {:ok, %{status: 400} = resp}) do

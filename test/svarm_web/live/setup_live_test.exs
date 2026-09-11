@@ -7,6 +7,8 @@ defmodule SvarmWeb.SetupLiveTest do
   setup do
     cleanup = fn ->
       Store.delete("provider.openrouter")
+      Store.delete("provider.opencode-go")
+      Store.delete("provider.opencode")
       Store.delete("tracker")
       Store.delete("agents")
     end
@@ -49,8 +51,7 @@ defmodule SvarmWeb.SetupLiveTest do
           "tracker_api_key" => "",
           "tracker_labels" => "",
           "provider_api_key" => "",
-          "agent_model" => "",
-          "agent_provider" => "openrouter"
+          "agent_model" => ""
         }
       })
 
@@ -75,7 +76,6 @@ defmodule SvarmWeb.SetupLiveTest do
         setup: %{
           provider_api_key: "sk-live-test",
           agent_model: "openrouter/free",
-          agent_provider: "openrouter",
           tracker_kind: "local"
         }
       )
@@ -95,7 +95,6 @@ defmodule SvarmWeb.SetupLiveTest do
       setup: %{
         provider_api_key: "",
         agent_model: "openrouter/free",
-        agent_provider: "openrouter",
         tracker_kind: "local"
       }
     )
@@ -119,7 +118,6 @@ defmodule SvarmWeb.SetupLiveTest do
         "tracker_kind" => "local",
         "provider_api_key" => "",
         "agent_model" => "dirty-model",
-        "agent_provider" => "openrouter",
         "tracker_owner" => "",
         "tracker_repo" => "",
         "tracker_api_key" => "",
@@ -137,5 +135,94 @@ defmodule SvarmWeb.SetupLiveTest do
     {:ok, _view, html} = live(conn, ~p"/setup")
     assert html =~ ~s(href="/setup")
     assert html =~ "Setup"
+  end
+
+  test "save OpenCode Go key is redacted on read", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/setup")
+
+    html =
+      view
+      |> form("#setup-form",
+        setup: %{
+          provider_id: "opencode-go",
+          provider_api_key: "sk-oc-live",
+          agent_model: "glm-5.3-flash",
+          tracker_kind: "local"
+        }
+      )
+      |> render_submit()
+
+    refute html =~ "sk-oc-live"
+    assert html =~ "Applied to live swarm" or html =~ "•••• set" or html =~ "set"
+
+    assert Settings.get_secret("provider.opencode-go", "api_key") == "sk-oc-live"
+    assert {:ok, section} = Settings.get_section("provider.opencode-go")
+    refute Map.has_key?(section, "api_key")
+    assert section.api_key_set? == true
+
+    assert {:ok, agents} = Settings.get_section("agents")
+    assert agents["default"]["provider"] == "opencode-go"
+  end
+
+  test "test_provider flash names OpenCode Go under HTTP stub", %{conn: conn} do
+    prev = System.get_env("OPENCODE_API_KEY")
+    System.put_env("OPENCODE_API_KEY", "sk-oc-stub")
+
+    plug = fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.send_resp(
+        200,
+        Jason.encode!(%{"data" => [%{"id" => "glm-5.3-flash"}, %{"id" => "other"}]})
+      )
+    end
+
+    Application.put_env(:svarm, :provider_req_plug, plug)
+
+    on_exit(fn ->
+      Application.delete_env(:svarm, :provider_req_plug)
+
+      if prev,
+        do: System.put_env("OPENCODE_API_KEY", prev),
+        else: System.delete_env("OPENCODE_API_KEY")
+    end)
+
+    {:ok, view, _html} = live(conn, ~p"/setup")
+
+    view
+    |> element("#setup-form")
+    |> render_change(%{
+      "setup" => %{
+        "provider_id" => "opencode-go",
+        "provider_api_key" => "",
+        "agent_model" => "glm-5.3-flash",
+        "tracker_kind" => "local"
+      }
+    })
+
+    html = render_click(view, "test_provider", %{})
+    assert html =~ "OpenCode Go OK"
+    assert html =~ "glm-5.3-flash"
+  end
+
+  test "OpenRouter path unchanged when selected", %{conn: conn} do
+    {:ok, view, html} = live(conn, ~p"/setup")
+    assert html =~ "OpenRouter"
+    assert html =~ ~s(id="setup-provider-id")
+
+    html =
+      view
+      |> form("#setup-form",
+        setup: %{
+          provider_id: "openrouter",
+          provider_api_key: "sk-or-keep",
+          agent_model: "openrouter/free",
+          tracker_kind: "local"
+        }
+      )
+      |> render_submit()
+
+    refute html =~ "sk-or-keep"
+    assert Settings.get_secret("provider.openrouter", "api_key") == "sk-or-keep"
   end
 end
