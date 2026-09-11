@@ -107,7 +107,12 @@ defmodule SvarmWeb.SetupLive do
   end
 
   def handle_event("save_and_apply", %{"setup" => params}, socket) do
-    form = params |> normalize_params() |> sync_provider_selection(socket.assigns.form)
+    form =
+      params
+      |> normalize_params()
+      |> sync_provider_selection(socket.assigns.form)
+      |> accept_typed_api_key(socket.assigns.form)
+
     provider = load_provider_section(form["provider_id"])
     assigns = Map.put(socket.assigns, :provider, provider)
     socket = assign(socket, form: form, provider: provider, applying?: true)
@@ -197,10 +202,13 @@ defmodule SvarmWeb.SetupLive do
               </select>
             </label>
 
-            <label class="form-control w-full gap-1" for="setup-provider-api-key">
+            <label
+              class="form-control w-full gap-1"
+              for={"setup-provider-api-key-#{@form["provider_id"]}"}
+            >
               <span class="label-text text-xs text-base-content/55">API key</span>
               <input
-                id="setup-provider-api-key"
+                id={"setup-provider-api-key-#{@form["provider_id"]}"}
                 type="password"
                 name="setup[provider_api_key]"
                 class="input input-bordered input-sm w-full font-mono"
@@ -664,6 +672,9 @@ defmodule SvarmWeb.SetupLive do
     end
   end
 
+  # Changing provider always drops the shared password field. Autofill and a
+  # newly typed secret look the same in the first switch payload, so we cannot
+  # keep either. The user types a key for the new provider on a later change.
   defp sync_provider_selection(%{"provider_id" => id} = form, %{"provider_id" => id}) do
     Map.put(form, "agent_provider", id)
   end
@@ -672,7 +683,17 @@ defmodule SvarmWeb.SetupLive do
     form
     |> Map.put("agent_provider", id)
     |> Map.put("agent_model", provider_default_model(id))
+    |> Map.put("provider_api_key", "")
   end
+
+  # Apply persists only a key already accepted on the LiveView form assign
+  # (typed after `phx-change="validate"`). A leftover still sitting in the
+  # password input is ignored even when the submit payload includes it.
+  defp accept_typed_api_key(%{"provider_id" => id} = form, %{"provider_id" => id} = prev) do
+    Map.put(form, "provider_api_key", prev["provider_api_key"] || "")
+  end
+
+  defp accept_typed_api_key(form, _prev), do: Map.put(form, "provider_api_key", "")
 
   defp load_default_agent do
     agents =
