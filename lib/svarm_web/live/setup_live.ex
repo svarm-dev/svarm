@@ -15,10 +15,20 @@ defmodule SvarmWeb.SetupLive do
 
   @impl true
   def handle_event("validate", %{"setup" => params}, socket) do
+    prev_id = socket.assigns.form["provider_id"]
     form = params |> normalize_params() |> sync_provider_selection(socket.assigns.form)
     provider = load_provider_section(form["provider_id"])
     assigns = Map.put(socket.assigns, :provider, provider)
     readiness = readiness(form, assigns)
+
+    socket =
+      if form["provider_id"] != prev_id do
+        socket
+        |> assign(:model_suggestions, [])
+        |> assign(:provider_test, nil)
+      else
+        socket
+      end
 
     {:noreply,
      socket
@@ -97,10 +107,12 @@ defmodule SvarmWeb.SetupLive do
   end
 
   def handle_event("save_and_apply", %{"setup" => params}, socket) do
-    form = normalize_params(params)
-    socket = assign(socket, form: form, applying?: true)
+    form = params |> normalize_params() |> sync_provider_selection(socket.assigns.form)
+    provider = load_provider_section(form["provider_id"])
+    assigns = Map.put(socket.assigns, :provider, provider)
+    socket = assign(socket, form: form, provider: provider, applying?: true)
 
-    with :ok <- save_all(form),
+    with :ok <- save_all(form, assigns),
          {:ok, summary} <- Orchestrator.reload_config() do
       msg =
         "Applied to live swarm — #{summary.agent_count} agents, tracker #{summary.tracker_kind}"
@@ -725,15 +737,24 @@ defmodule SvarmWeb.SetupLive do
   end
 
   defp provider_readiness(form, assigns) do
-    ready? =
-      present?(form["provider_api_key"]) or assigns.provider[:api_key_set?] == true or
-        assigns.status.provider_configured? == true
-
-    pending? =
-      ready? and assigns.status.provider_configured? != true and
-        (present?(form["provider_api_key"]) or assigns.provider[:api_key_set?] == true)
+    ready? = selected_provider_key?(form, assigns)
+    pending? = ready? and not selected_provider_resolved?(form)
 
     %{ready?: ready?, badge: readiness_badge(ready?, pending?)}
+  end
+
+  defp selected_provider_key?(form, assigns) do
+    present?(form["provider_api_key"]) or assigns.provider[:api_key_set?] == true or
+      selected_provider_resolved?(form)
+  end
+
+  defp selected_provider_resolved?(form) do
+    id = form["provider_id"] || "openrouter"
+
+    match?(
+      key when is_binary(key) and key != "",
+      Settings.Resolve.provider_api_key(id)
+    )
   end
 
   defp tracker_readiness(form, assigns) do
@@ -804,7 +825,9 @@ defmodule SvarmWeb.SetupLive do
     "Complete the steps above, then apply."
   end
 
-  defp save_all(form) do
+  defp save_all(form, assigns) do
+    provider_id = form["provider_id"] || "openrouter"
+
     provider_attrs = %{
       "api_key" => form["provider_api_key"],
       "default_model" => form["agent_model"]
@@ -819,15 +842,15 @@ defmodule SvarmWeb.SetupLive do
       "required_labels" => parse_labels(form["tracker_labels"])
     }
 
-    agent_attrs = %{
-      "provider" => form["provider_id"] || "openrouter",
-      "model" => form["agent_model"]
-    }
+    agent_attrs =
+      if selected_provider_key?(form, assigns) do
+        %{"provider" => provider_id, "model" => form["agent_model"]}
+      else
+        %{"model" => form["agent_model"]}
+      end
 
     with {:ok, _} <-
-           save_section(:provider, fn ->
-             Settings.put_provider(form["provider_id"] || "openrouter", provider_attrs)
-           end),
+           save_section(:provider, fn -> Settings.put_provider(provider_id, provider_attrs) end),
          {:ok, _} <- save_section(:tracker, fn -> Settings.put_tracker(tracker_attrs) end),
          {:ok, _} <- save_section(:agent, fn -> Settings.put_default_agent(agent_attrs) end) do
       :ok

@@ -205,6 +205,110 @@ defmodule SvarmWeb.SetupLiveTest do
     assert html =~ "glm-5.3-flash"
   end
 
+  test "selected provider without a key is not ready even if another key exists", %{conn: conn} do
+    prev_or = System.get_env("OPENROUTER_API_KEY")
+    prev_oc = System.get_env("OPENCODE_API_KEY")
+    System.put_env("OPENROUTER_API_KEY", "sk-or-other")
+    System.delete_env("OPENCODE_API_KEY")
+
+    on_exit(fn ->
+      if prev_or,
+        do: System.put_env("OPENROUTER_API_KEY", prev_or),
+        else: System.delete_env("OPENROUTER_API_KEY")
+
+      if prev_oc,
+        do: System.put_env("OPENCODE_API_KEY", prev_oc),
+        else: System.delete_env("OPENCODE_API_KEY")
+    end)
+
+    {:ok, view, html} = live(conn, ~p"/setup")
+    assert html =~ "Ready" or html =~ "Pending apply"
+
+    html =
+      view
+      |> element("#setup-form")
+      |> render_change(%{
+        "setup" => %{
+          "provider_id" => "opencode-go",
+          "provider_api_key" => "",
+          "agent_model" => "glm-5.3-flash",
+          "tracker_kind" => "local"
+        }
+      })
+
+    assert html =~ "Needed"
+
+    view
+    |> form("#setup-form",
+      setup: %{
+        provider_id: "opencode-go",
+        provider_api_key: "",
+        agent_model: "glm-5.3-flash",
+        tracker_kind: "local"
+      }
+    )
+    |> render_submit()
+
+    case Settings.get_section("agents") do
+      :error ->
+        :ok
+
+      {:ok, agents} ->
+        refute agents["default"]["provider"] == "opencode-go"
+    end
+  end
+
+  test "switching provider clears stale model chips", %{conn: conn} do
+    prev = System.get_env("OPENCODE_API_KEY")
+    System.put_env("OPENCODE_API_KEY", "sk-oc-stub")
+
+    plug = fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.send_resp(200, Jason.encode!(%{"data" => [%{"id" => "glm-5.3-flash"}]}))
+    end
+
+    Application.put_env(:svarm, :provider_req_plug, plug)
+
+    on_exit(fn ->
+      Application.delete_env(:svarm, :provider_req_plug)
+
+      if prev,
+        do: System.put_env("OPENCODE_API_KEY", prev),
+        else: System.delete_env("OPENCODE_API_KEY")
+    end)
+
+    {:ok, view, _html} = live(conn, ~p"/setup")
+
+    view
+    |> element("#setup-form")
+    |> render_change(%{
+      "setup" => %{
+        "provider_id" => "opencode-go",
+        "provider_api_key" => "",
+        "agent_model" => "glm-5.3-flash",
+        "tracker_kind" => "local"
+      }
+    })
+
+    html = render_click(view, "test_provider", %{})
+    assert html =~ "glm-5.3-flash"
+
+    html =
+      view
+      |> element("#setup-form")
+      |> render_change(%{
+        "setup" => %{
+          "provider_id" => "openrouter",
+          "provider_api_key" => "",
+          "agent_model" => "",
+          "tracker_kind" => "local"
+        }
+      })
+
+    refute html =~ ~s(phx-value-model="glm-5.3-flash")
+  end
+
   test "OpenRouter path unchanged when selected", %{conn: conn} do
     {:ok, view, html} = live(conn, ~p"/setup")
     assert html =~ "OpenRouter"
