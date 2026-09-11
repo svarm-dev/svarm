@@ -76,6 +76,8 @@ defmodule SvarmWeb.SetupLiveTest do
   test "save and apply stores provider secret without echoing", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/setup")
 
+    type_provider_key(view, "sk-live-test", "openrouter/free")
+
     html =
       view
       |> form("#setup-form",
@@ -95,6 +97,8 @@ defmodule SvarmWeb.SetupLiveTest do
 
   test "save and apply stores local tracker and default model", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/setup")
+
+    type_provider_key(view, "sk-or-model", "openrouter/free")
 
     view
     |> form("#setup-form",
@@ -145,6 +149,28 @@ defmodule SvarmWeb.SetupLiveTest do
 
   test "save OpenCode Go key is redacted on read", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/setup")
+
+    view
+    |> element("#setup-form")
+    |> render_change(%{
+      "setup" => %{
+        "provider_id" => "opencode-go",
+        "provider_api_key" => "",
+        "agent_model" => "glm-5.3-flash",
+        "tracker_kind" => "local"
+      }
+    })
+
+    view
+    |> element("#setup-form")
+    |> render_change(%{
+      "setup" => %{
+        "provider_id" => "opencode-go",
+        "provider_api_key" => "sk-oc-live",
+        "agent_model" => "glm-5.3-flash",
+        "tracker_kind" => "local"
+      }
+    })
 
     html =
       view
@@ -229,6 +255,8 @@ defmodule SvarmWeb.SetupLiveTest do
 
     {:ok, view, html} = live(conn, ~p"/setup")
     assert html =~ "Ready" or html =~ "Pending apply"
+
+    type_provider_key(view, "sk-or-keep", "openrouter/free")
 
     view
     |> form("#setup-form",
@@ -374,7 +402,62 @@ defmodule SvarmWeb.SetupLiveTest do
     |> form("#setup-form",
       setup: %{
         provider_id: "opencode-go",
-        provider_api_key: "",
+        provider_api_key: "sk-or-leftover",
+        agent_model: "glm-5.3-flash",
+        tracker_kind: "local"
+      }
+    )
+    |> render_submit()
+
+    assert Settings.get_secret("provider.opencode-go", "api_key") in [nil, ""]
+
+    case Settings.get_section("agents") do
+      :error ->
+        :ok
+
+      {:ok, agents} ->
+        refute agents["default"]["provider"] == "opencode-go"
+    end
+  end
+
+  test "first switch payload leftover is not treated as a new secret", %{conn: conn} do
+    prev_or = System.get_env("OPENROUTER_API_KEY")
+    prev_oc = System.get_env("OPENCODE_API_KEY")
+    System.delete_env("OPENROUTER_API_KEY")
+    System.delete_env("OPENCODE_API_KEY")
+
+    on_exit(fn ->
+      if prev_or,
+        do: System.put_env("OPENROUTER_API_KEY", prev_or),
+        else: System.delete_env("OPENROUTER_API_KEY")
+
+      if prev_oc,
+        do: System.put_env("OPENCODE_API_KEY", prev_oc),
+        else: System.delete_env("OPENCODE_API_KEY")
+    end)
+
+    {:ok, view, _html} = live(conn, ~p"/setup")
+
+    html =
+      view
+      |> element("#setup-form")
+      |> render_change(%{
+        "setup" => %{
+          "provider_id" => "opencode-go",
+          "provider_api_key" => "sk-autofill-leftover",
+          "agent_model" => "glm-5.3-flash",
+          "tracker_kind" => "local"
+        }
+      })
+
+    refute html =~ "sk-autofill-leftover"
+    assert html =~ ~s(id="setup-provider-api-key-opencode-go")
+
+    view
+    |> form("#setup-form",
+      setup: %{
+        provider_id: "opencode-go",
+        provider_api_key: "sk-autofill-leftover",
         agent_model: "glm-5.3-flash",
         tracker_kind: "local"
       }
@@ -397,6 +480,8 @@ defmodule SvarmWeb.SetupLiveTest do
     assert html =~ "OpenRouter"
     assert html =~ ~s(id="setup-provider-id")
 
+    type_provider_key(view, "sk-or-keep", "openrouter/free")
+
     html =
       view
       |> form("#setup-form",
@@ -411,5 +496,18 @@ defmodule SvarmWeb.SetupLiveTest do
 
     refute html =~ "sk-or-keep"
     assert Settings.get_secret("provider.openrouter", "api_key") == "sk-or-keep"
+  end
+
+  defp type_provider_key(view, key, model, provider_id \\ "openrouter") do
+    view
+    |> element("#setup-form")
+    |> render_change(%{
+      "setup" => %{
+        "provider_id" => provider_id,
+        "provider_api_key" => key,
+        "agent_model" => model,
+        "tracker_kind" => "local"
+      }
+    })
   end
 end
