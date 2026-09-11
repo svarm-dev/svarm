@@ -116,29 +116,11 @@ defmodule Svarm.Settings do
   end
 
   def default_model do
-    agents =
-      case get_section("agents") do
-        {:ok, m} -> m
-        :error -> %{}
-      end
-
-    default = agents["default"] || %{}
+    default = default_agent_section()
 
     case default["model"] do
-      model when is_binary(model) and model != "" ->
-        model
-
-      _ ->
-        provider_id = default["provider"] || "openrouter"
-
-        case get_section("provider.#{provider_id}") do
-          {:ok, p} ->
-            p = stringify_keys(p)
-            blank_to_nil(p["default_model"]) || registry_default_model(provider_id)
-
-          :error ->
-            registry_default_model(provider_id)
-        end
+      model when is_binary(model) and model != "" -> model
+      _ -> stored_or_registry_model(default["provider"] || "openrouter")
     end
   end
 
@@ -365,6 +347,23 @@ defmodule Svarm.Settings do
   defp blank_to_nil(nil), do: nil
   defp blank_to_nil(""), do: nil
   defp blank_to_nil(v), do: v
+
+  defp default_agent_section do
+    case get_section("agents") do
+      {:ok, agents} -> agents["default"] || %{}
+      :error -> %{}
+    end
+  end
+
+  defp stored_or_registry_model(provider_id) do
+    case get_section("provider.#{provider_id}") do
+      {:ok, p} ->
+        blank_to_nil(stringify_keys(p)["default_model"]) || registry_default_model(provider_id)
+
+      :error ->
+        registry_default_model(provider_id)
+    end
+  end
 
   defp registry_default_model(id) do
     case Provider.Resolve.entry(id) do
