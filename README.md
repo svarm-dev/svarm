@@ -124,6 +124,7 @@ Docker mounts `./svarm-config/` as a directory. On first boot, missing files are
 | `BOARD_AUTH_TTL_SECONDS` | Optional TTL for sticky board mutation proof after Basic Auth (default `28800` = 8h; see [SECURITY.md](SECURITY.md)) |
 | `GITHUB_TOKEN` | PAT for GitHub Issues (`repo` scope) |
 | `OPENROUTER_API_KEY` | LLM access for agents — must also be listed in the agent `env` block in `agents.toml` |
+| `OPENCODE_API_KEY` | Optional. Required only if an agent uses OpenCode Go or Zen; list it in that agent's `env` block |
 | `SVARM_BUDGET_MAX_USD_PER_TICKET` / `SVARM_BUDGET_MAX_USD_PER_DAY` | Optional USD caps (or WORKFLOW `budget.*`); block **new** spawns only |
 | `SVARM_BUDGET_MODE` | `hard` (default: skip spawn) or `hold` (park ticket for overage approval) |
 | `SVARM_BASE_URL` | Public board origin (e.g. `http://localhost:4000`); used for GitHub comment console links only when opted in |
