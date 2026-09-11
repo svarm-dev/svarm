@@ -45,6 +45,54 @@ model = "kimi-k2.6"
 env = { GITHUB_TOKEN = "$GITHUB_TOKEN", OPENCODE_API_KEY = "$OPENCODE_API_KEY" }
 ```
 
+## Grok Build (CLI) — second first-class harness
+
+xAI’s **Grok Build** CLI (`grok`) is the documented second harness after **pi RPC**. It uses the existing `adapter = "cli"` runner (not a pi-style RPC protocol). Claude Code / Codex stay optional examples only.
+
+```toml
+[agent.grok]
+name = "Grok Build"
+role = "Implementation"
+command = "grok"
+adapter = "cli"
+provider = "xai"
+model = "grok-build"
+args = ["--no-auto-update", "--always-approve", "--output-format", "plain", "-p"]
+env = { GITHUB_TOKEN = "$GITHUB_TOKEN", XAI_API_KEY = "$XAI_API_KEY" }
+tools = ["grok", "gh"]
+tools_mode = "fail"
+```
+
+Svärm appends the rendered WORKFLOW prompt after `args`. Copy the block into `svarm-config/agents.toml` (or uncomment `[agent.grok]` in `priv/agents.toml`). Do **not** replace `[agent.default]` unless you want Grok on every ticket.
+
+### Install and headless auth
+
+```bash
+curl -fsSL https://x.ai/cli/install.sh | bash
+# or: npm install -g @xai-official/grok
+export XAI_API_KEY="xai-..."   # scripts / always-on hosts — no browser
+```
+
+| Topic | Detail |
+|-------|--------|
+| Install | Host or image PATH must include `grok` (Svärm does not install it) |
+| Auth | `XAI_API_KEY` for headless/CI. `grok login` (browser or `--device-auth`) is interactive only. List `XAI_API_KEY` in the agent `env` block — empty `env` does not inherit the host |
+| Headless flags | `-p` / `--single` (one-shot), `--no-auto-update`, `--always-approve` (unattended tools), `--output-format plain` (board/console text). Optional: `--cwd`, `-m` / `--model` |
+| Secrets | Never put the key in toml, task metadata, or logs. Redaction still applies to stream lines |
+
+### Limits vs pi RPC (v1)
+
+| | pi RPC | Grok Build (CLI) |
+|---|--------|------------------|
+| Stream | Typed JSONL / RPC events | Stdout lines on the run console |
+| Abort / stall | OS kill-tree | Same kill-tree |
+| Mid-run Q&A / steer | Supported | Not supported (CLI fire-and-forget) |
+| Usage | Tokens from RPC `message_end` when present | Tokens when `grok` prints a JSON `usage` object on a line; otherwise **estimated** (no invented dollars) |
+
+Live path: label an issue `ai-task`, assign a Grok agent (or route to `grok`), approve if untrusted, watch the console, review the PR, merge yourself. Cost on the ticket is labeled **estimated** unless the harness reported USD.
+
+CI uses `test/support/fake_grok.sh` (no live `grok`).
+
 ## Claude Code (CLI)
 
 ```toml

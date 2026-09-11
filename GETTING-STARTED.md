@@ -299,6 +299,7 @@ While a run is live (**CLI** or **PiRPC**), the console has **Abort**. That kill
 | pi not found (local) | `which pi`; Docker image includes pi |
 | OpenRouter errors | `OPENROUTER_API_KEY` set and listed in the agent `env` block |
 | OpenCode errors | `OPENCODE_API_KEY` set and listed in the agent `env` block (Go or Zen) |
+| Grok Build (CLI) errors | `grok` on PATH; `XAI_API_KEY` set and listed in the agent `env` block. Headless flags are in [docs/agents.md](docs/agents.md#grok-build-cli--second-first-class-harness). Cost is **estimated** unless `grok` prints a JSON usage line |
 | Empty board | Demo (`--profile demo`) or Seed demo; the real tracker loop needs a labeled issue. A GitHub API error (401/403/rate-limit) shows **Cannot load GitHub issues**, not a silent empty board |
 | `mix svarm.demo` ≠ `/board` | Expected: Mix task uses a temp DB. Use Seed demo on the running server |
 | Sessions / approvals sticky auth fail on local HTTP `app` | Set `PHX_SECURE_COOKIES=false` in `.env` (Secure cookies need HTTPS; demo profile sets this already) |
@@ -320,6 +321,7 @@ rm -rf ~/svarm_workspaces/ && mix phx.server
 | You want to… | Do this |
 |--------------|---------|
 | Zero-key aha again | Demo profile / Seed demo |
+| Use Grok Build (second harness) | [docs/agents.md](docs/agents.md#grok-build-cli--second-first-class-harness) — `adapter = "cli"`, `XAI_API_KEY` |
 | Use Claude Code | [docs/agents.md](docs/agents.md) copy-paste blocks, or edit **agents.toml** |
 | Attach the sample skill pack | Enable `priv/packs/ai-task` on an agent — [docs/agents.md](docs/agents.md#sample-pack-ai-task) |
 | Bot identity on comments | [docs/github-app.md](docs/github-app.md) |
