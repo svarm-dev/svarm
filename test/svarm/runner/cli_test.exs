@@ -26,7 +26,15 @@ defmodule Svarm.Runner.CliTest do
     :ok = Events.subscribe()
 
     on_exit(fn ->
-      if Process.alive?(statuses), do: Agent.stop(statuses)
+      # Agent may already be gone if a prior test EXIT raced the trap.
+      if Process.alive?(statuses) do
+        try do
+          Agent.stop(statuses)
+        catch
+          :exit, _ -> :ok
+        end
+      end
+
       File.rm_rf(workspace_root)
     end)
 
@@ -310,6 +318,32 @@ defmodule Svarm.Runner.CliTest do
     assert rec.completion_tokens == 8
     assert rec.estimated == true
     assert rec.provider_cost_usd == nil
+  end
+
+  test "malformed CLI usage JSON does not crash a successful run", %{
+    workspace_root: root,
+    statuses: statuses
+  } do
+    id = "sva_cli_usage_bad"
+
+    cfg = %{
+      command: "sh",
+      args: ["-c", ~s(echo ok; echo '{"usage":{"prompt_tokens":"x","cost":{"usd":1}}}')],
+      env: %{},
+      display_name: "Bad usage",
+      adapter: "cli",
+      provider: "cli",
+      model: "none"
+    }
+
+    assert :ok = Cli.run(task(id), cfg, run_opts(root, statuses))
+    assert last_status(statuses, id) == "review"
+
+    [rec] = Usage.for_task(id)
+    assert rec.prompt_tokens == nil
+    assert rec.completion_tokens == nil
+    assert rec.provider_cost_usd == nil
+    assert rec.estimated == true
   end
 
   test "agents.toml documents the Grok Build CLI profile" do

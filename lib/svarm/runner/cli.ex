@@ -274,13 +274,20 @@ defmodule Svarm.Runner.Cli do
     end
   end
 
-  defp usage_from_map(u) do
+  defp usage_from_map(u) when is_map(u) do
     %{
-      prompt_tokens: u["prompt_tokens"] || u["input_tokens"] || u["input"],
-      completion_tokens: u["completion_tokens"] || u["output_tokens"] || u["output"],
-      provider_cost_usd: u["cost"] || u["total_cost"]
+      prompt_tokens: int_token(u["prompt_tokens"] || u["input_tokens"] || u["input"]),
+      completion_tokens: int_token(u["completion_tokens"] || u["output_tokens"] || u["output"]),
+      provider_cost_usd: usd_cost(u["cost"] || u["total_cost"])
     }
   end
+
+  defp int_token(n) when is_integer(n) and n >= 0, do: n
+  defp int_token(n) when is_float(n) and n >= 0.0, do: trunc(n)
+  defp int_token(_), do: nil
+
+  defp usd_cost(n) when is_number(n) and n >= 0, do: n / 1
+  defp usd_cost(_), do: nil
 
   defp default_run_id, do: "run_" <> Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)
 end
