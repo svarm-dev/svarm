@@ -7,8 +7,8 @@ defmodule Svarm.Provider.Resolve do
   match on `== Provider.OpenRouter` to pick an adapter.
   """
 
-  alias Svarm.{Settings, Workflow}
   alias Svarm.Provider.{OpenAICompat, OpenRouter}
+  alias Svarm.{Settings, Workflow}
 
   @config_file Path.join(:code.priv_dir(:svarm), "providers.toml")
 
@@ -84,7 +84,7 @@ defmodule Svarm.Provider.Resolve do
   defp settings_provider_id do
     case Settings.get_section("agents") do
       {:ok, agents} when is_map(agents) ->
-        default = stringify(agents["default"] || agents[:default] || %{})
+        default = agents |> stringify() |> Map.get("default") |> stringify()
         present(default["provider"])
 
       _ ->
