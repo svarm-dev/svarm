@@ -1,6 +1,6 @@
 defmodule Svarm.Tracker.GitHub.HTTP do
   @moduledoc false
-  # Shared GitHub REST helpers for Checks, Reviews, and PR-merged lookups (Req only).
+  # Shared GitHub REST helpers for Checks, Reviews, issue-list paging, and PR-merged lookups (Req only).
 
   require Logger
 
@@ -9,11 +9,42 @@ defmodule Svarm.Tracker.GitHub.HTTP do
   @base_url "https://api.github.com"
   @api_version "2026-03-10"
   @page_size 100
+  # Issue lists follow `Link: rel=next`. Cap so a 10k-issue repo cannot stall a tick.
+  @max_list_pages 10
   @default_receive_timeout_ms 5_000
   @default_connect_timeout_ms 3_000
 
   def base_url, do: @base_url
   def page_size, do: @page_size
+  def max_list_pages, do: @max_list_pages
+
+  @doc """
+  Next GitHub issues-list URL from a `Link: rel=next` header, or `nil`.
+
+  Only same-origin (`#{@base_url}`) issue collection paths are followed —
+  `/repos/{owner}/{repo}/issues` or `/repositories/{id}/issues`. Other hosts
+  or paths are ignored so a forged header cannot redirect the poll loop.
+  """
+  @spec next_issues_url(term(), String.t(), String.t()) :: String.t() | nil
+  def next_issues_url(headers, owner, repo)
+      when is_binary(owner) and is_binary(repo) and owner != "" and repo != "" do
+    case next_link(headers) do
+      url when is_binary(url) ->
+        if allowed_list_next?(url, owner, repo), do: url
+
+      _ ->
+        nil
+    end
+  end
+
+  def next_issues_url(_headers, _owner, _repo), do: nil
+
+  @doc false
+  def next_link(headers) do
+    headers
+    |> link_header_values()
+    |> Enum.find_value(&parse_rel_next/1)
+  end
 
   def req_opts(opts) do
     receive_timeout = Keyword.get(opts, :receive_timeout, @default_receive_timeout_ms)
@@ -94,4 +125,48 @@ defmodule Svarm.Tracker.GitHub.HTTP do
   end
 
   def stringify_top_keys(_), do: %{}
+
+  defp link_header_values(headers) when is_map(headers) do
+    headers
+    |> Enum.flat_map(fn
+      {k, v} -> if link_header_name?(k), do: List.wrap(v), else: []
+    end)
+  end
+
+  defp link_header_values(headers) when is_list(headers) do
+    Enum.flat_map(headers, fn
+      {k, v} -> if link_header_name?(k), do: List.wrap(v), else: []
+      _ -> []
+    end)
+  end
+
+  defp link_header_values(_), do: []
+
+  defp link_header_name?(name) when is_atom(name), do: link_header_name?(Atom.to_string(name))
+  defp link_header_name?(name) when is_binary(name), do: String.downcase(name) == "link"
+  defp link_header_name?(_), do: false
+
+  defp parse_rel_next(header) when is_binary(header) do
+    case Regex.run(~r/<([^>]+)>\s*;\s*rel="next"/i, header) do
+      [_, url] -> url
+      _ -> nil
+    end
+  end
+
+  defp parse_rel_next(_), do: nil
+
+  defp allowed_list_next?(url, owner, repo) do
+    uri = URI.parse(url)
+    base = URI.parse(@base_url)
+
+    uri.scheme == base.scheme and uri.host == base.host and
+      list_collection_path?(uri.path, owner, repo)
+  end
+
+  defp list_collection_path?(path, owner, repo) when is_binary(path) do
+    path == "/repos/#{owner}/#{repo}/issues" or
+      String.match?(path, ~r/^\/repositories\/\d+\/issues$/)
+  end
+
+  defp list_collection_path?(_, _, _), do: false
 end

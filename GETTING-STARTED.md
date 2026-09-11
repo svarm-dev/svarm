@@ -148,6 +148,8 @@ Svärm tracks GitHub work with **labels**. Your eligibility label (e.g. `ai-task
 
 On the board, `pending_approval` is the **Needs approval** column; `/approvals` lists the same issues. Budget hold reuses `status: pending-approval` plus `wait_reason` (no extra label). Override with WORKFLOW `tracker.status_labels` / `reverse_labels` (keep both directions in sync); invalid maps fail closed and the orchestrator will not dispatch.
 
+GitHub `list_eligible` / `list_issues` follow `Link` pages (`per_page: 100`, max **10** pages / **1000** issues per call). Past that cap, remaining issues wait for a later poll. Each extra page is one REST GET against the same hourly rate limit as other tracker reads (Checks/Reviews already page; batch `get_issues` is #69 — not GraphQL search).
+
 ---
 
 ## Team hardening
@@ -290,6 +292,7 @@ While a run is live (**CLI** or **PiRPC**), the console has **Abort**. That kill
 | Stuck before agent runs | `/approvals` (default is untrusted). On GitHub the issue should have `status: pending-approval` and appear under **Needs approval** |
 | 401/403 from GitHub | PAT `repo` scope; token in `.env`. `/board`, `/dashboard`, and `/` show **Cannot load GitHub issues** — that is not a healthy empty kanban |
 | No eligible issues | Issue has `ai-task`; `required_labels` matches; unassigned or assignee in `tracker.agent_assignees` (human assignees are shown on the board but not dispatched) |
+| Missing GitHub tickets past ~1000 listed issues | Lists stop after 10 pages (1000 issues). Raise the cap only in code; there is no WORKFLOW knob |
 | pi not found (local) | `which pi`; Docker image includes pi |
 | OpenRouter errors | `OPENROUTER_API_KEY` set |
 | Empty board | Demo (`--profile demo`) or Seed demo; the real tracker loop needs a labeled issue. A GitHub API error (401/403/rate-limit) shows **Cannot load GitHub issues**, not a silent empty board |
