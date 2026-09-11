@@ -1,11 +1,28 @@
 # Svärm provider registry.
-# Each provider is keyed by name. Auth tokens come from the operator's
+# Advertised (live) rows are the source of truth for in-app LLM resolve.
+# Auth tokens come from Settings (`provider.<id>` api_key) or the operator's
 # environment — never hardcode secrets here.
+# Commented Anthropic/OpenAI stubs stay stubs and are not advertised.
 
 [provider.openrouter]
+adapter = "openrouter"
 auth_env = "OPENROUTER_API_KEY"
 base_url = "https://openrouter.ai/api/v1"
 default_model = "openrouter/free"
+
+[provider.opencode-go]
+adapter = "openai_compat"
+auth_env = "OPENCODE_API_KEY"
+base_url = "https://opencode.ai/zen/go/v1"
+# Chat/completions family (not MiniMax/Qwen /messages). Ids churn — see OpenCode Go docs.
+default_model = "glm-5.3-flash"
+
+[provider.opencode]
+adapter = "openai_compat"
+auth_env = "OPENCODE_API_KEY"
+base_url = "https://opencode.ai/zen/v1"
+# Zen catalog differs from Go — chat/completions id only.
+default_model = "kimi-k2.6"
 
 # Future providers (uncomment when ready):
 #

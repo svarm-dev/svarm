@@ -215,7 +215,7 @@ defmodule Svarm.Settings do
   end
 
   defp redact(section, data) do
-    secrets = Map.get(@secret_fields, section, [])
+    secrets = secret_fields(section)
 
     Enum.reduce(secrets, data, fn field, acc ->
       set? = match?(bin when is_binary(bin) and bin != "", acc[field])
@@ -228,7 +228,7 @@ defmodule Svarm.Settings do
   end
 
   defp prepare_for_store(section, attrs, existing) do
-    secrets = Map.get(@secret_fields, section, [])
+    secrets = secret_fields(section)
     base = Map.merge(existing, Map.drop(attrs, secrets ++ ["api_key_set?"]))
 
     Enum.reduce(secrets, base, fn field, acc ->
@@ -261,7 +261,14 @@ defmodule Svarm.Settings do
     end)
   end
 
-  defp atomize_known_keys(data, "provider.openrouter") do
+  defp secret_fields(section) do
+    Map.get(@secret_fields, section) || provider_secret_fields(section)
+  end
+
+  defp provider_secret_fields("provider." <> _), do: ["api_key"]
+  defp provider_secret_fields(_), do: []
+
+  defp atomize_known_keys(data, "provider." <> _) do
     data
     |> copy_string_key(:base_url)
     |> copy_string_key(:default_model)

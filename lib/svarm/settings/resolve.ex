@@ -23,10 +23,22 @@ defmodule Svarm.Settings.Resolve do
   OpenRouter API key: Settings secret first, then `OPENROUTER_API_KEY` (or
   `auth_env` from providers.toml).
   """
-  def openrouter_api_key do
-    case Settings.get_secret("provider.openrouter", "api_key") do
-      key when is_binary(key) and key != "" -> key
-      _ -> System.get_env(openrouter_auth_env())
+  def openrouter_api_key, do: provider_api_key("openrouter")
+
+  @doc """
+  Provider API key: Settings secret `provider.<id>` `api_key` if present,
+  else `System.get_env(auth_env)` from the advertised toml row.
+  """
+  def provider_api_key(id) when is_binary(id) do
+    case Settings.get_secret("provider.#{id}", "api_key") do
+      key when is_binary(key) and key != "" ->
+        key
+
+      _ ->
+        case Svarm.Provider.Resolve.auth_env(id) do
+          env when is_binary(env) and env != "" -> System.get_env(env)
+          _ -> nil
+        end
     end
   end
 
@@ -172,18 +184,5 @@ defmodule Svarm.Settings.Resolve do
       {k, v}, acc when is_atom(k) -> Map.put(acc, Atom.to_string(k), v)
       {_k, _v}, acc -> acc
     end)
-  end
-
-  defp openrouter_auth_env do
-    path = Path.join(:code.priv_dir(:svarm), "providers.toml")
-
-    with {:ok, contents} <- File.read(path),
-         {:ok, map} <- Toml.decode(contents),
-         env when is_binary(env) and env != "" <-
-           get_in(map, ["provider", "openrouter", "auth_env"]) do
-      env
-    else
-      _ -> "OPENROUTER_API_KEY"
-    end
   end
 end
