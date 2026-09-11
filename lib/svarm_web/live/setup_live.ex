@@ -846,15 +846,22 @@ defmodule SvarmWeb.SetupLive do
       if selected_provider_key?(form, assigns) do
         %{"provider" => provider_id, "model" => form["agent_model"]}
       else
-        %{"model" => form["agent_model"]}
+        # Keyless apply must not merge a switched-row model onto the previous provider.
+        %{}
       end
 
     with {:ok, _} <-
            save_section(:provider, fn -> Settings.put_provider(provider_id, provider_attrs) end),
          {:ok, _} <- save_section(:tracker, fn -> Settings.put_tracker(tracker_attrs) end),
-         {:ok, _} <- save_section(:agent, fn -> Settings.put_default_agent(agent_attrs) end) do
+         {:ok, _} <- maybe_save_default_agent(agent_attrs) do
       :ok
     end
+  end
+
+  defp maybe_save_default_agent(attrs) when map_size(attrs) == 0, do: {:ok, :unchanged}
+
+  defp maybe_save_default_agent(attrs) do
+    save_section(:agent, fn -> Settings.put_default_agent(attrs) end)
   end
 
   defp save_section(section, fun) do

@@ -99,7 +99,7 @@ defmodule SvarmWeb.SetupLiveTest do
     view
     |> form("#setup-form",
       setup: %{
-        provider_api_key: "",
+        provider_api_key: "sk-or-model",
         agent_model: "openrouter/free",
         tracker_kind: "local"
       }
@@ -230,6 +230,21 @@ defmodule SvarmWeb.SetupLiveTest do
     {:ok, view, html} = live(conn, ~p"/setup")
     assert html =~ "Ready" or html =~ "Pending apply"
 
+    view
+    |> form("#setup-form",
+      setup: %{
+        provider_id: "openrouter",
+        provider_api_key: "sk-or-keep",
+        agent_model: "openrouter/free",
+        tracker_kind: "local"
+      }
+    )
+    |> render_submit()
+
+    assert {:ok, before} = Settings.get_section("agents")
+    assert before["default"]["provider"] == "openrouter"
+    assert before["default"]["model"] == "openrouter/free"
+
     html =
       view
       |> element("#setup-form")
@@ -255,13 +270,9 @@ defmodule SvarmWeb.SetupLiveTest do
     )
     |> render_submit()
 
-    case Settings.get_section("agents") do
-      :error ->
-        :ok
-
-      {:ok, agents} ->
-        refute agents["default"]["provider"] == "opencode-go"
-    end
+    assert {:ok, after_apply} = Settings.get_section("agents")
+    assert after_apply["default"]["provider"] == "openrouter"
+    assert after_apply["default"]["model"] == "openrouter/free"
   end
 
   test "switching provider clears stale model chips", %{conn: conn} do
