@@ -25,10 +25,10 @@ If nothing material changed, **do not** edit this file.
 
 | Field | Value |
 |-------|--------|
-| **Updated** | 2026-09-10 |
+| **Updated** | 2026-09-11 |
 | **`main`** | v0.1.6 |
 | **Latest tag** | **v0.1.6** (2026-08-29) |
-| **Unreleased** | #177 paginate GitHub lists |
+| **Unreleased** | #77 optional board/dashboard read auth |
 | **Focus** | none — do not auto-claim #118 / #55 |
 | **Next** | do not auto-claim #118 / #55 |
 
@@ -45,6 +45,6 @@ Format: `YYYY-MM-DD · one sentence · issue/PR link`
 
 ## Session log (newest first, max 3)
 
+- 2026-09-11 · #77 optional board/dashboard read auth; Focus stays none
 - 2026-09-10 · #177 paginate GitHub lists; Focus cleared (do not auto-claim #118 / #55)
 - 2026-09-02 · #185 skip human GitHub assignees; Focus → #177
-- 2026-08-29 · cut v0.1.6; Focus → #185

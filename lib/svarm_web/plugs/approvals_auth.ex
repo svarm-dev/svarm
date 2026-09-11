@@ -8,7 +8,8 @@ defmodule SvarmWeb.Plugs.ApprovalsAuth do
   - Otherwise 404 with setup hints (not a silent empty page).
 
   Shared helpers are also used by the board LiveView to gate high-trust
-  mutations (approve / reject / complete_review):
+  mutations (approve / reject / complete_review) and, when
+  `:board_read_auth` is on, `/board` and `/dashboard` reads:
 
   - Credentials configured → requires a **fresh** session stamp from Basic Auth
     (`session["board_auth_at"]` unix seconds, set by `BoardAuthCapture`).
@@ -173,4 +174,39 @@ defmodule SvarmWeb.Plugs.ApprovalsAuth do
         false
     end
   end
+
+  @doc """
+  True when `/board` and `/dashboard` reads require Basic Auth.
+
+  Set via `BOARD_READ_AUTH=true` (`config :svarm, :board_read_auth`).
+  Default **false** — local Mix and the zero-key demo stay open.
+  """
+  def board_read_auth_enabled? do
+    Application.get_env(:svarm, :board_read_auth, false) == true
+  end
+
+  @doc """
+  Whether a board/dashboard **read** may proceed from session proof.
+
+  - Flag off (default) → true
+  - Flag on + credentials + fresh `board_auth_at` → true
+  - Flag on + credentials + missing/stale stamp → false
+    (the HTTP plug may still allow a request that carries a valid
+    `Authorization` header; LiveView sockets have no header)
+  - Flag on + no credentials → false (fail closed)
+  """
+  def board_read_authorized?(session) when is_map(session) do
+    cond do
+      not board_read_auth_enabled?() ->
+        true
+
+      not credentials_configured?() ->
+        false
+
+      true ->
+        board_auth_at_fresh?(session_board_auth_at(session))
+    end
+  end
+
+  def board_read_authorized?(_), do: not board_read_auth_enabled?()
 end

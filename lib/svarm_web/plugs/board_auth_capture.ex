@@ -2,8 +2,9 @@ defmodule SvarmWeb.Plugs.BoardAuthCapture do
   @moduledoc """
   Captures Basic Auth proof into the session for board LiveView mutations.
 
-  Does **not** challenge or block the request — board reads stay open when
-  `approvals_auth` is configured. High-trust LiveView events re-check
+  Does **not** challenge or block the request — board **reads** stay open
+  unless `:board_read_auth` is on (`SvarmWeb.Plugs.BoardReadAuth`).
+  High-trust LiveView events re-check
   `session["board_auth_at"]` freshness via `ApprovalsAuth.board_mutation_authorized?/1`
   and wall-clock TTL on each mutation.
 

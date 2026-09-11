@@ -57,10 +57,11 @@ cp .env.example .env
 |----------|----------|--------|
 | `SECRET_KEY_BASE` | **Yes** | `openssl rand -base64 48` |
 | `APPROVALS_USER` / `APPROVALS_PASSWORD` | **Yes** for Docker/prod (UI + board mutations) | Strong unique pair in `.env` (`.env.example` leaves them empty). **Demo** compose profile still defaults to `svarm`/`svarm` for the zero-key demo only. Without credentials, production high-trust board mutations (approve/reject/mark-done/answer/steer/overage) fail closed |
+| `BOARD_READ_AUTH` | Optional, default **off** | Set `true` to require the same `APPROVALS_*` Basic Auth for `/board` and `/dashboard` reads (HTTP + LiveView). `/health` stays open. Requires `APPROVALS_USER` / `APPROVALS_PASSWORD` or reads fail closed. Local Mix and the demo profile leave this unset |
 | `GITHUB_TOKEN` | For GitHub tracker | Classic PAT with `repo` scope |
 | `OPENROUTER_API_KEY` | For real agents | From [openrouter.ai/keys](https://openrouter.ai/keys) |
 | `SVARM_BASE_URL` | Optional | Public board origin (e.g. `http://localhost:4000`). Used for GitHub comment console links **only** when the opt-in below is on |
-| `SVARM_COMMENT_CONSOLE_LINKS` | Optional, default **off** | Set `true` to embed `/board?task=…&attach=1` in GitHub run comments. Board **reads** are unauthenticated — anyone who can read the issue can open the console. Leave unset on public repos (see [SECURITY.md](SECURITY.md)) |
+| `SVARM_COMMENT_CONSOLE_LINKS` | Optional, default **off** | Set `true` to embed `/board?task=…&attach=1` in GitHub run comments. While board reads are unauthenticated (default), anyone who can read the issue can open the console. Safer together with `BOARD_READ_AUTH=true`. Leave unset on public repos (see [SECURITY.md](SECURITY.md)) |
 | `PHX_SECURE_COOKIES` | For plain-HTTP local `app` only | Prod/compose **app** defaults Secure (`true`). On `http://localhost` with `--profile app`, set `PHX_SECURE_COOKIES=false` in `.env` so sessions work. Demo profile sets this for you. |
 
 Optional **GitHub App** (comments as `{slug}[bot]`): [docs/github-app.md](docs/github-app.md).
@@ -164,7 +165,7 @@ GitHub `list_eligible` / `list_issues` follow `Link` pages (`per_page: 100`, max
 | Review resume | GitHub **changes requested** is detected on poll (board chip). Optional re-dispatch on first request (see below). **Off by default.** |
 | Smoke-only off | Never leave `approval.mode: off` on a shared repo; do not leave `SVARM_DEMO_ROUTES` / `SVARM_SEED_DEMO` on production |
 | Base URL | Point `SVARM_BASE_URL` at the deployed host (needed only if you opt in to comment console links) |
-| Comment console links | **Off by default.** `SVARM_COMMENT_CONSOLE_LINKS=true` embeds `/board?task=…&attach=1` in GitHub run comments. Do not enable on a public repo while board reads are open ([SECURITY.md](SECURITY.md)) |
+| Comment console links | **Off by default.** `SVARM_COMMENT_CONSOLE_LINKS=true` embeds `/board?task=…&attach=1` in GitHub run comments. Do not enable on a public repo while board reads are open. Pair with `BOARD_READ_AUTH=true` if you need the link ([SECURITY.md](SECURITY.md)) |
 | HTTPS + host | Terminate TLS at a reverse proxy; set `PHX_HOST` to the public hostname (origin checks). Compose **app** leaves session cookies Secure by default; only set `PHX_SECURE_COOKIES=false` for plain-HTTP localhost. See [SECURITY.md](SECURITY.md) |
 | Workspace isolation | Optional: `workspace.isolation` `path` (default) or `worktree`. Not a container. Unknown values fail closed (see below). |
 
@@ -287,6 +288,7 @@ While a run is live (**CLI** or **PiRPC**), the console has **Abort**. That kill
 | `/approvals` 404 text about APPROVALS_* | Set `APPROVALS_USER` and `APPROVALS_PASSWORD` in `.env` |
 | Board approve/reject/mark-done/answer/steer/abort/overage blocked without auth flash | Production needs `APPROVALS_*`; sign in via `/approvals` then return to the board. Local Mix without credentials is open only when `dev_routes` is on. Sticky proof expires after 8h by default (`BOARD_AUTH_TTL_SECONDS`) — re-sign in if mid-session mutations start failing |
 | `/approvals` 401 | Wrong Basic Auth credentials |
+| `/board` or `/dashboard` 401 | `BOARD_READ_AUTH` is on — same `APPROVALS_*` pair as `/approvals` |
 | Nothing happens | `docker compose logs -f` (polling / eligibility) |
 | Tick never dispatches after a WORKFLOW edit | Invalid `workspace.isolation` (expected `path` or `worktree`) or invalid `tracker.status_labels` / `reverse_labels` fail closed; logs include the rejected value |
 | Stuck before agent runs | `/approvals` (default is untrusted). On GitHub the issue should have `status: pending-approval` and appear under **Needs approval** |

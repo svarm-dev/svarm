@@ -120,13 +120,14 @@ Docker mounts `./svarm-config/` as a directory. On first boot, missing files are
 |----------|---------|
 | `SECRET_KEY_BASE` | Cookie signing, required for Docker/prod (`openssl rand -base64 48`) |
 | `APPROVALS_USER` / `APPROVALS_PASSWORD` | Basic Auth for `/approvals` and `/setup`; gates board approve/reject/mark-done/answer/steer/overage. **Required in production** (fail closed when unset); local Mix may stay open via `dev_routes` (see [SECURITY.md](SECURITY.md)) |
+| `BOARD_READ_AUTH` | Opt-in Basic Auth for `/board` and `/dashboard` **reads** (same `APPROVALS_*` pair). Default **off**. `/health` stays open (see [SECURITY.md](SECURITY.md)) |
 | `BOARD_AUTH_TTL_SECONDS` | Optional TTL for sticky board mutation proof after Basic Auth (default `28800` = 8h; see [SECURITY.md](SECURITY.md)) |
 | `GITHUB_TOKEN` | PAT for GitHub Issues (`repo` scope) |
 | `OPENROUTER_API_KEY` | LLM access for agents — must also be listed in the agent `env` block in `agents.toml` |
 | `SVARM_BUDGET_MAX_USD_PER_TICKET` / `SVARM_BUDGET_MAX_USD_PER_DAY` | Optional USD caps (or WORKFLOW `budget.*`); block **new** spawns only |
 | `SVARM_BUDGET_MODE` | `hard` (default: skip spawn) or `hold` (park ticket for overage approval) |
 | `SVARM_BASE_URL` | Public board origin (e.g. `http://localhost:4000`); used for GitHub comment console links only when opted in |
-| `SVARM_COMMENT_CONSOLE_LINKS` | Opt-in `/board?task=…&attach=1` in GitHub run comments (default **off**; board reads are unauthenticated — see [SECURITY.md](SECURITY.md)) |
+| `SVARM_COMMENT_CONSOLE_LINKS` | Opt-in `/board?task=…&attach=1` in GitHub run comments (default **off**; board reads are unauthenticated unless `BOARD_READ_AUTH=true` — see [SECURITY.md](SECURITY.md)) |
 | `PHX_HOST` | Public hostname for URLs + LiveView origin checks (prod) |
 | `PHX_CHECK_ORIGIN` | Optional comma-separated origin allow-list (default: `//PHX_HOST`) |
 | `PHX_SECURE_COOKIES` | Session Secure flag (prod default `true`; local compose sets `false` for HTTP) |
