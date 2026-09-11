@@ -821,8 +821,9 @@ defmodule Svarm.Tracker.GitHub do
     ["| | |", "|---|---|" | rows] |> Enum.join("\n")
   end
 
-  # Board reads are unauthenticated. Only embed a console URL when the operator
-  # explicitly opts in — SVARM_BASE_URL alone is not enough (see SECURITY.md).
+  # Board reads are unauthenticated unless BOARD_READ_AUTH. Only embed a
+  # console URL when the operator explicitly opts in — SVARM_BASE_URL alone
+  # is not enough (see SECURITY.md).
   defp build_console_link(summary) do
     if comment_console_links_enabled?() do
       case Application.get_env(:svarm, :console_base_url) do

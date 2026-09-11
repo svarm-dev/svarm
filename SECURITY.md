@@ -41,7 +41,7 @@ Svärm is self-hosted. The operator controls:
 - **Approval gates**: `approval.mode: untrusted` holds tasks until a human approves (see sticky-approval note below)
 - **Workspace path isolation**: `Workspace.ensure/3` keeps per-ticket directories under a configured root (cwd + path-escape guard — not a chroot or container). Optional `workspace.isolation: worktree` uses `git worktree` for parallel working trees; that is still **not** OS/container sandboxing. Unknown `workspace.isolation` values fail closed (`{:error, :invalid_workspace_isolation}`) — they do not silently become `path`.
 - **Secrets in transit**: never appear in task metadata, PubSub messages, or issue comments
-- **GitHub run comments**: cost / harness / session rows may appear; **board/run-log URLs do not**, unless `SVARM_COMMENT_CONSOLE_LINKS=true` (default **off**). Board **reads** are unauthenticated — a `/board?task=…&attach=1` link in an issue comment is a capability URL for anyone who can read the issue (console, transcripts, costs, Q&A). `SVARM_BASE_URL` alone does not embed the link. Do not opt in on a public or loosely shared repo.
+- **GitHub run comments**: cost / harness / session rows may appear; **board/run-log URLs do not**, unless `SVARM_COMMENT_CONSOLE_LINKS=true` (default **off**). Board **reads** are unauthenticated **unless** `BOARD_READ_AUTH=true`. A `/board?task=…&attach=1` link in an issue comment is a capability URL while reads are open (console, transcripts, costs, Q&A). `SVARM_BASE_URL` alone does not embed the link. Do not opt in on a public or loosely shared repo.
 
 | `workspace.isolation` | What you get |
 |-----------------------|--------------|
@@ -61,7 +61,7 @@ While any of `seed_demo_on_boot`, `demo_routes`, or `dev_routes` is active, a pr
 |---------|------------|
 | `/approvals` | Basic Auth when `APPROVALS_USER` / `APPROVALS_PASSWORD` are set |
 | `/setup` | Same Basic Auth (or `dev_routes` in local Mix) |
-| `/board` LiveView **reads** | Open when the process is reachable (still firewall for real repos) |
+| `/board` / `/dashboard` LiveView **reads** | Open by default. Set `BOARD_READ_AUTH=true` to require the same `APPROVALS_*` Basic Auth (HTTP 401 + LiveView mount). `/` home and `/health` stay open. `/` still shows instance counts — not a ticket console |
 | `/board` approve / reject / mark done / answer / steer / abort / approve overage | Same `APPROVALS_*` credentials when configured; mutations fail closed without **fresh** proof. When credentials are **unset**: open only with local Mix `dev_routes`; **production / Docker fail closed** (no high-trust board mutations until credentials are set) |
 
 **Board mutation auth approach (TTL):** a successful Basic Auth request (e.g. `/approvals` or any browser request with a valid `Authorization` header) stamps `session["board_auth_at"]` (unix seconds). High-trust LiveView events (approve / reject / mark done / answer / steer / abort / approve overage) re-check that stamp against wall clock on **every** mutation — not only at mount. Within the TTL, follow-up requests need **no** Authorization header (practical sticky session). After the TTL elapses, mutations fail closed until the operator re-authenticates (visit `/approvals` or send Basic Auth again). Default TTL is **8 hours** (`config :svarm, :board_auth_ttl_seconds`); override with `BOARD_AUTH_TTL_SECONDS` (positive integer seconds). Browsers that re-send Basic Auth after a challenge refresh the stamp and work as before. Legacy boolean `board_auth_ok` is ignored — upgrade forces a fresh proof.
@@ -83,8 +83,8 @@ Mode (`SVARM_BUDGET_MODE` / WORKFLOW `budget.mode`): **`hard`** (default) skips 
 For team/production deployments:
 
 - **Required before exposing the port:** set strong `APPROVALS_USER` and `APPROVALS_PASSWORD` in `.env`. Without them, production **fails closed** on high-trust board mutations (approve / reject / mark done / answer / steer / abort / approve overage) and `/approvals` / `/setup` stay disabled. Set credentials before you open the UI to a network.
-- Bind or firewall the UI so only trusted operators reach the process (board **reads** are not Basic-Auth gated even when credentials are set)
-- Leave `SVARM_COMMENT_CONSOLE_LINKS` unset (default **off**) so GitHub run comments do not publish board/run-log URLs. Set `true` only if everyone who can read those issues is trusted to open the unauthenticated console
+- Bind or firewall the UI so only trusted operators reach the process. Board **reads** stay open unless `BOARD_READ_AUTH=true` (same `APPROVALS_*` pair; flag without credentials fails closed). Reverse-proxy SSO is a valid extra layer, not a substitute for app auth when you want the built-in gate.
+- Leave `SVARM_COMMENT_CONSOLE_LINKS` unset (default **off**) so GitHub run comments do not publish board/run-log URLs. Those links are capability URLs while reads are unauthenticated; they are safer only if `BOARD_READ_AUTH` is also on.
 - Use a real `SECRET_KEY_BASE` (not the auto-generated one)
 - Keep `approval.mode: untrusted` (the default)
 - Review agent commands and `env` keys in `agents.toml` before enabling (no silent full-env inheritance)

@@ -7,6 +7,7 @@ defmodule SvarmWeb.Plugs.ApprovalsAuthTest do
     prev_auth = Application.get_env(:svarm, :approvals_auth)
     prev_dev = Application.get_env(:svarm, :dev_routes)
     prev_ttl = Application.get_env(:svarm, :board_auth_ttl_seconds)
+    prev_read = Application.get_env(:svarm, :board_read_auth)
 
     on_exit(fn ->
       if prev_auth == nil,
@@ -18,6 +19,10 @@ defmodule SvarmWeb.Plugs.ApprovalsAuthTest do
       if prev_ttl == nil,
         do: Application.delete_env(:svarm, :board_auth_ttl_seconds),
         else: Application.put_env(:svarm, :board_auth_ttl_seconds, prev_ttl)
+
+      if prev_read == nil,
+        do: Application.delete_env(:svarm, :board_read_auth),
+        else: Application.put_env(:svarm, :board_read_auth, prev_read)
     end)
 
     :ok
@@ -153,6 +158,34 @@ defmodule SvarmWeb.Plugs.ApprovalsAuthTest do
     assert ApprovalsAuth.open_board_mutations_without_auth?()
     assert ApprovalsAuth.board_mutation_authorized?(%{})
     assert ApprovalsAuth.authorize_board_mutation?(nil)
+  end
+
+  test "board_read_authorized? is open when the flag is off" do
+    Application.put_env(:svarm, :board_read_auth, false)
+    Application.delete_env(:svarm, :approvals_auth)
+    refute ApprovalsAuth.board_read_auth_enabled?()
+    assert ApprovalsAuth.board_read_authorized?(%{})
+    assert ApprovalsAuth.board_read_authorized?(nil)
+  end
+
+  test "board_read_authorized? requires a fresh stamp when the flag is on" do
+    Application.put_env(:svarm, :board_read_auth, true)
+    Application.put_env(:svarm, :approvals_auth, %{username: "a", password: "b"})
+    now = System.system_time(:second)
+
+    refute ApprovalsAuth.board_read_authorized?(%{})
+    assert ApprovalsAuth.board_read_authorized?(%{"board_auth_at" => now})
+    refute ApprovalsAuth.board_read_authorized?(%{"board_auth_at" => now - 9 * 60 * 60})
+  end
+
+  test "board_read_authorized? fails closed when the flag is on without credentials" do
+    Application.put_env(:svarm, :board_read_auth, true)
+    Application.delete_env(:svarm, :approvals_auth)
+    Application.put_env(:svarm, :dev_routes, false)
+
+    assert ApprovalsAuth.board_read_auth_enabled?()
+    refute ApprovalsAuth.board_read_authorized?(%{"board_auth_at" => System.system_time(:second)})
+    refute ApprovalsAuth.board_read_authorized?(%{})
   end
 
   test "BoardAuthCapture stamps board_auth_at on valid Basic Auth", %{conn: conn} do

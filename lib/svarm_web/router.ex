@@ -28,8 +28,17 @@ defmodule SvarmWeb.Router do
     pipe_through :browser
 
     get "/", PageController, :home
-    live "/board", BoardLive, :index
-    live "/dashboard", DashboardLive, :index
+  end
+
+  # Board/dashboard reads: optional Basic Auth (`BOARD_READ_AUTH`). The
+  # `/live` websocket skips this plug — `BoardReadHook` covers mount.
+  scope "/", SvarmWeb do
+    pipe_through [:browser, SvarmWeb.Plugs.BoardReadAuth]
+
+    live_session :board_reads, on_mount: [{SvarmWeb.Live.BoardReadHook, :default}] do
+      live "/board", BoardLive, :index
+      live "/dashboard", DashboardLive, :index
+    end
   end
 
   scope "/", SvarmWeb do

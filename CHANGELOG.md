@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Optional board/dashboard read auth** ([#77](https://github.com/svarm-dev/svarm/issues/77)): `BOARD_READ_AUTH=true` requires the same `APPROVALS_*` Basic Auth for `/board` and `/dashboard` reads (HTTP 401 + LiveView mount). Default **off**. `/health` stays open. Flag without credentials fails closed.
+
 ### Fixed
 
 - **GitHub list pagination** ([#177](https://github.com/svarm-dev/svarm/issues/177)): `list_eligible/1` and `list_issues/2` follow `Link: rel=next` (`per_page: 100`, same page size as Checks/Reviews). Cap is **10 pages (1000 issues)** so a huge repo cannot stall the tick; later pages wait for a later poll. Page-1 eligibility is unchanged. Extra list GETs use the same REST rate budget as other poll reads (`get_issues/2` already batches #69; this is not GraphQL). Off-origin or non-collection `Link` targets are ignored.

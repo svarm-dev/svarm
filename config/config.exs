@@ -12,6 +12,9 @@ config :svarm,
   ecto_repos: [Svarm.Repo],
   # Sticky board Basic Auth proof TTL (seconds). Override with BOARD_AUTH_TTL_SECONDS.
   board_auth_ttl_seconds: 8 * 60 * 60,
+  # Opt-in Basic Auth for /board and /dashboard reads. Default off (local/demo).
+  # Override with BOARD_READ_AUTH=true; reuses APPROVALS_USER / APPROVALS_PASSWORD.
+  board_read_auth: false,
   # GitHub run comments omit board/run-log URLs unless SVARM_COMMENT_CONSOLE_LINKS=true.
   comment_console_links: false
 
