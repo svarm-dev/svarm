@@ -7,7 +7,7 @@ defmodule Svarm.Settings do
   file/env via `Svarm.Settings.Resolve`.
   """
 
-  alias Svarm.Provider.OpenRouter
+  alias Svarm.Provider
   alias Svarm.Settings.{Crypto, Resolve, Store}
   alias Svarm.Tracker
 
@@ -62,8 +62,12 @@ defmodule Svarm.Settings do
     end
   end
 
-  @doc "Save OpenRouter provider settings."
-  def put_provider(attrs) when is_map(attrs), do: put_section("provider.openrouter", attrs)
+  @doc "Save provider settings. Defaults to OpenRouter when id is omitted."
+  def put_provider(attrs) when is_map(attrs), do: put_provider("openrouter", attrs)
+
+  def put_provider(id, attrs) when is_binary(id) and is_map(attrs) do
+    put_section("provider.#{id}", attrs)
+  end
 
   @doc "Save tracker settings (local or GitHub PAT)."
   def put_tracker(attrs) when is_map(attrs), do: put_section("tracker", attrs)
@@ -106,34 +110,24 @@ defmodule Svarm.Settings do
   end
 
   def provider_key_in_settings? do
-    match?(key when is_binary(key) and key != "", get_secret("provider.openrouter", "api_key"))
+    Enum.any?(Provider.Resolve.advertised(), fn row ->
+      match?(key when is_binary(key) and key != "", get_secret("provider.#{row.id}", "api_key"))
+    end)
   end
 
   def default_model do
-    agents =
-      case get_section("agents") do
-        {:ok, m} -> m
-        :error -> %{}
-      end
+    default = default_agent_section()
 
-    case get_in(agents, ["default", "model"]) do
-      model when is_binary(model) and model != "" ->
-        model
-
-      _ ->
-        case get_section("provider.openrouter") do
-          {:ok, p} ->
-            p = stringify_keys(p)
-            blank_to_nil(p["default_model"])
-
-          :error ->
-            nil
-        end
+    case default["model"] do
+      model when is_binary(model) and model != "" -> model
+      _ -> stored_or_registry_model(default["provider"] || "openrouter")
     end
   end
 
   def provider_configured? do
-    match?(key when is_binary(key) and key != "", Resolve.openrouter_api_key())
+    Enum.any?(Provider.Resolve.advertised(), fn row ->
+      match?(key when is_binary(key) and key != "", Resolve.provider_api_key(row.id))
+    end)
   end
 
   def tracker_ready? do
@@ -154,15 +148,23 @@ defmodule Svarm.Settings do
   end
 
   @doc """
-  Smoke-test OpenRouter with current resolved key (Settings then env).
+  Smoke-test an advertised provider with the resolved key (Settings then env).
 
-  Returns `{:ok, %{count: n, models: [id, ...]}}` (models capped for UI chips)
-  or `{:error, reason}`.
+  Returns `{:ok, %{count: n, models: [id, ...], provider: id}}` (models capped
+  for UI chips) or `{:error, reason}`. Omitting `id` tests OpenRouter.
   """
-  def test_provider do
-    case OpenRouter.list_models([]) do
-      {:ok, models} when is_list(models) ->
-        {:ok, %{count: length(models), models: Enum.take(models, 12)}}
+  def test_provider, do: test_provider("openrouter")
+
+  def test_provider(id) when is_binary(id) do
+    case Provider.Resolve.resolve(id) do
+      {:ok, {mod, config}} ->
+        case mod.list_models(config: config) do
+          {:ok, models} when is_list(models) ->
+            {:ok, %{count: length(models), models: Enum.take(models, 12), provider: id}}
+
+          {:error, reason} ->
+            {:error, format_error(reason)}
+        end
 
       {:error, reason} ->
         {:error, format_error(reason)}
@@ -345,6 +347,30 @@ defmodule Svarm.Settings do
   defp blank_to_nil(nil), do: nil
   defp blank_to_nil(""), do: nil
   defp blank_to_nil(v), do: v
+
+  defp default_agent_section do
+    case get_section("agents") do
+      {:ok, agents} -> agents["default"] || %{}
+      :error -> %{}
+    end
+  end
+
+  defp stored_or_registry_model(provider_id) do
+    case get_section("provider.#{provider_id}") do
+      {:ok, p} ->
+        blank_to_nil(stringify_keys(p)["default_model"]) || registry_default_model(provider_id)
+
+      :error ->
+        registry_default_model(provider_id)
+    end
+  end
+
+  defp registry_default_model(id) do
+    case Provider.Resolve.entry(id) do
+      %{default_model: model} -> blank_to_nil(model)
+      _ -> nil
+    end
+  end
 
   defp present?(nil), do: false
   defp present?(""), do: false

@@ -69,6 +69,13 @@ defmodule Svarm.Provider.Resolve do
     end
   end
 
+  @doc "Operator-facing name for flash/UI copy."
+  def label("openrouter"), do: "OpenRouter"
+  def label("opencode-go"), do: "OpenCode Go"
+  def label("opencode"), do: "OpenCode Zen"
+  def label(%{id: id}), do: label(id)
+  def label(id) when is_binary(id), do: id
+
   defp requested_id(opts) do
     case Keyword.fetch(opts, :provider) do
       {:ok, id} when is_binary(id) and id != "" -> id

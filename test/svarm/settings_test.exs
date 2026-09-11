@@ -203,4 +203,42 @@ defmodule Svarm.SettingsTest do
     assert is_boolean(status.setup_complete?)
     assert is_integer(status.agent_count)
   end
+
+  test "provider_configured? is true when only OPENCODE_API_KEY is set" do
+    prev_or = System.get_env("OPENROUTER_API_KEY")
+    prev_oc = System.get_env("OPENCODE_API_KEY")
+    System.delete_env("OPENROUTER_API_KEY")
+    System.put_env("OPENCODE_API_KEY", "sk-oc-only")
+
+    on_exit(fn ->
+      restore_env("OPENROUTER_API_KEY", prev_or)
+      restore_env("OPENCODE_API_KEY", prev_oc)
+    end)
+
+    assert Settings.provider_configured?()
+  end
+
+  test "test_provider/1 names the selected adapter under HTTP stub" do
+    prev = System.get_env("OPENCODE_API_KEY")
+    System.put_env("OPENCODE_API_KEY", "sk-oc")
+
+    plug = fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.send_resp(200, Jason.encode!(%{"data" => [%{"id" => "glm-5.3-flash"}]}))
+    end
+
+    Application.put_env(:svarm, :provider_req_plug, plug)
+
+    on_exit(fn ->
+      Application.delete_env(:svarm, :provider_req_plug)
+      restore_env("OPENCODE_API_KEY", prev)
+    end)
+
+    assert {:ok, %{count: 1, models: ["glm-5.3-flash"], provider: "opencode-go"}} =
+             Settings.test_provider("opencode-go")
+  end
+
+  defp restore_env(name, nil), do: System.delete_env(name)
+  defp restore_env(name, val), do: System.put_env(name, val)
 end
