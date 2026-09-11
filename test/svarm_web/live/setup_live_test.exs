@@ -11,6 +11,12 @@ defmodule SvarmWeb.SetupLiveTest do
       Store.delete("provider.opencode")
       Store.delete("tracker")
       Store.delete("agents")
+
+      # Apply reloads the live orchestrator; drop Settings overlays so later
+      # BoardLive tests still see agents.toml (Pi RPC default).
+      if Process.whereis(Svarm.Orchestrator) do
+        _ = Svarm.Orchestrator.reload_config()
+      end
     end
 
     cleanup.()
