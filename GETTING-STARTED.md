@@ -59,7 +59,8 @@ cp .env.example .env
 | `APPROVALS_USER` / `APPROVALS_PASSWORD` | **Yes** for Docker/prod (UI + board mutations) | Strong unique pair in `.env` (`.env.example` leaves them empty). **Demo** compose profile still defaults to `svarm`/`svarm` for the zero-key demo only. Without credentials, production high-trust board mutations (approve/reject/mark-done/answer/steer/overage) fail closed |
 | `BOARD_READ_AUTH` | Optional, default **off** | Set `true` to require the same `APPROVALS_*` Basic Auth for `/board` and `/dashboard` reads (HTTP + LiveView). `/health` stays open. Requires `APPROVALS_USER` / `APPROVALS_PASSWORD` or reads fail closed. Local Mix and the demo profile leave this unset |
 | `GITHUB_TOKEN` | For GitHub tracker | Classic PAT with `repo` scope |
-| `OPENROUTER_API_KEY` | For real agents | From [openrouter.ai/keys](https://openrouter.ai/keys) |
+| `OPENROUTER_API_KEY` | For real agents (default) | From [openrouter.ai/keys](https://openrouter.ai/keys). List it in the agent `env` block — empty `env` does not inherit the host |
+| `OPENCODE_API_KEY` | Optional; required only if an agent uses OpenCode | Shared by **Go** (subscription, `https://opencode.ai/zen/go/v1`) and **Zen** (pay-per-use, `https://opencode.ai/zen/v1`). List it in the agent `env` block — empty `env` does not inherit the host. In-app Decompose and `/setup` stay OpenRouter-only. See [docs/agents.md](docs/agents.md) |
 | `SVARM_BASE_URL` | Optional | Public board origin (e.g. `http://localhost:4000`). Used for GitHub comment console links **only** when the opt-in below is on |
 | `SVARM_COMMENT_CONSOLE_LINKS` | Optional, default **off** | Set `true` to embed `/board?task=…&attach=1` in GitHub run comments. While board reads are unauthenticated (default), anyone who can read the issue can open the console. Safer together with `BOARD_READ_AUTH=true`. Leave unset on public repos (see [SECURITY.md](SECURITY.md)) |
 | `PHX_SECURE_COOKIES` | For plain-HTTP local `app` only | Prod/compose **app** defaults Secure (`true`). On `http://localhost` with `--profile app`, set `PHX_SECURE_COOKIES=false` in `.env` so sessions work. Demo profile sets this for you. |
@@ -296,7 +297,8 @@ While a run is live (**CLI** or **PiRPC**), the console has **Abort**. That kill
 | No eligible issues | Issue has `ai-task`; `required_labels` matches; unassigned or assignee in `tracker.agent_assignees` (human assignees are shown on the board but not dispatched) |
 | Missing GitHub tickets past ~1000 listed issues | Lists stop after 10 pages (1000 issues). Raise the cap only in code; there is no WORKFLOW knob |
 | pi not found (local) | `which pi`; Docker image includes pi |
-| OpenRouter errors | `OPENROUTER_API_KEY` set |
+| OpenRouter errors | `OPENROUTER_API_KEY` set and listed in the agent `env` block |
+| OpenCode errors | `OPENCODE_API_KEY` set and listed in the agent `env` block (Go or Zen) |
 | Empty board | Demo (`--profile demo`) or Seed demo; the real tracker loop needs a labeled issue. A GitHub API error (401/403/rate-limit) shows **Cannot load GitHub issues**, not a silent empty board |
 | `mix svarm.demo` ≠ `/board` | Expected: Mix task uses a temp DB. Use Seed demo on the running server |
 | Sessions / approvals sticky auth fail on local HTTP `app` | Set `PHX_SECURE_COOKIES=false` in `.env` (Secure cookies need HTTPS; demo profile sets this already) |

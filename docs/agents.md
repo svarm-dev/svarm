@@ -18,6 +18,33 @@ model = "openrouter/free"
 env = { GITHUB_TOKEN = "$GITHUB_TOKEN", OPENROUTER_API_KEY = "$OPENROUTER_API_KEY" }
 ```
 
+## pi + OpenCode Go
+
+Dispatched **pi RPC** runs can use OpenCode when `provider` is set and `OPENCODE_API_KEY` is listed in `env`. Empty `env` does **not** inherit the host. In-app Decompose and `/setup` stay OpenRouter-only.
+
+**Go** is a subscription (`https://opencode.ai/zen/go/v1`). Use a current **chat/completions** model id (not Anthropic `/messages`, not Responses-only). Model ids churn — check [OpenCode Go](https://opencode.ai/docs/go/).
+
+```toml
+[agent.opencode_go]
+name = "Pi (OpenCode Go)"
+role = "Backend"
+command = "pi"
+adapter = "pi_rpc"
+provider = "opencode-go"
+model = "glm-5.3-flash"
+env = { GITHUB_TOKEN = "$GITHUB_TOKEN", OPENCODE_API_KEY = "$OPENCODE_API_KEY" }
+```
+
+### Zen variant
+
+**Zen** is pay-per-use (`https://opencode.ai/zen/v1`). Same `OPENCODE_API_KEY`; provider id is `opencode`. The catalog differs from Go — pick a Zen **chat/completions** id.
+
+```toml
+provider = "opencode"
+model = "kimi-k2.6"
+env = { GITHUB_TOKEN = "$GITHUB_TOKEN", OPENCODE_API_KEY = "$OPENCODE_API_KEY" }
+```
+
 ## Claude Code (CLI)
 
 ```toml
@@ -64,7 +91,7 @@ Trusted under default `approval.mode: untrusted`. Used by Seed demo / `SVARM_SEE
 | `adapter` | `pi_rpc` or `cli` |
 | `provider` / `model` | LLM routing for adapters that use them |
 | `args` | CLI only |
-| `env` | Extra env for the child Port; `$VAR` expands from the **host** process. Empty/absent `env` does **not** inherit the full host environment — only PATH/HOME/locale/temp/shell plus listed keys. Put API keys here explicitly (e.g. `OPENROUTER_API_KEY = "$OPENROUTER_API_KEY"`). |
+| `env` | Extra env for the child Port; `$VAR` expands from the **host** process. Empty/absent `env` does **not** inherit the full host environment — only PATH/HOME/locale/temp/shell plus listed keys. Put API keys here explicitly (e.g. `OPENROUTER_API_KEY = "$OPENROUTER_API_KEY"` or `OPENCODE_API_KEY = "$OPENCODE_API_KEY"`). |
 | `skills` | Optional list of **paths** to skill packs (see below). Omitted or empty means no packs. |
 | `tools` | Optional list of **host executable names** expected on PATH (e.g. `mix`, `node`, `gh`). Omitted or empty means no extra tools required. **Not an installer** — Svärm only checks PATH. |
 | `tools_mode` | `fail` (default) or `warn`. What to do when a declared tool is missing (see below). |

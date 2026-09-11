@@ -7,7 +7,7 @@
 #   avatar       — emoji or short label for the agent badge (optional)
 #   command      — executable (required)
 #   adapter      — runner adapter: pi_rpc (v1), cli (fallback)
-#   provider     — LLM provider: openrouter
+#   provider     — LLM provider: openrouter (default), opencode-go, opencode
 #   model        — model ID, e.g. "openrouter/free" (free), "claude-sonnet-4-20250514" (paid)
 #   env          — extra environment variables (optional)
 #   args         — CLI arguments (only used by cli adapter)
@@ -40,6 +40,21 @@ env = { GITHUB_TOKEN = "$GITHUB_TOKEN", OPENROUTER_API_KEY = "$OPENROUTER_API_KE
 # Example host-tool contract (checked on PATH before spawn; default mode fail):
 # tools = ["mix", "gh"]
 # tools_mode = "fail"
+
+# Optional: pi RPC via OpenCode Go (subscription, https://opencode.ai/zen/go/v1).
+# Same OPENCODE_API_KEY for Zen (provider = "opencode", https://opencode.ai/zen/v1).
+# List the key in env — empty env does not inherit the host. Use a chat/completions
+# model id (e.g. glm-5.3-flash). In-app Decompose / /setup stay OpenRouter-only.
+# See docs/agents.md. Do not uncomment this in place of [agent.default] unless you
+# intend to switch the live default off OpenRouter.
+# [agent.opencode_go]
+# name = "Pi (OpenCode Go)"
+# role = "Backend"
+# command = "pi"
+# adapter = "pi_rpc"
+# provider = "opencode-go"
+# model = "glm-5.3-flash"
+# env = { GITHUB_TOKEN = "$GITHUB_TOKEN", OPENCODE_API_KEY = "$OPENCODE_API_KEY" }
 
 # CLI fallback (uncomment if pi RPC isn't available):
 # [agent.fallback]
