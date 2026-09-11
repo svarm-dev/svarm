@@ -266,8 +266,6 @@ defmodule Svarm.Runner.Cli do
     |> Enum.find_value(%{}, &decode_usage_line/1)
   end
 
-  defp parse_cli_usage(_), do: %{}
-
   defp decode_usage_line(line) do
     case Jason.decode(String.trim(line)) do
       {:ok, %{"usage" => u}} when is_map(u) -> usage_from_map(u)
