@@ -55,6 +55,9 @@ defmodule Svarm.Usage.Rates do
       prompt: 1.75,
       completion: 14.0
     }
+
+    # OpenCode Go/Zen: no invented USD. Prefer API `usage.cost` as
+    # provider_cost_usd; otherwise Query labels the row estimated.
   }
 
   @doc """

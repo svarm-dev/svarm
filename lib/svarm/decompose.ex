@@ -15,11 +15,11 @@ defmodule Svarm.Decompose do
     if Keyword.get(opts, :mock, false) do
       {:ok, %{tasks: mock_tasks(goal, research), goal: goal}}
     else
-      llm_run(goal, research)
+      llm_run(goal, research, opts)
     end
   end
 
-  defp llm_run(goal, research) do
+  defp llm_run(goal, research, opts) do
     prompt = """
     Goal: #{goal}
 
@@ -43,29 +43,31 @@ defmodule Svarm.Decompose do
     ]
     """
 
-    provider = resolve_provider()
-    model = provider.default_model()
+    case resolve_provider(opts) do
+      {:ok, {provider, config}} ->
+        model = Keyword.get(opts, :model) || config.default_model
+        complete_opts = [config: config] ++ Keyword.take(opts, [:plug, :max_tokens])
 
-    case provider.complete(model, [%{role: "user", content: prompt}]) do
-      {:ok, response, usage} ->
-        text = extract_text(response)
-        tasks = parse_tasks(text)
+        case provider.complete(model, [%{role: "user", content: prompt}], complete_opts) do
+          {:ok, response, usage} ->
+            text = extract_text(response)
+            tasks = parse_tasks(text)
+            record_decompose_usage(goal, model, usage)
+            {:ok, %{tasks: tasks, goal: goal}}
 
-        # Record decompose usage
-        record_decompose_usage(goal, model, usage)
-
-        {:ok, %{tasks: tasks, goal: goal}}
+          {:error, reason} ->
+            Logger.error("decompose: LLM call failed: #{inspect(reason)}")
+            {:error, reason}
+        end
 
       {:error, reason} ->
-        Logger.error("decompose: LLM call failed: #{inspect(reason)}")
+        Logger.error("decompose: provider resolve failed: #{inspect(reason)}")
         {:error, reason}
     end
   end
 
-  defp resolve_provider do
-    # Default to OpenRouter. When WORKFLOW.md specifies a different provider,
-    # resolve here.
-    Provider.OpenRouter
+  defp resolve_provider(opts) do
+    Provider.Resolve.adapter_and_config(opts)
   end
 
   defp extract_text(response) do
@@ -87,7 +89,8 @@ defmodule Svarm.Decompose do
       model_id: to_string(usage[:model] || model),
       prompt_tokens: usage[:prompt_tokens],
       completion_tokens: usage[:completion_tokens],
-      estimated: true
+      estimated: is_nil(usage[:provider_cost_usd]),
+      provider_cost_usd: usage[:provider_cost_usd]
     )
   end
 

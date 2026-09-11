@@ -20,7 +20,7 @@ env = { GITHUB_TOKEN = "$GITHUB_TOKEN", OPENROUTER_API_KEY = "$OPENROUTER_API_KE
 
 ## pi + OpenCode Go
 
-Dispatched **pi RPC** runs can use OpenCode when `provider` is set and `OPENCODE_API_KEY` is listed in `env`. Empty `env` does **not** inherit the host. In-app Decompose and `/setup` stay OpenRouter-only.
+Dispatched **pi RPC** runs can use OpenCode when `provider` is set and `OPENCODE_API_KEY` is listed in `env`. Empty `env` does **not** inherit the host. In-app Decompose uses the `providers.toml` registry (default OpenRouter; `opencode-go` / `opencode` resolve or fail closed). `/setup` stays OpenRouter-only until the setup key slice.
 
 **Go** is a subscription (`https://opencode.ai/zen/go/v1`). Use a current **chat/completions** model id (not Anthropic `/messages`, not Responses-only). Model ids churn — check [OpenCode Go](https://opencode.ai/docs/go/).
 

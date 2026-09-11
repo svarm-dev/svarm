@@ -7,6 +7,8 @@ defmodule Svarm.SettingsTest do
   setup do
     cleanup = fn ->
       Store.delete("provider.openrouter")
+      Store.delete("provider.opencode-go")
+      Store.delete("provider.opencode")
       Store.delete("tracker")
       Store.delete("agents")
       Store.delete("meta")
@@ -64,6 +66,28 @@ defmodule Svarm.SettingsTest do
 
     assert {:ok, _} = Settings.put_provider(%{"api_key" => "from-settings"})
     assert Resolve.openrouter_api_key() == "from-settings"
+  end
+
+  test "provider_api_key uses Settings secret then shared OPENCODE_API_KEY" do
+    prev = System.get_env("OPENCODE_API_KEY")
+    System.put_env("OPENCODE_API_KEY", "from-env")
+
+    on_exit(fn ->
+      if prev,
+        do: System.put_env("OPENCODE_API_KEY", prev),
+        else: System.delete_env("OPENCODE_API_KEY")
+    end)
+
+    assert Resolve.provider_api_key("opencode-go") == "from-env"
+    assert Resolve.provider_api_key("opencode") == "from-env"
+
+    assert {:ok, section} =
+             Settings.put_section("provider.opencode-go", %{"api_key" => "from-settings"})
+
+    refute Map.has_key?(section, "api_key")
+    assert section.api_key_set? == true
+    assert Settings.get_secret("provider.opencode-go", "api_key") == "from-settings"
+    assert Resolve.provider_api_key("opencode-go") == "from-settings"
   end
 
   test "tracker_overlay merges Settings onto base" do
