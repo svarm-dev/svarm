@@ -1,11 +1,12 @@
 defmodule Svarm.Runner.CliTest do
   use ExUnit.Case, async: false
 
-  alias Svarm.{AgentRunner, Events, Issue, KanbanBridge, Orchestrator}
+  alias Svarm.{AgentRunner, Events, Issue, KanbanBridge, Orchestrator, Usage}
   alias Svarm.Runner.Cli
   alias Svarm.Test.OsPid
 
   @fake Path.expand("../../support/fake_cli_agent.sh", __DIR__)
+  @fake_grok Path.expand("../../support/fake_grok.sh", __DIR__)
   @demo_script Path.join(:code.priv_dir(:svarm), "demo_agent.sh")
 
   defmodule StubTracker do
@@ -114,6 +115,11 @@ defmodule Svarm.Runner.CliTest do
     log_path = Path.join([root, id, "run.log"])
     assert File.exists?(log_path)
     assert File.read!(log_path) =~ "fake-cli: ok"
+
+    [rec] = Usage.for_task(id)
+    assert rec.estimated == true
+    assert rec.prompt_tokens == nil
+    assert rec.provider_cost_usd == nil
   end
 
   test "non-zero exit → error and failed status", %{
@@ -266,6 +272,54 @@ defmodule Svarm.Runner.CliTest do
 
     assert Cli.resolve!("demo_code", from_cli).args ==
              AgentRunner.resolve!("demo_code", from_facade).args
+  end
+
+  test "Grok Build stub: console output, review, parsed tokens estimated", %{
+    workspace_root: root,
+    statuses: statuses
+  } do
+    id = "sva_cli_grok"
+
+    cfg = %{
+      command: "sh",
+      args: [
+        @fake_grok,
+        "--no-auto-update",
+        "--always-approve",
+        "--output-format",
+        "plain",
+        "-p"
+      ],
+      env: %{},
+      display_name: "Grok Build",
+      adapter: "cli",
+      provider: "xai",
+      model: "grok-build"
+    }
+
+    assert File.regular?(@fake_grok)
+    assert Bitwise.band(File.stat!(@fake_grok).mode, 0o111) != 0
+    assert :ok = Cli.run(task(id, "grok"), cfg, run_opts(root, statuses))
+    assert last_status(statuses, id) == "review"
+    assert_agent_line(id, "grok-build: headless ok")
+
+    [rec] = Usage.for_task(id)
+    assert rec.provider == "xai"
+    assert rec.model_id == "grok-build"
+    assert rec.prompt_tokens == 12
+    assert rec.completion_tokens == 8
+    assert rec.estimated == true
+    assert rec.provider_cost_usd == nil
+  end
+
+  test "agents.toml documents the Grok Build CLI profile" do
+    toml = File.read!(Path.join(:code.priv_dir(:svarm), "agents.toml"))
+    assert toml =~ ~s([agent.grok])
+    assert toml =~ ~s(command = "grok")
+    assert toml =~ ~s(adapter = "cli")
+    assert toml =~ "XAI_API_KEY"
+    assert toml =~ "--no-auto-update"
+    assert toml =~ "--always-approve"
   end
 
   @sample_pack Path.expand("../../fixtures/skill_packs/sample", __DIR__)

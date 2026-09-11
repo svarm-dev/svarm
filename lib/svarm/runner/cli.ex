@@ -105,7 +105,7 @@ defmodule Svarm.Runner.Cli do
     status = if exit_code == 0, do: "review", else: "failed"
     tracker.update_status(tracker_config, task.id, status)
 
-    record_usage(task, assignee, agent_config, opts)
+    record_usage(task, assignee, agent_config, opts, out)
 
     if exit_code == 0 do
       :ok
@@ -240,8 +240,9 @@ defmodule Svarm.Runner.Cli do
     end)
   end
 
-  defp record_usage(task, assignee, agent_config, opts) do
+  defp record_usage(task, assignee, agent_config, opts, out) do
     run_id = opts[:run_id] || default_run_id()
+    parsed = parse_cli_usage(out)
 
     Svarm.Usage.append(
       run_id: run_id,
@@ -250,10 +251,37 @@ defmodule Svarm.Runner.Cli do
       source: "worker",
       provider: agent_config[:provider] || "cli",
       model_id: agent_config[:model] || assignee,
-      prompt_tokens: nil,
-      completion_tokens: nil,
-      estimated: true
+      prompt_tokens: parsed[:prompt_tokens],
+      completion_tokens: parsed[:completion_tokens],
+      estimated: is_nil(parsed[:provider_cost_usd]),
+      provider_cost_usd: parsed[:provider_cost_usd]
     )
+  end
+
+  # Token/cost lines the harness printed (JSON object per line). Missing → estimated.
+  defp parse_cli_usage(out) when is_binary(out) do
+    out
+    |> String.split("\n")
+    |> Enum.reverse()
+    |> Enum.find_value(%{}, &decode_usage_line/1)
+  end
+
+  defp parse_cli_usage(_), do: %{}
+
+  defp decode_usage_line(line) do
+    case Jason.decode(String.trim(line)) do
+      {:ok, %{"usage" => u}} when is_map(u) -> usage_from_map(u)
+      {:ok, %{"prompt_tokens" => _} = u} -> usage_from_map(u)
+      _ -> nil
+    end
+  end
+
+  defp usage_from_map(u) do
+    %{
+      prompt_tokens: u["prompt_tokens"] || u["input_tokens"] || u["input"],
+      completion_tokens: u["completion_tokens"] || u["output_tokens"] || u["output"],
+      provider_cost_usd: u["cost"] || u["total_cost"]
+    }
   end
 
   defp default_run_id, do: "run_" <> Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)

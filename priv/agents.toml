@@ -56,6 +56,22 @@ env = { GITHUB_TOKEN = "$GITHUB_TOKEN", OPENROUTER_API_KEY = "$OPENROUTER_API_KE
 # model = "glm-5.3-flash"
 # env = { GITHUB_TOKEN = "$GITHUB_TOKEN", OPENCODE_API_KEY = "$OPENCODE_API_KEY" }
 
+# Second first-class harness: Grok Build (xAI CLI) via adapter = "cli".
+# Install: curl -fsSL https://x.ai/cli/install.sh | bash
+# Headless auth: XAI_API_KEY (no browser). Do not log the key.
+# Does not replace [agent.default] (pi RPC). See docs/agents.md.
+# [agent.grok]
+# name = "Grok Build"
+# role = "Implementation"
+# command = "grok"
+# adapter = "cli"
+# provider = "xai"
+# model = "grok-build"
+# args = ["--no-auto-update", "--always-approve", "--output-format", "plain", "-p"]
+# env = { GITHUB_TOKEN = "$GITHUB_TOKEN", XAI_API_KEY = "$XAI_API_KEY" }
+# tools = ["grok", "gh"]
+# tools_mode = "fail"
+
 # CLI fallback (uncomment if pi RPC isn't available):
 # [agent.fallback]
 # name = "Fallback"
