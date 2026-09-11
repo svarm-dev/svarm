@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Setup provider switch drops leftover API key**: changing the advertised provider clears the shared password field (and remounts the input) so Apply cannot store the previous key under `provider.<id>` or rewrite the default agent.
 - **GitHub list pagination** ([#177](https://github.com/svarm-dev/svarm/issues/177)): `list_eligible/1` and `list_issues/2` follow `Link: rel=next` (`per_page: 100`, same page size as Checks/Reviews). Cap is **10 pages (1000 issues)** so a huge repo cannot stall the tick; later pages wait for a later poll. Page-1 eligibility is unchanged. Extra list GETs use the same REST rate budget as other poll reads (`get_issues/2` already batches #69; this is not GraphQL). Off-origin or non-collection `Link` targets are ignored.
 - **GitHub skip human assignees** ([#185](https://github.com/svarm-dev/svarm/issues/185)): dispatch no longer claims issues assigned to people. Unassigned stays eligible; a login listed in WORKFLOW `tracker.agent_assignees` (case-insensitive GitHub login, not `agents.toml` / `trusted_assignees`) stays eligible. Human-owned labeled issues still show on the board.
 

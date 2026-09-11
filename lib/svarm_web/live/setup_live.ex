@@ -197,10 +197,13 @@ defmodule SvarmWeb.SetupLive do
               </select>
             </label>
 
-            <label class="form-control w-full gap-1" for="setup-provider-api-key">
+            <label
+              class="form-control w-full gap-1"
+              for={"setup-provider-api-key-#{@form["provider_id"]}"}
+            >
               <span class="label-text text-xs text-base-content/55">API key</span>
               <input
-                id="setup-provider-api-key"
+                id={"setup-provider-api-key-#{@form["provider_id"]}"}
                 type="password"
                 name="setup[provider_api_key]"
                 class="input input-bordered input-sm w-full font-mono"
@@ -668,10 +671,16 @@ defmodule SvarmWeb.SetupLive do
     Map.put(form, "agent_provider", id)
   end
 
-  defp sync_provider_selection(%{"provider_id" => id} = form, _prev) do
+  defp sync_provider_selection(%{"provider_id" => id} = form, prev) do
+    # Drop a leftover password from the previous row. A different key in the
+    # same payload is a new secret for the selected provider — keep it.
+    key = form["provider_api_key"]
+    keep? = present?(key) and key != prev["provider_api_key"]
+
     form
     |> Map.put("agent_provider", id)
     |> Map.put("agent_model", provider_default_model(id))
+    |> Map.put("provider_api_key", if(keep?, do: key, else: ""))
   end
 
   defp load_default_agent do

@@ -326,6 +326,72 @@ defmodule SvarmWeb.SetupLiveTest do
     refute html =~ ~s(phx-value-model="glm-5.3-flash")
   end
 
+  test "switching provider drops leftover API key from the form", %{conn: conn} do
+    prev_or = System.get_env("OPENROUTER_API_KEY")
+    prev_oc = System.get_env("OPENCODE_API_KEY")
+    System.delete_env("OPENROUTER_API_KEY")
+    System.delete_env("OPENCODE_API_KEY")
+
+    on_exit(fn ->
+      if prev_or,
+        do: System.put_env("OPENROUTER_API_KEY", prev_or),
+        else: System.delete_env("OPENROUTER_API_KEY")
+
+      if prev_oc,
+        do: System.put_env("OPENCODE_API_KEY", prev_oc),
+        else: System.delete_env("OPENCODE_API_KEY")
+    end)
+
+    {:ok, view, _html} = live(conn, ~p"/setup")
+
+    view
+    |> element("#setup-form")
+    |> render_change(%{
+      "setup" => %{
+        "provider_id" => "openrouter",
+        "provider_api_key" => "sk-or-leftover",
+        "agent_model" => "openrouter/free",
+        "tracker_kind" => "local"
+      }
+    })
+
+    html =
+      view
+      |> element("#setup-form")
+      |> render_change(%{
+        "setup" => %{
+          "provider_id" => "opencode-go",
+          "provider_api_key" => "sk-or-leftover",
+          "agent_model" => "glm-5.3-flash",
+          "tracker_kind" => "local"
+        }
+      })
+
+    refute html =~ "sk-or-leftover"
+    assert html =~ ~s(id="setup-provider-api-key-opencode-go")
+
+    view
+    |> form("#setup-form",
+      setup: %{
+        provider_id: "opencode-go",
+        provider_api_key: "",
+        agent_model: "glm-5.3-flash",
+        tracker_kind: "local"
+      }
+    )
+    |> render_submit()
+
+    assert Settings.get_secret("provider.opencode-go", "api_key") in [nil, ""]
+
+    case Settings.get_section("agents") do
+      :error ->
+        :ok
+
+      {:ok, agents} ->
+        refute agents["default"]["provider"] == "opencode-go"
+    end
+  end
+
   test "OpenRouter path unchanged when selected", %{conn: conn} do
     {:ok, view, html} = live(conn, ~p"/setup")
     assert html =~ "OpenRouter"
