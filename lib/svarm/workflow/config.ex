@@ -23,7 +23,8 @@ defmodule Svarm.Workflow.Config do
       max_concurrent: get_int(config, ["agent", "max_concurrent_agents"], 3),
       max_retry_backoff_ms: get_int(config, ["agent", "max_retry_backoff_ms"], 300_000),
       stall_timeout_ms: get_int(config, ["agent", "stall_timeout_ms"], 2_700_000),
-      tracker_config: tracker_config(config)
+      tracker_config: tracker_config(config),
+      review_checklist: review_checklist(config)
     }
     |> Map.update!(:workspace_root, &expand_path/1)
   end
@@ -115,6 +116,77 @@ defmodule Svarm.Workflow.Config do
       _ -> nil
     end
   end
+
+  @review_checklist_default_labels %{"pr" => "PR", "ci" => "CI", "cost" => "Cost"}
+
+  @doc """
+  Optional `review.checklist` proof-of-work items (v1). Omitted or empty → `[]`.
+
+  Each item is a string id or `{id, label}`:
+
+  - Known ids (`pr`, `ci`, `cost`) get friendly default labels unless a label is given.
+  - Unknown / custom ids keep the given label (or the id itself) and evaluate
+    `:unknown` on the review evidence panel.
+  - Malformed entries (non-string/non-map, blank ids, non-string labels) are
+    **skipped** — they never fail `validate_workflow/1` or the poll loop.
+
+  Returns a list of `%{id: String.t(), label: String.t()}`.
+  """
+  def review_checklist(config) when is_map(config) do
+    case get_in_path(config, ["review", "checklist"]) do
+      list when is_list(list) -> Enum.flat_map(list, &parse_checklist_item/1)
+      _ -> []
+    end
+  end
+
+  def review_checklist(_), do: []
+
+  defp parse_checklist_item(id) when is_binary(id) do
+    case String.trim(id) do
+      "" ->
+        []
+
+      trimmed ->
+        [%{id: trimmed, label: Map.get(@review_checklist_default_labels, trimmed, trimmed)}]
+    end
+  end
+
+  defp parse_checklist_item(%{} = item) do
+    case checklist_field(item, "id", :id) |> normalize_checklist_string() do
+      nil ->
+        []
+
+      id ->
+        [%{id: id, label: checklist_item_label(item, id)}]
+    end
+  end
+
+  defp parse_checklist_item(_), do: []
+
+  defp checklist_item_label(item, id) do
+    default = Map.get(@review_checklist_default_labels, id, id)
+
+    case checklist_field(item, "label", :label) |> normalize_checklist_string() do
+      nil -> default
+      label -> label
+    end
+  end
+
+  # YAML decodes to string keys; callers (tests) may pass atom-keyed maps too.
+  defp checklist_field(map, string_key, atom_key) do
+    Map.get(map, string_key) || Map.get(map, atom_key)
+  end
+
+  defp normalize_checklist_string(nil), do: nil
+
+  defp normalize_checklist_string(s) when is_binary(s) do
+    case String.trim(s) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp normalize_checklist_string(_), do: nil
 
   @doc """
   Parses the tracker config from workflow front matter.

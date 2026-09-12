@@ -243,6 +243,28 @@ Env overrides:
 
 **Costs:** each resume is a new spawn — usage ledger and budget caps still apply. In-flight runs are not killed when a review asks for changes.
 
+### Review proof-of-work checklist (optional)
+
+Operators can name the proofs they care about in WORKFLOW front matter; the review **Evidence** panel then shows them as a checklist with `pass` / `fail` / `pending` / `unknown` / `na`, and the item labels are echoed into the agent prompt (informational). States come from existing signals only — `pr` from the PR URL, `ci` from the CI chip, `cost` from the cost receipt — so no new stream events or GitHub API calls are involved. It never gates merge, dispatch, or mark-done.
+
+```yaml
+# WORKFLOW.md front matter
+review:
+  checklist:
+    - pr
+    - ci
+    - {id: cost, label: Cost receipt}
+```
+
+| Item | Source | State |
+|------|--------|-------|
+| `pr` | PR URL (coordination / run log) | `pass` / `fail` |
+| `ci` | CI chip (`ci_conclusion`) | `pass` / `fail` / `pending` / `unknown` / `na` |
+| `cost` | Cost receipt (usage ledger) | `pass` / `fail` |
+| custom id | — | always `unknown` (label kept) |
+
+Omitted, empty, or malformed checklist entries change nothing: no checklist section is shown, and `validate_workflow/1` never fails on the checklist. See the commented example in `priv/workflow_template.md`.
+
 ---
 
 ## Agent asked a question

@@ -47,6 +47,17 @@ workspace:
   # isolation: path              # default — directory under root
   # isolation: worktree          # git worktree per ticket (requires git_repo)
   # git_repo: ~/src/my-app       # source repo for worktree mode
+# Optional review proof-of-work checklist (v1). Shown on the review Evidence
+# panel with pass / fail / pending / unknown / na, and echoed to the agent
+# prompt as item labels. Informational only — never gates merge or dispatch.
+# Items: string id or {id, label}. Known ids: pr (PR URL), ci (CI chip),
+# cost (cost receipt). Custom ids keep the given label and evaluate `unknown`;
+# malformed entries are skipped.
+# review:
+#   checklist:
+#     - pr
+#     - ci
+#     - {id: cost, label: Cost receipt}
 # Optional spend caps (unset = no stop). Mode hard skips spawn; hold parks for overage approval.
 # budget:
 #   max_usd_per_ticket: 5
