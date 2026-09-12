@@ -26,6 +26,12 @@ approval:
   trusted_assignees: ["default", "demo_research", "demo_docs"]
 workspace:
   root: ~/svarm_workspaces
+# Optional Review Station proof-of-work on Evidence (informational — does not gate merge).
+# review:
+#   checklist:
+#     - pr
+#     - ci
+#     - cost
 ---
 
 You are an autonomous engineer. Complete the task below on a new branch,

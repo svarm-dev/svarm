@@ -400,11 +400,13 @@ defmodule Svarm.Board do
     `"since created"`)
   - `:ci` — `%{state, summary, checked_at}` where `state` is
     `:pass | :fail | :pending | :unknown | :na` (local / no data → `:na`)
+  - `:checklist` — WORKFLOW `review.checklist` items with `:id`, `:label`,
+    `:state` (same chip states). Empty when the key is omitted
   """
   def review_evidence(task, meta \\ %{}, cost \\ nil) when is_map(task) do
     latest = latest_usage_hint(map_get(task, :id))
 
-    %{
+    evidence = %{
       pr_url: pr_url(task, meta),
       attempts: evidence_attempts(task, meta),
       agent: evidence_agent(task, meta),
@@ -413,7 +415,43 @@ defmodule Svarm.Board do
       age: evidence_age(task, latest),
       ci: evidence_ci(task)
     }
+
+    Map.put(evidence, :checklist, checklist_states(workflow_checklist(), evidence))
   end
+
+  @doc """
+  Evaluate WORKFLOW `review.checklist` items against an Evidence map.
+
+  Known ids: `pr` (URL → pass, else na), `ci` (CI chip state), `cost`
+  (receipt → pass, else na). Custom ids stay `:unknown`.
+  """
+  def checklist_states(items, evidence) when is_list(items) and is_map(evidence) do
+    Enum.map(items, fn item ->
+      id = Map.get(item, :id)
+      Map.put(item, :state, checklist_item_state(id, evidence))
+    end)
+  end
+
+  defp workflow_checklist do
+    Workflow.Store.get() |> WorkflowConfig.review_checklist()
+  end
+
+  defp checklist_item_state("pr", %{pr_url: url}) when is_binary(url) and url != "", do: :pass
+  defp checklist_item_state("pr", _), do: :na
+
+  defp checklist_item_state("ci", %{ci: %{state: state}})
+       when state in [:pass, :fail, :pending, :unknown, :na],
+       do: state
+
+  defp checklist_item_state("ci", _), do: :na
+
+  defp checklist_item_state("cost", %{cost: %{record_count: n}})
+       when is_integer(n) and n > 0,
+       do: :pass
+
+  defp checklist_item_state("cost", _), do: :na
+
+  defp checklist_item_state(_, _), do: :unknown
 
   @doc """
   Glanceable review-column signal: `:has_pr` | `:no_pr`.

@@ -365,4 +365,52 @@ defmodule Svarm.WorkflowTest do
       end
     end
   end
+
+  describe "Config.review_checklist/1" do
+    test "omitted, empty, or non-list is empty" do
+      assert Config.review_checklist(nil) == []
+      assert Config.review_checklist(%{}) == []
+      assert Config.review_checklist(%{"review" => %{}}) == []
+      assert Config.review_checklist(%{"review" => %{"checklist" => []}}) == []
+      assert Config.review_checklist(%{"review" => %{"checklist" => "pr"}}) == []
+    end
+
+    test "parses known string ids and map items" do
+      items =
+        Config.review_checklist(%{
+          "review" => %{
+            "checklist" => [
+              "pr",
+              "CI",
+              %{"id" => "cost"},
+              %{"id" => "docs", "label" => "Docs updated"},
+              "Docs updated"
+            ]
+          }
+        })
+
+      assert items == [
+               %{id: "pr", label: "Pull request"},
+               %{id: "ci", label: "CI"},
+               %{id: "cost", label: "Cost receipt"},
+               %{id: "docs", label: "Docs updated"},
+               %{id: "docs-updated", label: "Docs updated"}
+             ]
+    end
+
+    test "skips malformed entries and does not fail validate" do
+      wf = %Workflow{
+        config: %{
+          "review" => %{
+            "checklist" => [nil, 12, %{}, %{"label" => ""}, "", "pr"]
+          }
+        },
+        prompt_template: "Do {{issue.id}}",
+        path: "x"
+      }
+
+      assert Config.review_checklist(wf) == [%{id: "pr", label: "Pull request"}]
+      assert :ok = Config.validate_workflow(wf)
+    end
+  end
 end
