@@ -603,7 +603,7 @@ defmodule Svarm.Board do
   defp evidence_checklist(_, _), do: []
 
   defp checklist_id(item) do
-    case Map.get(item, :id) || Map.get(item, "id") do
+    case map_get(item, :id) do
       id when is_binary(id) ->
         case String.trim(id) do
           "" -> nil
@@ -616,7 +616,7 @@ defmodule Svarm.Board do
   end
 
   defp checklist_label(item, id) do
-    case Map.get(item, :label) || Map.get(item, "label") do
+    case map_get(item, :label) do
       label when is_binary(label) ->
         case String.trim(label) do
           "" -> id
