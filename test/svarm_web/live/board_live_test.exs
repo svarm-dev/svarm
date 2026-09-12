@@ -963,6 +963,8 @@ defmodule SvarmWeb.BoardLiveTest do
     assert html =~ "N/A"
     assert html =~ "Informational — merge on GitHub"
     assert html =~ "no PR"
+    refute html =~ "Proof of work"
+    refute html =~ ~s(data-testid="review-checklist")
   end
 
   test "review run panel links Open PR when meta has pr_url", %{conn: conn} do
@@ -1036,6 +1038,40 @@ defmodule SvarmWeb.BoardLiveTest do
     assert html =~ "Evidence"
     assert html =~ "CI failed: mix"
     assert html =~ ~s(data-ci="fail")
+  end
+
+  test "review Evidence shows WORKFLOW proof-of-work checklist when configured", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Checklist review",
+        status: "review",
+        assignee: "demo"
+      })
+
+    wf = %Svarm.Workflow{
+      config: %{"review" => %{"checklist" => ["pr", "ci", %{"id" => "docs", "label" => "Docs"}]}},
+      prompt_template: "Do {{issue.id}}",
+      path: "test.md"
+    }
+
+    previous = :sys.get_state(Svarm.Workflow.Store)
+    :sys.replace_state(Svarm.Workflow.Store, fn s -> %{s | workflow: wf} end)
+
+    try do
+      {:ok, view, _html} = live(conn, ~p"/board")
+      render_click(view, "select_task", %{"id" => task.id})
+      html = render(view)
+
+      assert html =~ "Evidence"
+      assert html =~ "Proof of work"
+      assert html =~ ~s(data-testid="review-checklist")
+      assert html =~ "Pull request"
+      assert html =~ "Docs"
+    after
+      :sys.replace_state(Svarm.Workflow.Store, fn _ -> previous end)
+    end
   end
 
   test "review column shows PR glance chip from coordination", %{conn: conn} do

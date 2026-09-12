@@ -116,6 +116,98 @@ defmodule Svarm.Workflow.Config do
     end
   end
 
+  @known_review_checks %{
+    "pr" => "Pull request",
+    "ci" => "CI",
+    "cost" => "Cost receipt"
+  }
+
+  @max_review_checks 16
+  @max_review_check_label 80
+
+  @doc """
+  Optional `review.checklist` from WORKFLOW front matter.
+
+  Each item is `%{id: id, label: label}`. Known ids: `pr`, `ci`, `cost`.
+  Omitted, empty, or non-list → `[]`. Malformed entries are skipped.
+  Does not fail `validate_workflow/1`.
+  """
+  def review_checklist(%Svarm.Workflow{config: config}), do: review_checklist(config)
+  def review_checklist(nil), do: []
+
+  def review_checklist(config) when is_map(config) do
+    case get_in_path(config, ["review", "checklist"]) do
+      list when is_list(list) ->
+        list
+        |> Enum.flat_map(&normalize_review_check/1)
+        |> Enum.take(@max_review_checks)
+
+      _ ->
+        []
+    end
+  end
+
+  def review_checklist(_), do: []
+
+  defp normalize_review_check(id) when is_binary(id) do
+    case review_check_string(id) do
+      nil ->
+        []
+
+      raw ->
+        slug = known_or_slug(raw)
+        label = Map.get(@known_review_checks, slug) || raw
+        finish_review_check(slug, label)
+    end
+  end
+
+  defp normalize_review_check(map) when is_map(map) do
+    raw_id = review_check_string(Map.get(map, "id") || Map.get(map, :id))
+    raw_label = review_check_string(Map.get(map, "label") || Map.get(map, :label))
+    id = (raw_id && known_or_slug(raw_id)) || (raw_label && slug_review_check(raw_label))
+    label = raw_label || Map.get(@known_review_checks, id) || raw_id
+    finish_review_check(id, label)
+  end
+
+  defp normalize_review_check(_), do: []
+
+  defp finish_review_check(id, label) when is_binary(id) and is_binary(label) do
+    [%{id: id, label: String.slice(label, 0, @max_review_check_label)}]
+  end
+
+  defp finish_review_check(_, _), do: []
+
+  defp review_check_string(s) when is_binary(s) do
+    case String.trim(s) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp review_check_string(_), do: nil
+
+  defp known_or_slug(id) do
+    down = String.downcase(id)
+
+    cond do
+      Map.has_key?(@known_review_checks, down) ->
+        down
+
+      true ->
+        slug_review_check(down)
+    end
+  end
+
+  defp slug_review_check(id) do
+    slug =
+      id
+      |> String.downcase()
+      |> String.replace(~r/[^a-z0-9]+/, "-")
+      |> String.trim("-")
+
+    if slug == "", do: nil, else: slug
+  end
+
   @doc """
   Parses the tracker config from workflow front matter.
   Returns a map with adapter-agnostic fields plus adapter-specific extras.

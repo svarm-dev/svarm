@@ -28,6 +28,7 @@ defmodule Svarm.BoardReviewEvidenceTest do
     assert evidence.age.label == "since created"
     assert is_integer(evidence.age.seconds)
     assert evidence.ci.state == :na
+    assert evidence.checklist == []
     assert Board.review_glance(card) == :no_pr
   end
 
@@ -163,5 +164,56 @@ defmodule Svarm.BoardReviewEvidenceTest do
     evidence = Board.review_evidence(card, %{}, Usage.task_cost_summary(task.id))
 
     assert evidence.model == "ledger/model"
+  end
+
+  test "checklist_states maps known ids from evidence and custom to unknown" do
+    items = [
+      %{id: "pr", label: "Pull request"},
+      %{id: "ci", label: "CI"},
+      %{id: "cost", label: "Cost receipt"},
+      %{id: "docs", label: "Docs updated"}
+    ]
+
+    empty = Board.checklist_states(items, %{pr_url: nil, ci: %{state: :na}, cost: nil})
+
+    assert Enum.map(empty, & &1.state) == [:na, :na, :na, :unknown]
+
+    filled =
+      Board.checklist_states(items, %{
+        pr_url: "https://github.com/example/repo/pull/1",
+        ci: %{state: :fail},
+        cost: %{record_count: 1, total_cost_usd: 0.1, estimated: true}
+      })
+
+    assert Enum.map(filled, & &1.state) == [:pass, :fail, :pass, :unknown]
+  end
+
+  test "review_evidence checklist follows WORKFLOW store" do
+    task =
+      KanbanBridge.create_task(%{
+        title: "Checklist evidence",
+        status: "review",
+        assignee: "demo"
+      })
+
+    card = Board.list_tasks() |> Enum.find(&(&1.id == task.id))
+    assert Board.review_evidence(card).checklist == []
+
+    wf = %Svarm.Workflow{
+      config: %{"review" => %{"checklist" => ["pr", "ci", %{"id" => "docs", "label" => "Docs"}]}},
+      prompt_template: "Do {{issue.id}}",
+      path: "test.md"
+    }
+
+    previous = :sys.get_state(Svarm.Workflow.Store)
+    :sys.replace_state(Svarm.Workflow.Store, fn s -> %{s | workflow: wf} end)
+
+    try do
+      evidence = Board.review_evidence(card)
+      assert Enum.map(evidence.checklist, & &1.id) == ["pr", "ci", "docs"]
+      assert Enum.map(evidence.checklist, & &1.state) == [:na, :na, :unknown]
+    after
+      :sys.replace_state(Svarm.Workflow.Store, fn _ -> previous end)
+    end
   end
 end
