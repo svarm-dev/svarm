@@ -427,7 +427,7 @@ defmodule Svarm.Board do
   """
   def checklist_states(items, evidence) when is_list(items) and is_map(evidence) do
     Enum.map(items, fn item ->
-      id = Map.get(item, :id) || Map.get(item, "id")
+      id = Map.get(item, :id)
       Map.put(item, :state, checklist_item_state(id, evidence))
     end)
   end

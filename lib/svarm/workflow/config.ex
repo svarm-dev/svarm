@@ -162,8 +162,8 @@ defmodule Svarm.Workflow.Config do
   end
 
   defp normalize_review_check(map) when is_map(map) do
-    raw_id = review_check_string(Map.get(map, "id") || Map.get(map, :id))
-    raw_label = review_check_string(Map.get(map, "label") || Map.get(map, :label))
+    raw_id = review_check_string(Map.get(map, "id"))
+    raw_label = review_check_string(Map.get(map, "label"))
     id = (raw_id && known_or_slug(raw_id)) || (raw_label && slug_review_check(raw_label))
     label = raw_label || Map.get(@known_review_checks, id) || raw_id
     finish_review_check(id, label)
@@ -189,12 +189,10 @@ defmodule Svarm.Workflow.Config do
   defp known_or_slug(id) do
     down = String.downcase(id)
 
-    cond do
-      Map.has_key?(@known_review_checks, down) ->
-        down
-
-      true ->
-        slug_review_check(down)
+    if Map.has_key?(@known_review_checks, down) do
+      down
+    else
+      slug_review_check(down)
     end
   end
 
