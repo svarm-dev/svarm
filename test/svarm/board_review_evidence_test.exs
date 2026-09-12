@@ -164,4 +164,130 @@ defmodule Svarm.BoardReviewEvidenceTest do
 
     assert evidence.model == "ledger/model"
   end
+
+  test "review_evidence checklist is empty when omitted (no panel section)" do
+    task =
+      KanbanBridge.create_task(%{
+        title: "No checklist",
+        status: "review",
+        assignee: "demo"
+      })
+
+    card = Board.list_tasks() |> Enum.find(&(&1.id == task.id))
+
+    assert Board.review_evidence(card, %{}, nil).checklist == []
+    assert Board.review_evidence(card, %{}, nil, []).checklist == []
+    assert Board.review_evidence(card, %{}, nil, nil).checklist == []
+  end
+
+  test "review_evidence checklist maps known ids to signals; custom id is unknown" do
+    task =
+      KanbanBridge.create_task(%{
+        title: "Checklist evidence",
+        status: "review",
+        assignee: "demo"
+      })
+
+    assert {:ok, _} =
+             Coordination.record_pr(task.id, "https://github.com/example/repo/pull/7", [])
+
+    assert {:ok, _} =
+             Coordination.upsert(task.id, %{
+               ci_last_conclusion: "passed",
+               ci_context_summary: "CI passed (2 checks)",
+               ci_checked_at: DateTime.utc_now() |> DateTime.truncate(:second)
+             })
+
+    Usage.append(
+      run_id: "run_checklist_1",
+      task_id: task.id,
+      source: "agent",
+      provider: "openrouter",
+      model_id: "checklist/model",
+      prompt_tokens: 1,
+      completion_tokens: 1,
+      estimated: true
+    )
+
+    card = Board.list_tasks() |> Enum.find(&(&1.id == task.id))
+    cost = Usage.task_cost_summary(task.id)
+
+    checklist = [
+      %{id: "pr", label: "PR"},
+      %{id: "ci", label: "CI"},
+      %{id: "cost", label: "Cost receipt"},
+      %{id: "docs", label: "Docs link"}
+    ]
+
+    evidence = Board.review_evidence(card, %{}, cost, checklist)
+
+    assert Enum.map(evidence.checklist, &{&1.id, &1.label, &1.state}) == [
+             {"pr", "PR", :pass},
+             {"ci", "CI", :pass},
+             {"cost", "Cost receipt", :pass},
+             {"docs", "Docs link", :unknown}
+           ]
+  end
+
+  test "review_evidence checklist fail/na states when signals absent" do
+    task =
+      KanbanBridge.create_task(%{
+        title: "Bare checklist",
+        status: "review",
+        assignee: "demo"
+      })
+
+    card = Board.list_tasks() |> Enum.find(&(&1.id == task.id))
+
+    checklist = [%{id: "pr"}, %{id: "ci"}, %{id: "cost"}]
+    evidence = Board.review_evidence(card, %{}, nil, checklist)
+
+    # No PR URL → fail; local board has no CI data → na (same as the chip);
+    # no cost receipt → fail.
+    assert Enum.map(evidence.checklist, &{&1.id, &1.state}) == [
+             {"pr", :fail},
+             {"ci", :na},
+             {"cost", :fail}
+           ]
+  end
+
+  test "review_evidence checklist reflects ci chip state variants" do
+    task =
+      KanbanBridge.create_task(%{
+        title: "CI variants",
+        status: "review",
+        assignee: "demo"
+      })
+
+    assert {:ok, _} = Coordination.upsert(task.id, %{ci_last_conclusion: "failed"})
+
+    card = Board.list_tasks() |> Enum.find(&(&1.id == task.id))
+
+    evidence = Board.review_evidence(card, %{}, nil, [%{id: "ci", label: "CI"}])
+    assert [%{state: :fail}] = evidence.checklist
+
+    assert {:ok, _} = Coordination.upsert(task.id, %{ci_last_conclusion: "in_progress"})
+    card = Board.list_tasks() |> Enum.find(&(&1.id == task.id))
+    assert [%{state: :pending}] = Board.review_evidence(card, %{}, nil, [%{id: "ci"}]).checklist
+  end
+
+  test "review_evidence drops malformed checklist entries" do
+    task =
+      KanbanBridge.create_task(%{
+        title: "Malformed checklist",
+        status: "review",
+        assignee: "demo"
+      })
+
+    card = Board.list_tasks() |> Enum.find(&(&1.id == task.id))
+
+    checklist = ["pr", 123, nil, %{}, %{id: ""}, %{id: 42}, %{label: "no id"}]
+    evidence = Board.review_evidence(card, %{}, nil, checklist)
+
+    assert Enum.map(evidence.checklist, & &1.id) == ["pr"]
+  end
+
+  test "Board.review_checklist/0 follows the current WORKFLOW (empty on template)" do
+    assert Board.review_checklist() == []
+  end
 end

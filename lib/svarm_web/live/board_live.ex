@@ -540,6 +540,7 @@ defmodule SvarmWeb.BoardLive do
               meta={Map.get(@run_meta, @selected_task_id, %{})}
               agents={@agents}
               cost={Map.get(@task_costs, @selected_task_id)}
+              checklist={Board.review_checklist()}
               running_started={@running_started}
               now_mono={@now_mono}
               focused={@console_focused?}

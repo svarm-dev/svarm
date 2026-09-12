@@ -400,11 +400,17 @@ defmodule Svarm.Board do
     `"since created"`)
   - `:ci` — `%{state, summary, checked_at}` where `state` is
     `:pass | :fail | :pending | :unknown | :na` (local / no data → `:na`)
+  - `:checklist` — list of `%{id, label, state}` review proof-of-work items
+    (from `review.checklist` in WORKFLOW; empty → the panel shows no section).
+    `state` is `:pass | :fail | :pending | :unknown | :na`, derived from the
+    existing signals above only: `pr` from the PR URL, `ci` from the CI chip,
+    `cost` from the receipt. Custom ids evaluate `:unknown`; malformed entries
+    are skipped.
   """
-  def review_evidence(task, meta \\ %{}, cost \\ nil) when is_map(task) do
+  def review_evidence(task, meta \\ %{}, cost \\ nil, checklist \\ []) when is_map(task) do
     latest = latest_usage_hint(map_get(task, :id))
 
-    %{
+    evidence = %{
       pr_url: pr_url(task, meta),
       attempts: evidence_attempts(task, meta),
       agent: evidence_agent(task, meta),
@@ -413,6 +419,21 @@ defmodule Svarm.Board do
       age: evidence_age(task, latest),
       ci: evidence_ci(task)
     }
+
+    Map.put(evidence, :checklist, evidence_checklist(checklist, evidence))
+  end
+
+  @doc """
+  Review proof-of-work checklist items from the current WORKFLOW front matter.
+
+  `[]` when omitted (the evidence panel renders no checklist section). Reads
+  the workflow store the same way `column_ids/0` does.
+  """
+  def review_checklist do
+    case Workflow.Store.get() do
+      %Workflow{} = wf -> WorkflowConfig.review_checklist(wf.config)
+      _ -> []
+    end
   end
 
   @doc """
@@ -552,6 +573,68 @@ defmodule Svarm.Board do
       summary: map_get(task, :ci_summary),
       checked_at: map_get(task, :ci_checked_at)
     }
+  end
+
+  # Maps the workflow checklist onto evidence states. Uses only the signals
+  # already computed above: `pr` from the URL, `ci` from the chip, `cost` from
+  # the receipt. Custom ids stay `:unknown`. Malformed entries are dropped.
+  defp evidence_checklist(checklist, evidence) when is_list(checklist) do
+    Enum.flat_map(checklist, fn
+      %{} = item ->
+        case checklist_id(item) do
+          nil ->
+            []
+
+          id ->
+            [%{id: id, label: checklist_label(item, id), state: checklist_state(id, evidence)}]
+        end
+
+      id when is_binary(id) ->
+        case String.trim(id) do
+          "" -> []
+          trimmed -> [%{id: trimmed, label: trimmed, state: checklist_state(trimmed, evidence)}]
+        end
+
+      _ ->
+        []
+    end)
+  end
+
+  defp evidence_checklist(_, _), do: []
+
+  defp checklist_id(item) do
+    case Map.get(item, :id) || Map.get(item, "id") do
+      id when is_binary(id) ->
+        case String.trim(id) do
+          "" -> nil
+          trimmed -> trimmed
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp checklist_label(item, id) do
+    case Map.get(item, :label) || Map.get(item, "label") do
+      label when is_binary(label) ->
+        case String.trim(label) do
+          "" -> id
+          trimmed -> trimmed
+        end
+
+      _ ->
+        id
+    end
+  end
+
+  defp checklist_state(id, evidence) do
+    case id do
+      "pr" -> if evidence.pr_url, do: :pass, else: :fail
+      "ci" -> evidence.ci.state
+      "cost" -> if evidence.cost, do: :pass, else: :fail
+      _ -> :unknown
+    end
   end
 
   defp evidence_age(task, latest) do

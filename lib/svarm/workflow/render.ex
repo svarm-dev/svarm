@@ -122,7 +122,8 @@ defmodule Svarm.Workflow.Render do
   `{{ci_feedback}}` and `{{review_feedback}}` are substituted when present.
   """
   def render_prompt(task, attempt) do
-    template = resolve_template()
+    workflow = Svarm.Workflow.Store.get()
+    template = resolve_template(workflow)
     ci = ci_feedback_for(task)
     review = review_feedback_for(task)
     {template, ci_mode} = place_ci_feedback(template, ci)
@@ -133,19 +134,38 @@ defmodule Svarm.Workflow.Render do
         {:ok,
          rendered
          |> maybe_append_block(ci, ci_mode)
-         |> maybe_append_block(review, review_mode)}
+         |> maybe_append_block(review, review_mode)
+         |> maybe_append_block(checklist_block(workflow), :append)}
 
       err ->
         err
     end
   end
 
-  defp resolve_template do
-    case Svarm.Workflow.Store.get() do
-      %Svarm.Workflow{prompt_template: t} when is_binary(t) and t != "" -> t
-      _ -> default_template()
+  defp resolve_template(%Svarm.Workflow{prompt_template: t}) when is_binary(t) and t != "",
+    do: t
+
+  defp resolve_template(_), do: default_template()
+
+  @doc """
+  Informational proof-of-work checklist block for a `WORKFLOW.md` (labels only).
+
+  `nil` when the workflow has no `review.checklist`. `render_prompt/2` appends
+  the labels after resume feedback; the checklist never gates dispatch, merge,
+  or mark-done, and introduces no new required placeholder.
+  """
+  def checklist_block(%Svarm.Workflow{config: config}) when is_map(config) do
+    case Svarm.Workflow.Config.review_checklist(config) do
+      [] ->
+        nil
+
+      items ->
+        labels = Enum.map_join(items, "\n", fn item -> "- " <> item.label end)
+        "## Proof-of-work checklist (informational)\n\n" <> labels <> "\n"
     end
   end
+
+  def checklist_block(_), do: nil
 
   defp place_ci_feedback(template, ci) do
     if String.contains?(template, "{{ci_feedback}}") do

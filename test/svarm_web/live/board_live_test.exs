@@ -900,6 +900,73 @@ defmodule SvarmWeb.BoardLiveTest do
     assert panel =~ "review-resume is enabled"
   end
 
+  test "review task without WORKFLOW checklist hides the checklist section", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "No checklist card",
+        status: "review",
+        assignee: "demo"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/board")
+    render_click(view, "select_task", %{"id" => task.id})
+    html = render(view)
+
+    assert html =~ "Awaiting human review"
+    assert html =~ "Evidence"
+    refute html =~ "review-checklist"
+    refute html =~ "Proof-of-work checklist"
+  end
+
+  test "review task with WORKFLOW review.checklist shows the proof-of-work checklist", %{
+    conn: conn
+  } do
+    KanbanBridge.delete_all_tasks()
+    original = :sys.get_state(Svarm.Workflow.Store)
+
+    :sys.replace_state(Svarm.Workflow.Store, fn state ->
+      %{state | workflow: checklist_workflow()}
+    end)
+
+    try do
+      task =
+        KanbanBridge.create_task(%{
+          title: "Checklist card",
+          status: "review",
+          assignee: "demo"
+        })
+
+      assert {:ok, _} =
+               Svarm.Coordination.record_pr(
+                 task.id,
+                 "https://github.com/example/repo/pull/21",
+                 []
+               )
+
+      assert {:ok, _} =
+               Svarm.Coordination.upsert(task.id, %{ci_last_conclusion: "passed"})
+
+      {:ok, view, _html} = live(conn, ~p"/board")
+      render_click(view, "select_task", %{"id" => task.id})
+      html = render(view)
+
+      assert html =~ "Proof-of-work checklist"
+      assert html =~ "data-testid=\"review-checklist\""
+      # pr → pass (URL present), ci → pass (chip), docs → unknown (custom id)
+      assert html =~ "PR"
+      assert html =~ "Docs link"
+      assert html =~ ~s(data-testid="checklist-state")
+      assert html =~ ~s(data-state="pass")
+      assert html =~ ~s(data-state="unknown")
+    after
+      :sys.replace_state(Svarm.Workflow.Store, fn state ->
+        %{state | workflow: original.workflow}
+      end)
+    end
+  end
+
   test "live review_decision PubSub flips the chip without a full refresh", %{conn: conn} do
     KanbanBridge.delete_all_tasks()
 
@@ -1536,6 +1603,25 @@ defmodule SvarmWeb.BoardLiveTest do
     end)
 
     original
+  end
+
+  # Temp WORKFLOW whose front matter configures review.checklist (pr, ci, and a
+  # custom docs item). Only the Store's `workflow` field is swapped; path and
+  # subscribers stay untouched.
+  defp checklist_workflow do
+    {:ok, base} =
+      Svarm.Workflow.load(Path.join(:code.priv_dir(:svarm), "workflow_template.md"))
+
+    config =
+      Map.put(base.config, "review", %{
+        "checklist" => [
+          "pr",
+          %{"id" => "ci", "label" => "CI"},
+          %{"id" => "docs", "label" => "Docs link"}
+        ]
+      })
+
+    %{base | config: config}
   end
 
   defp restore_orchestrator(original) do

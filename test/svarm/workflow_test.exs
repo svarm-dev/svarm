@@ -147,6 +147,89 @@ defmodule Svarm.WorkflowTest do
     end
   end
 
+  describe "Config.review_checklist/1" do
+    test "omitted, empty, or non-list are empty" do
+      assert Config.review_checklist(%{}) == []
+      assert Config.review_checklist(%{"review" => %{}}) == []
+      assert Config.review_checklist(%{"review" => %{"checklist" => "pr"}}) == []
+      assert Config.review_checklist(nil) == []
+    end
+
+    test "string ids get friendly default labels for known ids" do
+      items = Config.review_checklist(%{"review" => %{"checklist" => ["pr", "ci", "cost"]}})
+
+      assert items == [
+               %{id: "pr", label: "PR"},
+               %{id: "ci", label: "CI"},
+               %{id: "cost", label: "Cost"}
+             ]
+    end
+
+    test "{id, label} maps keep given labels" do
+      items =
+        Config.review_checklist(%{
+          "review" => %{"checklist" => [%{"id" => "pr", "label" => "Pull request"}]}
+        })
+
+      assert items == [%{id: "pr", label: "Pull request"}]
+    end
+
+    test "custom ids keep the given label (or the id itself)" do
+      items =
+        Config.review_checklist(%{
+          "review" => %{
+            "checklist" => [
+              "documentation",
+              %{"id" => "docs", "label" => "Docs link"},
+              %{id: "deploy", label: "Deploy"}
+            ]
+          }
+        })
+
+      assert items == [
+               %{id: "documentation", label: "documentation"},
+               %{id: "docs", label: "Docs link"},
+               %{id: "deploy", label: "Deploy"}
+             ]
+    end
+
+    test "malformed entries are skipped and never fail validation" do
+      config = %{
+        "review" => %{
+          "checklist" => [
+            "pr",
+            123,
+            nil,
+            %{},
+            %{"id" => ""},
+            %{"id" => 42},
+            %{"label" => "no id"},
+            # valid ids with blank / non-string labels fall back to defaults
+            %{"id" => "ci", "label" => "  "},
+            %{"id" => "cost", "label" => 99}
+          ]
+        }
+      }
+
+      assert Config.review_checklist(config) == [
+               %{id: "pr", label: "PR"},
+               %{id: "ci", label: "CI"},
+               %{id: "cost", label: "Cost"}
+             ]
+
+      wf = %Workflow{config: config, prompt_template: "Do {{issue.id}}", path: "x"}
+      assert :ok = Config.validate_workflow(wf)
+    end
+
+    test "from_map exposes review_checklist alongside typed getters" do
+      cfg = Config.from_map(%{})
+      assert cfg.review_checklist == []
+
+      cfg = Config.from_map(%{"review" => %{"checklist" => ["pr", "cost"]}})
+      assert Enum.map(cfg.review_checklist, & &1.id) == ["pr", "cost"]
+    end
+  end
+
   describe "Config.validate_workflow/1 (strict render)" do
     test "rejects unknown placeholders in prompt_template" do
       wf = %Workflow{

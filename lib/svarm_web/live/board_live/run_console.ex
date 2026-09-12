@@ -15,6 +15,7 @@ defmodule SvarmWeb.BoardLive.RunConsole do
   attr :meta, :map, default: %{}
   attr :agents, :map, default: %{}
   attr :cost, :map, default: nil
+  attr :checklist, :list, default: []
   attr :running_started, :map, default: %{}
   attr :now_mono, :integer, default: 0
   attr :focused, :boolean, default: false
@@ -88,7 +89,7 @@ defmodule SvarmWeb.BoardLive.RunConsole do
           <%= if @task.status == "review" do %>
             <% wait = Board.wait_reason(@task) %>
             <% changes_requested? = wait == :changes_requested %>
-            <% evidence = Board.review_evidence(@task, @meta, @cost) %>
+            <% evidence = Board.review_evidence(@task, @meta, @cost, @checklist) %>
             <div class={[
               "rounded-md px-3 py-2 text-sm border",
               if(changes_requested?,
@@ -330,7 +331,49 @@ defmodule SvarmWeb.BoardLive.RunConsole do
           <% end %>
         </dd>
       </dl>
+
+      <%= if @evidence.checklist && @evidence.checklist != [] do %>
+        <div class="mt-2 border-t border-base-300/70 pt-2" data-testid="review-checklist">
+          <p class="text-[11px] font-medium uppercase tracking-wide opacity-70">
+            Proof-of-work checklist
+          </p>
+          <ul class="mt-1.5 space-y-1">
+            <li
+              :for={item <- @evidence.checklist}
+              class="flex items-center gap-2 text-xs"
+            >
+              <.checklist_state_badge state={item.state} />
+              <span class="min-w-0 truncate">{item.label}</span>
+            </li>
+          </ul>
+        </div>
+      <% end %>
     </div>
+    """
+  end
+
+  attr :state, :atom, required: true
+
+  defp checklist_state_badge(assigns) do
+    {label, cls} =
+      case assigns.state do
+        :pass -> {"pass", "bg-success/20 text-success"}
+        :fail -> {"fail", "bg-error/20 text-error"}
+        :pending -> {"pending", "bg-warning/20 text-warning"}
+        :unknown -> {"unknown", "bg-base-300/80 text-base-content/60"}
+        _ -> {"N/A", "bg-base-300/60 text-base-content/40"}
+      end
+
+    assigns = assign(assigns, label: label, cls: cls)
+
+    ~H"""
+    <span
+      class={["inline-block text-[10px] font-mono px-1.5 py-0.5 rounded uppercase", @cls]}
+      data-testid="checklist-state"
+      data-state={@state}
+    >
+      {@label}
+    </span>
     """
   end
 
