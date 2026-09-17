@@ -114,7 +114,7 @@ Default **`approval.mode: untrusted`**: real agents will **not** run until you a
 1. Open **http://localhost:4000/approvals** (Basic Auth from `.env`) and approve.  
 2. Open **http://localhost:4000/board**. Logs stream on the task card.  
 3. On GitHub: labels move to in-progress / review; a **cost receipt** comment appears when the run finishes.  
-4. Open the card in **`review`**: the **Evidence** pack shows PR (when known), attempts, agent/model, cost (estimated labeled), age, and a **CI** chip (`pass` / `fail` / `pending` / `unknown`, or **N/A** on the local tracker). It is **informational** — Svärm does not merge; you still merge on GitHub (or **Mark done** on the local board). Review-column cards also show glanceable **PR** / **no PR** (and CI when known).  
+4. Open the card in **`review`**: the **Evidence** pack shows PR (when known), attempts, agent/model, cost (estimated labeled), age, and a **CI** chip (`pass` / `fail` / `pending` / `unknown`, or **N/A** on the local tracker). Optional WORKFLOW `review.checklist` adds a **Proof of work** list (`pr` / `ci` / `cost`, plus custom labels that stay `unknown`). It is **informational** — Svärm does not merge; you still merge on GitHub (or **Mark done** on the local board). Review-column cards also show glanceable **PR** / **no PR** (and CI when known).  
 5. Review the PR yourself. Agents do **not** merge.
 
 Poll interval defaults to ~30s (see `polling.interval_ms` in WORKFLOW.md).
@@ -242,6 +242,21 @@ Env overrides:
 **Requirements:** GitHub tracker; App/PAT **Pull requests: Read & write** (read for reviews; write to move the issue back to `todo`, same as CI resume) — see [docs/github-app.md](docs/github-app.md). Polls are capped per tick like CI resume. If the review column is empty, Svärm falls back to at most **50** coordination rows that have a PR (same cap as the labeled path). A GitHub `list_issues` error skips that fallback rather than scanning the whole table.
 
 **Costs:** each resume is a new spawn — usage ledger and budget caps still apply. In-flight runs are not killed when a review asks for changes.
+
+### Review proof-of-work (optional)
+
+Optional WORKFLOW `review.checklist` names the proofs you care about. Selected review **Evidence** shows them with the same chip states as CI. Known ids map to signals already on the card (`pr`, `ci`, `cost`). Custom items stay `unknown` (no agent-reported persist in this slice). Omitted or empty → no checklist section. Informational — does not gate merge, dispatch, or mark-done. The agent prompt appends the labels when the list is non-empty.
+
+```yaml
+# WORKFLOW.md front matter
+review:
+  checklist:
+    - pr
+    - ci
+    - cost
+    - id: docs
+      label: Docs updated
+```
 
 ---
 

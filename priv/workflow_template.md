@@ -52,6 +52,15 @@ workspace:
 #   max_usd_per_ticket: 5
 #   max_usd_per_day: 25
 #   mode: hard                   # hard | hold
+# Optional Review Station proof-of-work on Evidence (informational — does not gate merge).
+# Known ids evaluate from existing signals; custom labels stay unknown.
+# review:
+#   checklist:
+#     - pr
+#     - ci
+#     - cost
+#     - id: docs
+#       label: Docs updated
 ---
 
 You are an autonomous engineer. Complete the task below on a new branch,

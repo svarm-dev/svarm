@@ -330,6 +330,19 @@ defmodule SvarmWeb.BoardLive.RunConsole do
           <% end %>
         </dd>
       </dl>
+      <div
+        :if={@evidence.checklist != []}
+        class="mt-2 pt-2 border-t border-base-300/60"
+        data-testid="review-checklist"
+      >
+        <p class="text-[11px] font-medium uppercase tracking-wide opacity-70">Proof of work</p>
+        <ul class="mt-1 space-y-0.5" aria-label="Proof of work">
+          <li :for={item <- @evidence.checklist} class="flex items-center gap-1.5 text-xs min-w-0">
+            <.ci_evidence_chip state={item.state} />
+            <span class="min-w-0 truncate">{item.label}</span>
+          </li>
+        </ul>
+      </div>
     </div>
     """
   end

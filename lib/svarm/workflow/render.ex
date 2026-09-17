@@ -1,6 +1,8 @@
 defmodule Svarm.Workflow.Render do
   @moduledoc "Liquid-ish `{{issue.*}}` / `{{attempt}}` substitution for workflow prompt body."
 
+  alias Svarm.Workflow.Config
+
   @doc """
   Render `prompt_template` with `issue` (kanban task) and `attempt` (integer or nil).
   """
@@ -133,10 +135,22 @@ defmodule Svarm.Workflow.Render do
         {:ok,
          rendered
          |> maybe_append_block(ci, ci_mode)
-         |> maybe_append_block(review, review_mode)}
+         |> maybe_append_block(review, review_mode)
+         |> maybe_append_block(proof_of_work_block(), :append)}
 
       err ->
         err
+    end
+  end
+
+  defp proof_of_work_block do
+    case Config.review_checklist(Svarm.Workflow.Store.get()) do
+      [_ | _] = items ->
+        lines = Enum.map_join(items, "\n", fn item -> "- #{item.label}" end)
+        "Proof of work (informational — human still merges):\n" <> lines
+
+      _ ->
+        nil
     end
   end
 
