@@ -2,22 +2,28 @@ defmodule Svarm.Provider.OpenAICompat do
   @moduledoc """
   Config-driven OpenAI-compatible chat provider (Req only).
 
-  Used by advertised OpenCode Go/Zen rows. Does **not** send OpenRouter
-  `http-referer` / `x-openrouter-title` headers. Pass those only from
-  `Svarm.Provider.OpenRouter`.
+  Used by advertised OpenCode Go/Zen rows for `chat/completions` ids.
+  MiniMax/Qwen ids that speak Anthropic `/messages` are routed through
+  `Svarm.Provider.AnthropicMessages` (`Resolve.messages_model?/2`). Does
+  **not** send OpenRouter `http-referer` / `x-openrouter-title` headers.
+  Pass those only from `Svarm.Provider.OpenRouter`.
   """
   @behaviour Svarm.Provider
 
   require Logger
 
-  alias Svarm.Provider.Resolve
+  alias Svarm.Provider.{AnthropicMessages, Resolve}
   alias Svarm.Settings.Resolve, as: KeyResolve
 
   @impl true
   def complete(model, messages, opts \\ []) do
     with {:ok, config} <- fetch_config(opts),
          {:ok, api_key} <- fetch_key(config) do
-      post_completion(model, messages, opts, config, api_key)
+      if Resolve.messages_model?(config, model) do
+        AnthropicMessages.complete(model, messages, Keyword.put(opts, :config, config))
+      else
+        post_completion(model, messages, opts, config, api_key)
+      end
     end
   end
 
@@ -84,7 +90,12 @@ defmodule Svarm.Provider.OpenAICompat do
 
     case req_get(url, headers: headers, plug: opts[:plug]) do
       {:ok, %{status: 200, body: resp}} ->
-        {:ok, Enum.map(resp["data"] || [], & &1["id"])}
+        models =
+          (resp["data"] || [])
+          |> Enum.map(& &1["id"])
+          |> Enum.filter(&Resolve.completable_model?(config, &1))
+
+        {:ok, models}
 
       {:ok, %{status: 401}} ->
         {:error, :unauthorized}
