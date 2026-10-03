@@ -12,7 +12,7 @@ defmodule Svarm.Provider.OpenAICompat do
 
   require Logger
 
-  alias Svarm.Provider.{AnthropicMessages, Resolve}
+  alias Svarm.Provider.{AnthropicMessages, HTTP, Resolve}
   alias Svarm.Settings.Resolve, as: KeyResolve
 
   @impl true
@@ -80,7 +80,7 @@ defmodule Svarm.Provider.OpenAICompat do
         {:ok, resp, extract_usage(resp, model, config.id)}
 
       other ->
-        handle_error(config.id, other)
+        HTTP.handle_error(config.id, other)
     end
   end
 
@@ -105,47 +105,12 @@ defmodule Svarm.Provider.OpenAICompat do
         {:error, reason}
 
       other ->
-        handle_error(config.id, other)
+        HTTP.handle_error(config.id, other)
     end
   end
 
-  defp req_post(url, opts), do: Req.post(url, compact_req(opts))
-  defp req_get(url, opts), do: Req.get(url, compact_req(opts))
-
-  defp compact_req(opts) do
-    opts
-    |> Keyword.put(:plug, request_plug(opts))
-    |> Keyword.reject(fn {_k, v} -> is_nil(v) end)
-  end
-
-  defp request_plug(opts) do
-    Keyword.get(opts, :plug) || Application.get_env(:svarm, :provider_req_plug)
-  end
-
-  defp handle_error(id, {:ok, %{status: 400} = resp}) do
-    error_msg = get_in(resp.body, ["error", "message"]) || "bad request"
-    Logger.error("#{id}: #{error_msg}")
-    {:error, {:bad_request, error_msg}}
-  end
-
-  defp handle_error(_id, {:ok, %{status: 401}}), do: {:error, :unauthorized}
-  defp handle_error(_id, {:ok, %{status: 429}}), do: {:error, :rate_limited}
-
-  defp handle_error(id, {:ok, %{status: code}}) when code >= 500 do
-    Logger.error("#{id}: API error #{code}")
-    {:error, {:server_error, code}}
-  end
-
-  defp handle_error(id, {:ok, %{status: code} = resp}) do
-    error_msg = get_in(resp.body, ["error", "message"]) || "unknown error"
-    Logger.error("#{id}: HTTP #{code}: #{error_msg}")
-    {:error, {:http_error, code, error_msg}}
-  end
-
-  defp handle_error(id, {:error, reason}) do
-    Logger.error("#{id}: request failed #{inspect(reason)}")
-    {:error, {:network_error, reason}}
-  end
+  defp req_post(url, opts), do: Req.post(url, HTTP.compact_req(opts))
+  defp req_get(url, opts), do: Req.get(url, HTTP.compact_req(opts))
 
   defp extract_usage(resp, model, provider_id) do
     u = resp["usage"] || %{}

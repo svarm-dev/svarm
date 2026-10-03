@@ -8,9 +8,7 @@ defmodule Svarm.Provider.AnthropicMessages do
   """
   @behaviour Svarm.Provider
 
-  require Logger
-
-  alias Svarm.Provider.{OpenAICompat, Resolve}
+  alias Svarm.Provider.{HTTP, OpenAICompat, Resolve}
   alias Svarm.Settings.Resolve, as: KeyResolve
 
   @anthropic_version "2023-06-01"
@@ -70,7 +68,7 @@ defmodule Svarm.Provider.AnthropicMessages do
         {:ok, normalize_response(resp, model), extract_usage(resp, model, config.id)}
 
       other ->
-        handle_error(config.id, other)
+        HTTP.handle_error(config.id, other)
     end
   end
 
@@ -90,19 +88,31 @@ defmodule Svarm.Provider.AnthropicMessages do
   end
 
   defp role(msg) when is_map(msg) do
-    to_string(msg["role"] || msg[:role] || "user")
+    to_string(Map.get(stringify(msg), "role", "user"))
   end
 
   defp content_text(msg) when is_map(msg) do
-    case msg["content"] || msg[:content] do
+    case Map.get(stringify(msg), "content") do
       s when is_binary(s) -> s
-      list when is_list(list) -> Enum.map_join(list, "", &block_text/1)
+      list when is_list(list) -> Enum.map_join(list, &block_text/1)
       other -> to_string(other)
     end
   end
 
-  defp block_text(%{"text" => t}) when is_binary(t), do: t
-  defp block_text(%{text: t}) when is_binary(t), do: t
+  defp stringify(map) when is_map(map) do
+    Map.new(map, fn
+      {k, v} when is_atom(k) -> {Atom.to_string(k), v}
+      {k, v} -> {k, v}
+    end)
+  end
+
+  defp block_text(block) when is_map(block) do
+    case Map.get(stringify(block), "text") do
+      t when is_binary(t) -> t
+      _ -> ""
+    end
+  end
+
   defp block_text(t) when is_binary(t), do: t
   defp block_text(_), do: ""
 
@@ -118,7 +128,7 @@ defmodule Svarm.Provider.AnthropicMessages do
   defp assistant_text(resp) do
     case resp["content"] do
       text when is_binary(text) -> text
-      list when is_list(list) -> Enum.map_join(list, "", &block_text/1)
+      list when is_list(list) -> Enum.map_join(list, &block_text/1)
       _ -> ""
     end
   end
@@ -142,41 +152,5 @@ defmodule Svarm.Provider.AnthropicMessages do
     end
   end
 
-  defp req_post(url, opts) do
-    opts =
-      opts
-      |> Keyword.put(:plug, request_plug(opts))
-      |> Keyword.reject(fn {_k, v} -> is_nil(v) end)
-
-    Req.post(url, opts)
-  end
-
-  defp request_plug(opts) do
-    Keyword.get(opts, :plug) || Application.get_env(:svarm, :provider_req_plug)
-  end
-
-  defp handle_error(id, {:ok, %{status: 400} = resp}) do
-    error_msg = get_in(resp.body, ["error", "message"]) || "bad request"
-    Logger.error("#{id}: #{error_msg}")
-    {:error, {:bad_request, error_msg}}
-  end
-
-  defp handle_error(_id, {:ok, %{status: 401}}), do: {:error, :unauthorized}
-  defp handle_error(_id, {:ok, %{status: 429}}), do: {:error, :rate_limited}
-
-  defp handle_error(id, {:ok, %{status: code}}) when code >= 500 do
-    Logger.error("#{id}: API error #{code}")
-    {:error, {:server_error, code}}
-  end
-
-  defp handle_error(id, {:ok, %{status: code} = resp}) do
-    error_msg = get_in(resp.body, ["error", "message"]) || "unknown error"
-    Logger.error("#{id}: HTTP #{code}: #{error_msg}")
-    {:error, {:http_error, code, error_msg}}
-  end
-
-  defp handle_error(id, {:error, reason}) do
-    Logger.error("#{id}: request failed #{inspect(reason)}")
-    {:error, {:network_error, reason}}
-  end
+  defp req_post(url, opts), do: Req.post(url, HTTP.compact_req(opts))
 end
