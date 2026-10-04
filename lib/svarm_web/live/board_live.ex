@@ -634,19 +634,7 @@ defmodule SvarmWeb.BoardLive do
     touches_review? = old_status == "review" or new_status == "review"
     before_review_ids = if touches_review?, do: review_ids(socket)
 
-    socket =
-      cond do
-        is_nil(old_status) ->
-          insert_into_column(socket, new_status, task)
-
-        old_status == new_status ->
-          insert_into_column(socket, new_status, task)
-
-        true ->
-          socket
-          |> delete_from_column(old_status, old || task)
-          |> insert_into_column(new_status, task)
-      end
+    socket = apply_column_stream_move(socket, old_status, new_status, old, task)
 
     tasks_by_id = Map.put(socket.assigns.tasks_by_id, task.id, task)
     counts = recompute_column_counts(tasks_by_id, socket.assigns.column_ids)
@@ -664,6 +652,17 @@ defmodule SvarmWeb.BoardLive do
     else
       socket
     end
+  end
+
+  defp apply_column_stream_move(socket, old_status, new_status, _old, task)
+       when is_nil(old_status) or old_status == new_status do
+    insert_into_column(socket, new_status, task)
+  end
+
+  defp apply_column_stream_move(socket, old_status, new_status, old, task) do
+    socket
+    |> delete_from_column(old_status, old || task)
+    |> insert_into_column(new_status, task)
   end
 
   defp insert_into_column(socket, status, task) do
