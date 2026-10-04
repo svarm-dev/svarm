@@ -22,6 +22,17 @@ end
 
 config :svarm, SvarmWeb.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+# Honor SVARM_DB_PATH in Mix/dev so a second instance can use a disposable
+# SQLite file instead of ~/.svarm/kanban/kanban.db. Production still defaults
+# to /app/data/kanban.db when the env is unset (see the prod block below).
+if path = System.get_env("SVARM_DB_PATH") do
+  trimmed = String.trim(path)
+
+  if trimmed != "" do
+    config :svarm, Svarm.Repo, database: trimmed
+  end
+end
+
 config :svarm, :console_base_url, System.get_env("SVARM_BASE_URL")
 
 # Board/run-log URLs in GitHub comments stay off unless explicitly opted in.
