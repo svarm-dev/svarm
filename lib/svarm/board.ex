@@ -302,16 +302,101 @@ defmodule Svarm.Board do
     |> Enum.sort_by(&column_rank/1)
   end
 
-  def group_by_status(tasks) when is_list(tasks) do
-    cols = column_ids()
+  @doc """
+  Buckets tasks by status for the board columns.
 
-    grouped =
-      tasks
-      |> Enum.group_by(& &1.status, fn t -> t end)
+  Only the `review` bucket is reordered (`sort_review_tasks/2`). Other columns
+  keep the order they had inside `tasks`. `opts` match `sort_review_tasks/2`.
+  """
+  def group_by_status(tasks, opts \\ []) when is_list(tasks) do
+    cols = column_ids()
+    grouped = Enum.group_by(tasks, & &1.status)
 
     Map.new(cols, fn col ->
-      {col, Map.get(grouped, col, [])}
+      items = Map.get(grouped, col, [])
+
+      items =
+        case col do
+          "review" -> sort_review_tasks(items, opts)
+          _ -> items
+        end
+
+      {col, items}
     end)
+  end
+
+  @doc """
+  Orders review cards by proof risk.
+
+  First match wins: CI fail, then CI pending, then no PR, then the rest.
+  `:na`, `:pass`, and `:unknown` CI skip the fail and pending classes.
+  Inside a class, higher cost comes first, then older `created_at`, then `id`.
+
+  `opts`:
+
+  - `:costs` — `task_id => %{total_cost_usd: number, ...}`. Missing or
+    non-number cost counts as 0.
+  - `:run_meta` — `task_id => meta` for a PR that exists only on the run.
+
+  PR class uses the same glance as the chip (`review_glance/2`), including
+  run meta and the coordination fallback. Missing or `0` `created_at` sorts
+  last inside the class.
+  """
+  def sort_review_tasks(tasks, opts \\ []) when is_list(tasks) do
+    costs = opt_map(opts, :costs)
+    run_meta = opt_map(opts, :run_meta)
+    Enum.sort_by(tasks, &review_sort_key(&1, costs, run_meta))
+  end
+
+  defp opt_map(opts, key) do
+    case Keyword.get(opts, key, %{}) do
+      %{} = map -> map
+      _ -> %{}
+    end
+  end
+
+  defp review_sort_key(task, costs, run_meta) do
+    id = map_get(task, :id)
+    meta = review_run_meta(run_meta, id)
+
+    {
+      review_proof_class(task, meta),
+      -review_cost_usd(costs, id),
+      review_age_key(task),
+      id
+    }
+  end
+
+  defp review_run_meta(run_meta, id) do
+    case Map.get(run_meta, id) do
+      %{} = meta -> meta
+      _ -> %{}
+    end
+  end
+
+  defp review_proof_class(task, meta) do
+    case review_ci(task).state do
+      :fail -> 0
+      :pending -> 1
+      _ -> glance_class(review_glance(task, meta))
+    end
+  end
+
+  defp glance_class(:no_pr), do: 2
+  defp glance_class(_glance), do: 3
+
+  defp review_cost_usd(costs, id) do
+    case Map.get(costs, id) do
+      %{total_cost_usd: usd} when is_number(usd) -> usd
+      _ -> 0
+    end
+  end
+
+  defp review_age_key(task) do
+    case map_get(task, :created_at) do
+      seconds when is_integer(seconds) and seconds > 0 -> {0, seconds}
+      _ -> {1, 0}
+    end
   end
 
   @doc "Count of non-terminal tasks per assignee (for board at-a-glance)."
@@ -472,11 +557,14 @@ defmodule Svarm.Board do
 
   @doc "PR URL from coordination, run meta, or task map when known (no inventing)."
   def pr_url(task, meta \\ %{}) do
+    known_pr_url(task, meta) || coord_pr_url_fallback(task)
+  end
+
+  defp known_pr_url(task, meta) do
     [
       map_get(task, :pr_url),
       meta_get(meta, :pr_url),
-      map_get(task, :pull_request_url),
-      coord_pr_url_fallback(task)
+      map_get(task, :pull_request_url)
     ]
     |> Enum.find(&(is_binary(&1) and &1 != ""))
   end
