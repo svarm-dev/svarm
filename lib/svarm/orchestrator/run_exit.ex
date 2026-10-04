@@ -70,7 +70,22 @@ defmodule Svarm.Orchestrator.RunExit do
   @doc false
   def schedule_retry(state, nil, _reason), do: state
 
-  def schedule_retry(state, task, reason) do
+  def schedule_retry(state, %{id: task_id} = task, reason) do
+    case state.tracker.get_issue(state.tracker_config, task_id) do
+      {:ok, fresh} ->
+        if queued_follow_up?(fresh) do
+          Logger.info("task #{task_id} has a queued follow-up; skip exit retry")
+          state
+        else
+          do_schedule_retry(state, task, reason)
+        end
+
+      _ ->
+        do_schedule_retry(state, task, reason)
+    end
+  end
+
+  defp do_schedule_retry(state, task, reason) do
     task_id = task.id
     next = (task.attempts || 0) + 1
     state.tracker.update_attempts(state.tracker_config, task_id, next)
@@ -122,20 +137,28 @@ defmodule Svarm.Orchestrator.RunExit do
   defp handle_result(state, task_id, :ok) do
     case state.tracker.get_issue(state.tracker_config, task_id) do
       {:ok, task} ->
-        if task.status in state.terminal_states do
-          Logger.info("task #{task_id} succeeded")
-          post_run_summary(state, task_id, :ok)
-          %{state | completed: MapSet.put(state.completed, task_id)}
-        else
-          # Runner reported success (exit 0). Do not re-spawn (burns tokens /
-          # rate-limits). Force terminal review; retry status patch so GitHub
-          # label sticks across process restarts when possible.
-          # Retries use send_after — never Process.sleep on this GenServer.
-          Logger.warning("task #{task_id} exited ok but status=#{task.status}; forcing review")
+        cond do
+          queued_follow_up?(task) ->
+            # Operator already moved this ticket back to todo. Forcing review
+            # and putting the id in `completed` would undo that follow-up.
+            Logger.info("task #{task_id} exited ok after a queued follow-up; leaving todo")
+            state
 
-          force_terminal(state, task_id, "review", 1)
-          post_run_summary(state, task_id, :ok)
-          %{state | completed: MapSet.put(state.completed, task_id)}
+          task.status in state.terminal_states ->
+            Logger.info("task #{task_id} succeeded")
+            post_run_summary(state, task_id, :ok)
+            %{state | completed: MapSet.put(state.completed, task_id)}
+
+          true ->
+            # Runner reported success (exit 0). Do not re-spawn (burns tokens /
+            # rate-limits). Force terminal review; retry status patch so GitHub
+            # label sticks across process restarts when possible.
+            # Retries use send_after — never Process.sleep on this GenServer.
+            Logger.warning("task #{task_id} exited ok but status=#{task.status}; forcing review")
+
+            force_terminal(state, task_id, "review", 1)
+            post_run_summary(state, task_id, :ok)
+            %{state | completed: MapSet.put(state.completed, task_id)}
         end
 
       {:error, _} ->
@@ -152,8 +175,21 @@ defmodule Svarm.Orchestrator.RunExit do
         _ -> nil
       end
 
-    schedule_retry(%{state | completed: MapSet.delete(state.completed, task_id)}, task, reason)
+    if queued_follow_up?(task) do
+      Logger.info("task #{task_id} exited with error after a queued follow-up; leaving todo")
+      state
+    else
+      schedule_retry(%{state | completed: MapSet.delete(state.completed, task_id)}, task, reason)
+    end
   end
+
+  # Follow-up persists the note and moves the card to `todo` while the worker
+  # may still be exiting. That todo is operator-owned until the next spawn.
+  defp queued_follow_up?(%{status: "todo", follow_up: text}) when is_binary(text) do
+    String.trim(text) != ""
+  end
+
+  defp queued_follow_up?(_), do: false
 
   defp force_terminal_check(state, task_id) do
     case state.tracker.get_issue(state.tracker_config, task_id) do

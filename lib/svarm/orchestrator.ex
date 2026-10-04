@@ -145,6 +145,21 @@ defmodule Svarm.Orchestrator do
     GenServer.call(__MODULE__, {:abort, task_id}, 15_000)
   end
 
+  @doc """
+  Drop a settled ticket from the session `completed` set.
+
+  A follow-up moves the ticket back to `todo`. `process_candidate/2` still
+  skips ids in `completed`, so the next poll would never spawn, re-gate, or
+  consume the note. No-op when this process is not running.
+  """
+  @spec release_completed(String.t()) :: :ok
+  def release_completed(task_id) when is_binary(task_id) do
+    case Process.whereis(__MODULE__) do
+      nil -> :ok
+      _pid -> GenServer.call(__MODULE__, {:release_completed, task_id})
+    end
+  end
+
   @doc false
   defdelegate kill_worker(pid, reason), to: Reconcile
 
@@ -357,6 +372,10 @@ defmodule Svarm.Orchestrator do
           apply_abort_todo(state, task_id)
         end
     end
+  end
+
+  def handle_call({:release_completed, task_id}, _from, state) when is_binary(task_id) do
+    {:reply, :ok, %{state | completed: MapSet.delete(state.completed, task_id)}}
   end
 
   @impl true
