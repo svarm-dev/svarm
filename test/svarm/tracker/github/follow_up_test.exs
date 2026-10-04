@@ -169,4 +169,23 @@ defmodule Svarm.Tracker.GitHub.FollowUpTest do
     assert {:ok, issues} = GitHub.list_eligible(@config)
     assert Enum.any?(issues, &(&1.id == "I_six"))
   end
+
+  test "update_status review does not reopen a closed issue" do
+    GitHubIssuesReq.seed(%{
+      "number" => 7,
+      "node_id" => "I_seven",
+      "title" => "closed by a human",
+      "body" => "work",
+      "labels" => [%{"name" => "status: in-progress"}],
+      "assignee" => nil,
+      "user" => %{"login" => "svarm"},
+      "created_at" => "2026-01-01T00:00:00Z",
+      "repository_url" => "https://api.github.com/repos/acme/widgets",
+      "state" => "closed"
+    })
+
+    assert :ok = GitHub.update_status(@config, "I_seven", "review")
+    stored = GitHubIssuesReq.get_issue(7)
+    assert stored["state"] == "closed"
+  end
 end

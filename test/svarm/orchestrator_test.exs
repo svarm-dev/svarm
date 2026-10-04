@@ -776,6 +776,40 @@ defmodule Svarm.OrchestratorTest do
       assert KanbanBridge.get_task(task.id).follow_up == "please also update the docs"
     end
 
+    test "run exit after follow-up leaves the queued todo alone" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "follow-up during exit",
+          status: "review",
+          assignee: "demo"
+        })
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | running:
+              Map.put(state.running, task.id, %{
+                task: task,
+                run_id: "run_follow",
+                started_mono_ms: System.monotonic_time(:millisecond)
+              }),
+            completed: MapSet.put(state.completed, task.id)
+        }
+      end)
+
+      assert :ok = Svarm.Board.follow_up(task.id, "keep the note")
+      send(Orchestrator, {:run_exit, task.id, :ok})
+
+      assert wait_until(fn ->
+               :sys.get_state(Orchestrator).running[task.id] == nil
+             end)
+
+      got = KanbanBridge.get_task(task.id)
+      assert got.status == "todo"
+      assert got.follow_up == "keep the note"
+      refute MapSet.member?(:sys.get_state(Orchestrator).completed, task.id)
+    end
+
     test "budget_exceeded sets last_budget_block and does not claim task" do
       task =
         KanbanBridge.create_task(%{

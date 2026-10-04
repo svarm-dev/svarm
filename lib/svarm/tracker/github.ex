@@ -569,7 +569,10 @@ defmodule Svarm.Tracker.GitHub do
 
   # `failed` closes the issue. A later `todo` (follow-up, abort) must reopen
   # it or `list_eligible/1` (open issues only) never sees the queued note.
-  defp maybe_close(body, _status), do: Map.put(body, :state, "open")
+  # Other statuses leave `state` alone so a human-closed issue stays closed
+  # when a runner patches `review` or `in_progress`.
+  defp maybe_close(body, "todo"), do: Map.put(body, :state, "open")
+  defp maybe_close(body, _status), do: body
 
   # `Issue.body` is already stripped of markers. Patch the raw GitHub body so
   # a follow-up write keeps `svarm-depends-on` and the reverse stays true.
