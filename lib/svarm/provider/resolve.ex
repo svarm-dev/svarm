@@ -7,7 +7,7 @@ defmodule Svarm.Provider.Resolve do
   match on `== Provider.OpenRouter` to pick an adapter.
   """
 
-  alias Svarm.Provider.{OpenAICompat, OpenRouter}
+  alias Svarm.Provider.{AnthropicMessages, OpenAICompat, OpenRouter}
   alias Svarm.{Settings, Workflow}
 
   @config_file Path.join(:code.priv_dir(:svarm), "providers.toml")
@@ -15,7 +15,8 @@ defmodule Svarm.Provider.Resolve do
   # Adapter name from toml → module. Register new HTTP adapters here.
   @adapters %{
     "openrouter" => OpenRouter,
-    "openai_compat" => OpenAICompat
+    "openai_compat" => OpenAICompat,
+    "anthropic_messages" => AnthropicMessages
   }
 
   @default_id "openrouter"
@@ -23,7 +24,8 @@ defmodule Svarm.Provider.Resolve do
   @doc """
   Live (non-stub) provider rows from `providers.toml`.
 
-  Each map has `:id`, `:base_url`, `:auth_env`, `:adapter`, `:default_model`.
+  Each map has `:id`, `:base_url`, `:auth_env`, `:adapter`, `:default_model`,
+  plus optional `:messages_models`, `:chat_models`, `:incomplete_prefixes`.
   """
   def advertised do
     provider_table()
@@ -75,6 +77,47 @@ defmodule Svarm.Provider.Resolve do
   def label("opencode"), do: "OpenCode Zen"
   def label(%{id: id}), do: label(id)
   def label(id) when is_binary(id), do: id
+
+  @doc """
+  True when this model on this row speaks Anthropic `/messages`.
+
+  Prefix match on `messages_models`, minus any `chat_models` override
+  (Zen `qwen3.8-max` stays on `chat/completions`).
+  """
+  def messages_model?(%{messages_models: prefixes} = config, model)
+      when is_binary(model) and model != "" do
+    prefix_match?(prefixes, model) and not prefix_match?(config.chat_models, model)
+  end
+
+  def messages_model?(_, _), do: false
+
+  @doc """
+  True when the advertised adapter can `complete/3` this model id.
+
+  `incomplete_prefixes` drops Responses / Gemini-native / Jev ids so `/setup`
+  chips never offer a model this row cannot finish.
+  """
+  def completable_model?(%{incomplete_prefixes: prefixes}, model)
+      when is_binary(model) and model != "" do
+    not prefix_match?(prefixes, model)
+  end
+
+  def completable_model?(_, model) when is_binary(model) and model != "", do: true
+  def completable_model?(_, _), do: false
+
+  @doc """
+  Module that should `complete/3` this model on an advertised row.
+
+  Kind → module stays here: `messages_models` → `AnthropicMessages`, else
+  the row's toml adapter.
+  """
+  def complete_module(config, model) when is_map(config) do
+    if messages_model?(config, model) do
+      AnthropicMessages
+    else
+      adapter_module(config.adapter)
+    end
+  end
 
   defp requested_id(opts) do
     case Keyword.fetch(opts, :provider) do
@@ -134,9 +177,26 @@ defmodule Svarm.Provider.Resolve do
       base_url: row["base_url"],
       auth_env: row["auth_env"],
       adapter: row["adapter"] || default_adapter(id),
-      default_model: row["default_model"]
+      default_model: row["default_model"],
+      messages_models: string_list(row["messages_models"]),
+      chat_models: string_list(row["chat_models"]),
+      incomplete_prefixes: string_list(row["incomplete_prefixes"])
     }
   end
+
+  defp prefix_match?(prefixes, model) when is_list(prefixes) do
+    Enum.any?(prefixes, fn prefix ->
+      is_binary(prefix) and prefix != "" and String.starts_with?(model, prefix)
+    end)
+  end
+
+  defp prefix_match?(_, _), do: false
+
+  defp string_list(val) when is_list(val) do
+    Enum.filter(val, &(is_binary(&1) and &1 != ""))
+  end
+
+  defp string_list(_), do: []
 
   defp default_adapter("openrouter"), do: "openrouter"
   defp default_adapter(_), do: "openai_compat"
