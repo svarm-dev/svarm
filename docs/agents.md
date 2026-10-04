@@ -22,7 +22,7 @@ env = { GITHUB_TOKEN = "$GITHUB_TOKEN", OPENROUTER_API_KEY = "$OPENROUTER_API_KE
 
 Dispatched **pi RPC** runs can use OpenCode when `provider` is set and `OPENCODE_API_KEY` is listed in `env`. Empty `env` does **not** inherit the host. In-app Decompose and `/setup` follow the `providers.toml` registry (default OpenRouter; `opencode-go` / `opencode` resolve or fail closed). A key in `/setup` or `OPENCODE_API_KEY` is enough for Decompose; pi still needs the `env` block.
 
-**Go** is a subscription (`https://opencode.ai/zen/go/v1`). Use a current **chat/completions** model id (not Anthropic `/messages`, not Responses-only). Model ids churn — check [OpenCode Go](https://opencode.ai/docs/go/).
+**Go** is a subscription (`https://opencode.ai/zen/go/v1`). In-app Decompose / `/setup` complete the default **chat/completions** id (`glm-5.3-flash`) and MiniMax/Qwen ids that speak Anthropic `/messages` (`minimax-m3`, `qwen3.8-flash`, …). Responses-only ids (Grok, GPT Luna, Muse Spark) are not offered as setup chips. Model ids churn — check [OpenCode Go](https://opencode.ai/docs/go/).
 
 ```toml
 [agent.opencode_go]
@@ -37,7 +37,7 @@ env = { GITHUB_TOKEN = "$GITHUB_TOKEN", OPENCODE_API_KEY = "$OPENCODE_API_KEY" }
 
 ### Zen variant
 
-**Zen** is pay-per-use (`https://opencode.ai/zen/v1`). Same `OPENCODE_API_KEY`; provider id is `opencode`. The catalog differs from Go — pick a Zen **chat/completions** id.
+**Zen** is pay-per-use (`https://opencode.ai/zen/v1`). Same `OPENCODE_API_KEY`; provider id is `opencode`. The catalog differs from Go. In-app complete keeps MiniMax and `qwen3.8-max` on **chat/completions**; other Qwen ids (`qwen3.8-flash`, `qwen3.7-plus`, …) use `/messages`. Responses / Gemini / Jev / Claude ids stay out of setup chips.
 
 ```toml
 provider = "opencode"

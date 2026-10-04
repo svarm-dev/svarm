@@ -38,6 +38,8 @@ defmodule Svarm.Provider.ResolveTest do
     assert config.adapter == "openai_compat"
     assert config.auth_env == "OPENCODE_API_KEY"
     assert config.base_url == "https://opencode.ai/zen/go/v1"
+    assert config.messages_models == ["minimax-", "qwen"]
+    assert config.chat_models == []
   end
 
   test "opencode (Zen) resolves to OpenAICompat" do
@@ -45,6 +47,50 @@ defmodule Svarm.Provider.ResolveTest do
     assert config.id == "opencode"
     assert config.base_url == "https://opencode.ai/zen/v1"
     assert config.auth_env == "OPENCODE_API_KEY"
+    assert config.messages_models == ["qwen"]
+    assert config.chat_models == ["qwen3.8-max"]
+  end
+
+  test "Go MiniMax/Qwen are /messages; Zen MiniMax and qwen3.8-max stay chat" do
+    go = Resolve.entry("opencode-go")
+    zen = Resolve.entry("opencode")
+
+    assert Resolve.messages_model?(go, "minimax-m3")
+    assert Resolve.messages_model?(go, "minimax-m2.7")
+    assert Resolve.messages_model?(go, "qwen3.8-max")
+    assert Resolve.messages_model?(go, "qwen3.8-flash")
+    refute Resolve.messages_model?(go, "glm-5.3-flash")
+    refute Resolve.messages_model?(go, "kimi-k2.6")
+
+    refute Resolve.messages_model?(zen, "minimax-m3")
+    refute Resolve.messages_model?(zen, "qwen3.8-max")
+    assert Resolve.messages_model?(zen, "qwen3.8-flash")
+    assert Resolve.messages_model?(zen, "qwen3.7-plus")
+    refute Resolve.messages_model?(zen, "kimi-k2.6")
+
+    assert Resolve.complete_module(go, "minimax-m3") == Svarm.Provider.AnthropicMessages
+    assert Resolve.complete_module(go, "glm-5.3-flash") == OpenAICompat
+    assert Resolve.complete_module(zen, "qwen3.8-flash") == Svarm.Provider.AnthropicMessages
+    assert Resolve.complete_module(zen, "qwen3.8-max") == OpenAICompat
+    assert Resolve.complete_module(zen, "minimax-m3") == OpenAICompat
+  end
+
+  test "setup chips hide ids the selected adapter cannot complete" do
+    go = Resolve.entry("opencode-go")
+    zen = Resolve.entry("opencode")
+
+    assert Resolve.completable_model?(go, "minimax-m3")
+    assert Resolve.completable_model?(go, "glm-5.3-flash")
+    refute Resolve.completable_model?(go, "grok-4.7")
+    refute Resolve.completable_model?(go, "gpt-6-luna")
+    refute Resolve.completable_model?(go, "muse-spark-1.3-contributor")
+
+    assert Resolve.completable_model?(zen, "qwen3.8-flash")
+    assert Resolve.completable_model?(zen, "kimi-k2.6")
+    refute Resolve.completable_model?(zen, "claude-sonnet-5")
+    refute Resolve.completable_model?(zen, "gemini-3.8-flash")
+    refute Resolve.completable_model?(zen, "jev-1.13")
+    refute Resolve.completable_model?(zen, "gpt-5.5")
   end
 
   test "unknown id fails closed" do
