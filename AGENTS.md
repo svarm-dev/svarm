@@ -151,9 +151,9 @@ Svärm is developed with **pi** and the **pi-elixir** extension. pi-elixir provi
 
 ### Tool usage
 
-Use **lowercase** pi tools: `read`, `edit`, `write`, `bash`. Do not use `Read`, `Edit`, `Grep`, `Glob` — these are not registered and will fail.
+**Host is pi:** lowercase pi tools (`read`, `edit`, `write`, `bash`). Do not use `Read`, `Edit`, `Grep`, `Glob` — those names are not registered there. For large outputs, use `ctx_execute` / `ctx_execute_file` instead of `bash`. For multi-command batches, use `ctx_batch_execute`.
 
-For large outputs, use `ctx_execute` / `ctx_execute_file` instead of `bash`. For multi-command batches, use `ctx_batch_execute`.
+**Host is Cursor** (pstack, Cloud agents, desktop Cursor): use Cursor tools (`Read`, `Grep`, `Glob`, `Shell`, `StrReplace`, …). Do not skip them because this file also documents pi tool names.
 
 ### Daily workflow
 
@@ -163,7 +163,7 @@ For large outputs, use `ctx_execute` / `ctx_execute_file` instead of `bash`. For
 
 3. **Before large diffs → eval orientation** — `AST.diff(changed: true)` and `CodeMap.reflect(changed: true)`, then read only relevant modules or `git diff` hunks.
 
-4. **Small edits → host `read` / `edit`**. **Final verification → shell**: `mix precommit`.
+4. **Small edits** — pi: host `read` / `edit`. Cursor: `Read` / `StrReplace`. **Final verification → shell**: `mix precommit`.
 
 ### Skills and agent context
 
@@ -174,13 +174,15 @@ Split of responsibilities (see [agents.md](https://agents.md) and [Agent Skills]
 
 Do **not** put Svärm architecture rules only in skills. If every edit should know it, it belongs here.
 
-**Tooling skills (global packages):**
-- **`elixir` / `elixir-web`** (pi-elixir) — BEAM runtime tools and default Elixir routing.
-- **`phx-*` / `ecto-*` / `lv-*` / domain refs** — from project package `claude-elixir-phoenix` (Iron Laws, review/investigate workflows). Invoke with `/skill:phx-review`, `/skill:phx-investigate`, etc.
-- **`impeccable`** — UI craft when the task is frontend.
-- **`ponytail`** — minimal diffs / YAGNI.
+**Cursor / pstack (current trial):** nontrivial Cursor work uses `/poteto-mode`. Per-role models: `~/.cursor/rules/pstack-models.mdc` (`/setup-pstack`). Operator-path UI proof: `.cursor/skills/verify-svarm/`. Repo always-on reminder: `.cursor/rules/pstack.mdc`. **ponytail is parked** for this trial — do not invoke `/ponytail` or its always-on ladder unless a human asks. pstack's laziness protocol covers YAGNI.
 
-Svärm product law always overrides generic Phoenix advice when they conflict (SQLite-only, KanbanBridge-only DB access, Runner.Cli/PiRPC shell-out only, no Postgres).
+**Tooling skills (global packages):**
+- **`elixir` / `elixir-web`** (pi-elixir) — BEAM runtime tools when the host is pi.
+- **`phx-*` / `ecto-*` / `lv-*` / domain refs** — from project package `claude-elixir-phoenix` (Iron Laws, review/investigate workflows). Invoke with `/skill:phx-review`, `/skill:phx-investigate`, etc. On-demand if installed.
+- **`impeccable`** — UI craft when the task is frontend (on-demand if installed).
+- **`ponytail`** — parked (see Cursor / pstack above).
+
+Svärm product law always overrides generic Phoenix advice when they conflict (SQLite-only, KanbanBridge-only DB access, Runner.Cli/PiRPC shell-out only, no Postgres). pstack playbooks lose the same way.
 
 ## Progress bus (coding agents ↔ maintainers)
 
