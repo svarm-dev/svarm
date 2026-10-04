@@ -223,7 +223,9 @@ When a managed ticket is in **review** with a PR, Svärm **polls GitHub pull-req
 
 When **enabled**, the **first** transition into changes-requested **re-opens the ticket** and spawns a **fresh** agent run with that review summary in the prompt. GitHub does not clear `CHANGES_REQUESTED` on a new push, so a later SHA refresh in the same episode is detection only. A new episode starts after reviews are no longer changes-requested (`:clear`) and then requested again.
 
-Spawn shares the **CI resume circuit**: `ci_resume_count` / `ci_circuit_open` and `SVARM_CI_RESUME_MAX_ATTEMPTS` (or WORKFLOW `ci_resume.max_attempts`). After **N** combined resume attempts, the circuit opens; the board shows **“CI retries exhausted”** and the card stays in `review`.
+Keep review-resume **off** and you still get a human-gated follow-up: select the **Changes requested** card and press **Send back**. That moves the ticket back to `todo` (gated assignees re-enter `pending_approval`) and the next spawn uses the **same review summary** — no extra GitHub calls, and the same board auth gate as Approve / Mark done. **Send back is the manual alternative to enabling review-resume.**
+
+Spawn shares the **CI resume circuit**: `ci_resume_count` / `ci_circuit_open` and `SVARM_CI_RESUME_MAX_ATTEMPTS` (or WORKFLOW `ci_resume.max_attempts`). After **N** combined resume attempts (auto CI, auto review, or human **Send back**), the circuit opens; the board shows **“CI retries exhausted”** and the card stays in `review` with **Send back disabled** — no more spawns from the board until you intervene on GitHub.
 
 **Default is off** — enable only when you want automatic re-dispatch costs. Local tracker has no Reviews API.
 

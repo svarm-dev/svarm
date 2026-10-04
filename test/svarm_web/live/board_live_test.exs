@@ -897,7 +897,9 @@ defmodule SvarmWeb.BoardLiveTest do
     render_click(view, "select_task", %{"id" => task.id})
     panel = render(view)
     assert panel =~ "Changes requested"
-    assert panel =~ "review-resume is enabled"
+    assert panel =~ "Send back"
+    # Human-gated alternative to enabling review-resume (stays opt-in).
+    assert panel =~ "review-resume"
   end
 
   test "live review_decision PubSub flips the chip without a full refresh", %{conn: conn} do
@@ -937,6 +939,123 @@ defmodule SvarmWeb.BoardLiveTest do
     html = render(view)
     assert html =~ "Needs review"
     refute html =~ "Changes requested"
+  end
+
+  test "GitHub review card in changes requested has enabled Send back; click returns to Todo",
+       %{conn: conn} do
+    put_github_review_board(77)
+
+    {:ok, _} =
+      Svarm.Coordination.upsert("gh_77", %{
+        review_decision: "changes_requested",
+        review_context_summary: "## Review feedback (changes requested)\n\nPlease fix x",
+        review_last_head_sha: "sha_a"
+      })
+
+    {:ok, view, html} = live(conn, ~p"/board")
+    assert html =~ "GH review card"
+    assert html =~ "Changes requested"
+
+    render_click(view, "select_task", %{"id" => "gh_77"})
+    panel = render(view)
+    assert panel =~ "Send back"
+    refute has_element?(view, "button[disabled]", "Send back")
+
+    view |> element("button", "Send back") |> render_click()
+
+    assert render(view) =~ "Sent gh_77 back to Todo"
+
+    coord = Svarm.Coordination.get("gh_77")
+    assert coord.ci_resume_count == 1
+    assert coord.review_decision == "changes_requested"
+    assert coord.review_context_summary =~ "changes requested"
+
+    # GitHub PATCH stripped the review label, so the issue is back in Todo.
+    payload = Svarm.Test.GitHubIssuesReq.get_issue(77)
+    refute Enum.any?(payload["labels"], &(&1["name"] == "status: review"))
+  end
+
+  test "GitHub circuit-open Send back is disabled with retries-exhausted copy", %{conn: conn} do
+    put_github_review_board(78)
+
+    {:ok, _} =
+      Svarm.Coordination.upsert("gh_78", %{
+        review_decision: "changes_requested",
+        review_context_summary: "fix it",
+        review_last_head_sha: "sha_a",
+        ci_circuit_open: true,
+        ci_resume_count: 3
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/board")
+    render_click(view, "select_task", %{"id" => "gh_78"})
+
+    panel = render(view)
+    assert panel =~ "CI retries exhausted"
+    assert has_element?(view, "button[disabled]", "Send back")
+    assert panel =~ "Resume retries exhausted"
+
+    # Crafted event (client is disabled) is still rejected server-side — no spawn.
+    render_click(view, "send_back", %{"id" => "gh_78"})
+    assert render(view) =~ "exhausted"
+
+    payload = Svarm.Test.GitHubIssuesReq.get_issue(78)
+    assert Enum.any?(payload["labels"], &(&1["name"] == "status: review"))
+    assert Svarm.Coordination.get("gh_78").ci_resume_count == 3
+  end
+
+  test "local tracker Send back is disabled with honest no-GitHub copy", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Local changes",
+        status: "review",
+        assignee: "demo"
+      })
+
+    {:ok, _} =
+      Svarm.Coordination.upsert(task.id, %{
+        review_decision: "changes_requested",
+        review_context_summary: "fix it"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/board")
+    render_click(view, "select_task", %{"id" => task.id})
+
+    panel = render(view)
+    assert has_element?(view, "button[disabled]", "Send back")
+    assert panel =~ "Local tracker has no GitHub reviews"
+    assert panel =~ "Mark done"
+  end
+
+  test "unauthorized send back flashes and does not move the ticket", %{conn: conn} do
+    prev_auth = Application.get_env(:svarm, :approvals_auth)
+    Application.put_env(:svarm, :approvals_auth, %{username: "op", password: "secret"})
+
+    on_exit(fn ->
+      if prev_auth == nil,
+        do: Application.delete_env(:svarm, :approvals_auth),
+        else: Application.put_env(:svarm, :approvals_auth, prev_auth)
+    end)
+
+    put_github_review_board(79)
+
+    {:ok, _} =
+      Svarm.Coordination.upsert("gh_79", %{
+        review_decision: "changes_requested",
+        review_context_summary: "fix it"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/board")
+    render_click(view, "select_task", %{"id" => "gh_79"})
+    render_click(view, "send_back", %{"id" => "gh_79"})
+
+    assert render(view) =~ "Authentication required"
+
+    payload = Svarm.Test.GitHubIssuesReq.get_issue(79)
+    assert Enum.any?(payload["labels"], &(&1["name"] == "status: review"))
+    assert Svarm.Coordination.get("gh_79").ci_resume_count == 0
   end
 
   test "review run panel shows awaiting human callout and PR link", %{conn: conn} do
@@ -1552,6 +1671,72 @@ defmodule SvarmWeb.BoardLiveTest do
     assert html =~ "$"
     assert has_element?(view, "#task-#{task.id}")
   end
+
+  # GitHub-kind board fixture: routes GitHub HTTP to the in-memory issues
+  # stub, overlays Settings tracker kind, and points the Orchestrator at the
+  # same GitHub adapter so Send back can PATCH the issue back to Todo.
+  defp put_github_review_board(number) do
+    prev_req = Application.get_env(:svarm, :github_req)
+    Application.put_env(:svarm, :github_req, Svarm.Test.GitHubIssuesReq)
+    Svarm.Test.GitHubIssuesReq.reset!()
+
+    Svarm.Test.GitHubIssuesReq.seed(%{
+      "number" => number,
+      "title" => "GH review card",
+      "state" => "open",
+      "labels" => [%{"name" => "status: review"}],
+      "user" => %{"login" => "reviewer-alice"},
+      "body" => "please fix",
+      "created_at" => "2026-01-01T00:00:00Z",
+      "repository_url" => "https://api.github.com/repos/acme/widgets"
+    })
+
+    {:ok, _} =
+      Svarm.Settings.put_tracker(%{
+        "kind" => "github",
+        "owner" => "acme",
+        "repo" => "widgets",
+        "api_key" => "ghp_test",
+        "auth" => "token"
+      })
+
+    original_orch = :sys.get_state(Svarm.Orchestrator)
+
+    :sys.replace_state(Svarm.Orchestrator, fn state ->
+      %{
+        state
+        | tracker: Svarm.Tracker.GitHub,
+          tracker_config: %{
+            kind: :github,
+            owner: "acme",
+            repo: "widgets",
+            api_key: "ghp_test",
+            auth: :token,
+            req: Svarm.Test.GitHubIssuesReq,
+            active_states: ["todo", "in_progress"],
+            terminal_states: ["done", "failed", "review"]
+          },
+          ci_resume_caps: %{enabled: false, max_attempts: 3, skip_draft: true},
+          review_resume_caps: %{enabled: false}
+      }
+    end)
+
+    on_exit(fn -> restore_github_board(prev_req, original_orch) end)
+  end
+
+  # Restore the Settings tracker overlay, GitHub Req stub env, and Orchestrator
+  # state mutated by `put_github_review_board/1`.
+  defp restore_github_board(prev_req, original_orch) do
+    Svarm.Settings.Store.delete("tracker")
+    restore_github_req(prev_req)
+
+    if Process.whereis(Svarm.Orchestrator) do
+      :sys.replace_state(Svarm.Orchestrator, fn _ -> original_orch end)
+    end
+  end
+
+  defp restore_github_req(nil), do: Application.delete_env(:svarm, :github_req)
+  defp restore_github_req(prev), do: Application.put_env(:svarm, :github_req, prev)
 
   defp put_orchestrator_running(task, worker) do
     original = :sys.get_state(Svarm.Orchestrator)

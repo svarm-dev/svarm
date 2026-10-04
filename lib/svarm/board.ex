@@ -514,6 +514,31 @@ defmodule Svarm.Board do
     end
   end
 
+  @doc """
+  Send a changes-requested `review` ticket back to `todo` (Review Station).
+
+  Human-gated board verb: delegates to `Svarm.Orchestrator.send_back/1` so
+  the shared resume circuit, coordination summary, and orchestrator state
+  (`completed` / `approved_once`) stay consistent. Gated assignees re-enter
+  `pending_approval` on the next poll. See `Svarm.Orchestrator.send_back/1`.
+  """
+  @spec send_back(String.t()) ::
+          :ok | {:error, :not_in_review | :no_review_context | :circuit_open | term()}
+  def send_back(id) when is_binary(id), do: Orchestrator.send_back(id)
+
+  @doc "User-facing flash message for `send_back/1` errors."
+  @spec send_back_flash_error(:not_in_review | :no_review_context | :circuit_open | term()) ::
+          String.t()
+  def send_back_flash_error(:not_in_review), do: "Task is not awaiting review"
+
+  def send_back_flash_error(:no_review_context),
+    do: "No review summary on this card — nothing to send back"
+
+  def send_back_flash_error(:circuit_open),
+    do: "Resume retries exhausted — shared circuit is open, no more spawns from the board"
+
+  def send_back_flash_error(other), do: "Could not send back: #{inspect(other)}"
+
   defp meta_get(meta, key) when is_map(meta) do
     Map.get(meta, key) || Map.get(meta, Atom.to_string(key))
   end
