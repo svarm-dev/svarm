@@ -23,13 +23,16 @@ end
 config :svarm, SvarmWeb.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
 # Honor SVARM_DB_PATH in Mix/dev so a second instance can use a disposable
-# SQLite file instead of ~/.svarm/kanban/kanban.db. Production still defaults
-# to /app/data/kanban.db when the env is unset (see the prod block below).
-if path = System.get_env("SVARM_DB_PATH") do
-  trimmed = String.trim(path)
+# SQLite file instead of ~/.svarm/kanban/kanban.db. Test keeps the temp
+# database from config/test.exs even if the operator env sets this variable.
+# Production still defaults to /app/data/kanban.db when unset (prod block below).
+if config_env() == :dev do
+  if path = System.get_env("SVARM_DB_PATH") do
+    trimmed = String.trim(path)
 
-  if trimmed != "" do
-    config :svarm, Svarm.Repo, database: trimmed
+    if trimmed != "" do
+      config :svarm, Svarm.Repo, database: trimmed
+    end
   end
 end
 

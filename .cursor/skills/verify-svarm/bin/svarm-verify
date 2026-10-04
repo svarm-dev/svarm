@@ -170,16 +170,18 @@ PY
   pid=$!
   echo "$pid" >"$pidfile"
 
-  cat >"$STATE" <<EOF
-PID=$pid
-PORT=$port
-BASE_URL=http://127.0.0.1:$port
-DB_PATH=$db_path
-DATA_ROOT=$data_root
-WORKFLOW_PATH=$workflow
-LOG=$log
-REPO=$REPO
-EOF
+  # Quote every value. `source` splits on whitespace, so a repo path with
+  # spaces would break doctor/seed/cleanup after a successful launch.
+  {
+    printf 'PID=%q\n' "$pid"
+    printf 'PORT=%q\n' "$port"
+    printf 'BASE_URL=%q\n' "http://127.0.0.1:$port"
+    printf 'DB_PATH=%q\n' "$db_path"
+    printf 'DATA_ROOT=%q\n' "$data_root"
+    printf 'WORKFLOW_PATH=%q\n' "$workflow"
+    printf 'LOG=%q\n' "$log"
+    printf 'REPO=%q\n' "$REPO"
+  } >"$STATE"
 
   if ! wait_health "http://127.0.0.1:$port"; then
     echo "svarm-verify: launch failed; last log lines:" >&2
