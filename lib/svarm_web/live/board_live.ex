@@ -72,16 +72,17 @@ defmodule SvarmWeb.BoardLive do
 
     socket = load_board(socket)
 
+    status =
+      Board.instance_status(
+        agents: agents,
+        task_count: socket.assigns.task_count,
+        tracker_error: socket.assigns.board_error
+      )
+
     {:ok,
-     assign(
-       socket,
-       :checklist,
-       Board.instance_status(
-         agents: agents,
-         task_count: socket.assigns.task_count,
-         tracker_error: socket.assigns.board_error
-       )
-     )}
+     socket
+     |> assign(:checklist, status)
+     |> assign(:tracker_kind, status.tracker_kind)}
   end
 
   @impl true
@@ -308,6 +309,28 @@ defmodule SvarmWeb.BoardLive do
 
           {:error, reason} ->
             {:noreply, put_flash(socket, :error, "Could not mark done: #{inspect(reason)}")}
+        end
+    end
+  end
+
+  def handle_event("send_back", %{"id" => id}, socket) do
+    case authorize_board_mutation(socket) do
+      {:error, :unauthorized} ->
+        {:noreply, put_flash(socket, :error, unauthorized_mutation_flash("send back"))}
+
+      :ok ->
+        case Board.send_back(id) do
+          :ok ->
+            {:noreply,
+             socket
+             |> put_flash(:info, "Sent #{id} back to Todo")
+             |> load_board()
+             |> then(fn s ->
+               if s.assigns.selected_task_id == id, do: select_task(s, id), else: s
+             end)}
+
+          {:error, reason} ->
+            {:noreply, put_flash(socket, :error, Board.send_back_flash_error(reason))}
         end
     end
   end
@@ -571,6 +594,7 @@ defmodule SvarmWeb.BoardLive do
               now_mono={@now_mono}
               focused={@console_focused?}
               running?={@selected_task_id in Map.get(@orchestrator, :running_ids, [])}
+              tracker_kind={@tracker_kind}
             />
         <% end %>
       </div>
