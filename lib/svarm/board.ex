@@ -260,9 +260,8 @@ defmodule Svarm.Board do
     non-number cost counts as 0.
   - `:run_meta` — `task_id => meta` for a PR that exists only on the run.
 
-  PR class uses preloaded `pr_url` / `pull_request_url` plus run meta. It
-  does not call `Coordination.get/1`. Missing or `0` `created_at` sorts last
-  inside the class. Does not call `review_evidence/3`.
+  PR class uses preloaded `pr_url` / `pull_request_url` plus run meta.
+  Missing or `0` `created_at` sorts last inside the class.
   """
   def sort_review_tasks(tasks, opts \\ []) when is_list(tasks) do
     costs = opt_map(opts, :costs)
@@ -309,13 +308,11 @@ defmodule Svarm.Board do
 
   defp review_cost_usd(costs, id) do
     case Map.get(costs, id) do
-      # Term order places every integer before every float, so keep one type.
       %{total_cost_usd: usd} when is_number(usd) -> usd * 1.0
       _ -> 0.0
     end
   end
 
-  # `{0, unix}` sorts before `{1, 0}`, so missing or zero timestamps come last.
   defp review_age_key(task) do
     case map_get(task, :created_at) do
       seconds when is_integer(seconds) and seconds > 0 -> {0, seconds}

@@ -398,9 +398,7 @@ defmodule SvarmWeb.BoardLive do
       |> restream_task(task_id)
 
     # The preceding :run_marker stream event owns display. Auto-select hydrates
-    # that persisted marker from RunLog. Reset after that select: a later
-    # stream_insert is the newest row, and LiveView renders it ahead of the
-    # sorted reset.
+    # that persisted marker from RunLog.
     socket =
       cond do
         is_nil(socket.assigns.selected_task_id) ->
@@ -691,8 +689,7 @@ defmodule SvarmWeb.BoardLive do
 
   defp restream_task(socket, _), do: socket
 
-  # stream_insert leaves an existing card in place. A class change would keep
-  # the old visual order, so replace the review stream from Board's sort.
+  # stream_insert leaves an existing card in place.
   defp maybe_reset_review_stream(socket, before_ids) do
     if review_ids(socket) == before_ids do
       socket
