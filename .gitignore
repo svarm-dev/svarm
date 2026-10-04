@@ -54,5 +54,9 @@ npm-debug.log
 # Playwright MCP local captures
 .playwright-mcp/
 
+# verify-svarm run state and local proof dumps (keep the skill itself)
+.cursor/skills/verify-svarm/.run/
+.cursor/skills/verify-svarm/artifacts/
+
 # pi-subagents local run artifacts
 .pi-subagents/
