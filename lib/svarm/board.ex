@@ -308,8 +308,8 @@ defmodule Svarm.Board do
 
   defp review_cost_usd(costs, id) do
     case Map.get(costs, id) do
-      %{total_cost_usd: usd} when is_number(usd) -> usd * 1.0
-      _ -> 0.0
+      %{total_cost_usd: usd} when is_number(usd) -> usd
+      _ -> 0
     end
   end
 
