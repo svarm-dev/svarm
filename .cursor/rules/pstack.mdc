@@ -1,0 +1,16 @@
+---
+description: pstack trial — ponytail off; poteto-mode for nontrivial Cursor work
+alwaysApply: true
+---
+
+# pstack trial (this repo)
+
+Ponytail is parked. Ignore any always-on ponytail ladder (`ACTIVE EVERY RESPONSE`, YAGNI-first skip) unless the user explicitly runs `/ponytail`.
+
+For nontrivial Cursor coding (architecture, multi-file change, UI, "are we sure?"), apply `/poteto-mode`. Per-role models are in the user rule `pstack-models.mdc` (`/setup-pstack`).
+
+Svärm `AGENTS.md` product law still wins over generic pstack Phoenix or TypeScript advice: SQLite only, task CRUD through KanbanBridge, shell-out only in Runner.Cli / Runner.PiRPC, no Postgres.
+
+UI or operator-path changes: drive `.cursor/skills/verify-svarm/` (isolated Mix board). Do not attach to port 4000 or `~/.svarm/kanban/kanban.db`.
+
+**Host tools:** Cursor sessions use Cursor tools (`Read`, `Grep`, `Glob`, `Shell`, `StrReplace`). The pi-elixir lowercase `read` / `edit` names in `AGENTS.md` apply only when the host is pi.
