@@ -86,6 +86,19 @@ defmodule Svarm.Tracker do
             ) :: :ok | {:error, term()}
 
   @doc """
+  Persists or clears the one-shot operator follow-up text on the active tracker.
+
+  `nil` (or empty) clears it — the text is consumed by the next spawn once.
+  Local writes task metadata `follow_up`. GitHub stores an HTML comment in
+  the issue body (`<!-- svarm-follow-up: ... -->`), same family as `depends_on`.
+  """
+  @callback update_follow_up(
+              config :: map(),
+              id :: String.t(),
+              text :: String.t() | nil
+            ) :: :ok | {:error, term()}
+
+  @doc """
   Claims an issue for dispatch. Returns `:ok`.
   """
   @callback claim(config :: map(), id :: String.t()) :: :ok

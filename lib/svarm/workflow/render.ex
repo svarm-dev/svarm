@@ -136,10 +136,31 @@ defmodule Svarm.Workflow.Render do
          rendered
          |> maybe_append_block(ci, ci_mode)
          |> maybe_append_block(review, review_mode)
+         |> maybe_append_block(follow_up_block(task), :append)
          |> maybe_append_block(proof_of_work_block(), :append)}
 
       err ->
         err
+    end
+  end
+
+  # One-shot operator follow-up queued after settle (`review` / `failed`
+  # card). Read from the task itself (`Issue.follow_up`), not Coordination —
+  # the tracker persists it and Dispatch clears it after the first spawn
+  # attempt, so a render never repeats it.
+  defp follow_up_block(task) do
+    case field(task, :follow_up) do
+      text when is_binary(text) ->
+        trimmed = String.trim(text)
+
+        if trimmed == "" do
+          nil
+        else
+          "Operator follow-up for this run:\n" <> trimmed
+        end
+
+      _ ->
+        nil
     end
   end
 

@@ -85,6 +85,8 @@ defmodule SvarmWeb.BoardLive.RunConsole do
 
           <.abort_control task_id={@task.id} running?={@running?} />
 
+          <.follow_up_panel :if={@task.status in ["review", "failed"]} task={@task} />
+
           <%= if @task.status == "review" do %>
             <% wait = Board.wait_reason(@task) %>
             <% changes_requested? = wait == :changes_requested %>
@@ -484,6 +486,33 @@ defmodule SvarmWeb.BoardLive.RunConsole do
       </button>
       <p :if={@running?} class="text-xs opacity-60">
         Stops this run. Ticket returns to Todo.
+      </p>
+    </div>
+    """
+  end
+
+  attr :task, :map, required: true
+
+  defp follow_up_panel(assigns) do
+    ~H"""
+    <div
+      id={"follow-up-#{@task.id}"}
+      class="rounded-md border border-base-300 px-3 py-2 text-sm"
+    >
+      <form phx-submit="follow_up_task" class="flex flex-wrap items-center gap-2">
+        <input type="hidden" name="task_id" value={@task.id} />
+        <input
+          type="text"
+          name="message"
+          required
+          placeholder="Also fix the tests…"
+          class="input input-sm input-bordered min-w-[12rem] flex-1"
+        />
+        <button type="submit" class="btn btn-sm btn-outline">Follow up</button>
+      </form>
+      <p class="mt-1 text-[11px] opacity-60">
+        Starts a new run with this note once; ticket returns to Todo. Same board auth as
+        Steer/Abort.
       </p>
     </div>
     """

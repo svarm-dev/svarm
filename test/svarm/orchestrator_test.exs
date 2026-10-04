@@ -697,6 +697,66 @@ defmodule Svarm.OrchestratorTest do
       end
     end
 
+    test "follow-up note is cleared after the first spawn attempt" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "settled follow-up",
+          status: "todo",
+          assignee: "demo"
+        })
+
+      :ok = KanbanBridge.update_follow_up(task.id, "also fix the tests")
+      assert %{follow_up: "also fix the tests"} = KanbanBridge.get_task(task.id)
+
+      original = :sys.get_state(Orchestrator)
+
+      local_config = %{
+        kind: :local,
+        active_states: ["todo", "in_progress"],
+        terminal_states: ["done", "failed", "review"],
+        ignored_assignees: []
+      }
+
+      # `true` exits 0 fast; approval off so the poll spawns immediately.
+      demo_agent = %{
+        command: "true",
+        args: [],
+        env: %{},
+        adapter: "cli",
+        display_name: "Demo",
+        name: "demo"
+      }
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | tracker: Svarm.Tracker.Local,
+            tracker_config: local_config,
+            approval: %{mode: :off, trusted_assignees: MapSet.new()},
+            agents: Map.put(original.agents, "demo", demo_agent),
+            budget_caps: %{},
+            claimed: MapSet.delete(state.claimed, task.id),
+            running: Map.delete(state.running, task.id),
+            completed: MapSet.delete(state.completed, task.id),
+            approved_once: MapSet.new(),
+            last_budget_block: nil
+        }
+      end)
+
+      try do
+        send(Orchestrator, :tick)
+
+        # The note lives on the tracker, so consuming it means the tracker
+        # copy is cleared exactly once the first worker started.
+        assert wait_until(fn -> KanbanBridge.get_task(task.id).follow_up == nil end)
+
+        # The spawn really happened (agent exited → terminal status).
+        assert KanbanBridge.get_task(task.id).status in ["review", "failed", "done"]
+      after
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
     test "budget_exceeded sets last_budget_block and does not claim task" do
       task =
         KanbanBridge.create_task(%{

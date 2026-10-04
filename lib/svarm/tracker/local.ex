@@ -81,6 +81,11 @@ defmodule Svarm.Tracker.Local do
   end
 
   @impl true
+  def update_follow_up(_config, id, text) do
+    KanbanBridge.update_follow_up(id, text)
+  end
+
+  @impl true
   def claim(_config, _id), do: :ok
 
   @impl true

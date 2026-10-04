@@ -426,6 +426,21 @@ defmodule Svarm.Tracker.GitHub do
   end
 
   @impl true
+  def update_follow_up(config, id, text) when is_binary(id) do
+    case get_issue(config, id) do
+      {:ok, issue} ->
+        patch_issue_body(
+          config,
+          issue.source_id,
+          Normalize.put_follow_up_marker(issue.body || "", text)
+        )
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @impl true
   def claim(config, id) do
     case find_issue(config, id) do
       nil ->
