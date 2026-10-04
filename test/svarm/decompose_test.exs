@@ -49,4 +49,43 @@ defmodule Svarm.DecomposeTest do
 
     assert hd(tasks).title == "one"
   end
+
+  test "opencode-go MiniMax complete uses Anthropic /messages stub" do
+    prev = System.get_env("OPENCODE_API_KEY")
+    System.put_env("OPENCODE_API_KEY", "sk-test")
+
+    on_exit(fn ->
+      if prev,
+        do: System.put_env("OPENCODE_API_KEY", prev),
+        else: System.delete_env("OPENCODE_API_KEY")
+    end)
+
+    json = ~s([{"title":"one","body":"do it","type":"code","priority":1}])
+    parent = self()
+
+    plug = fn conn ->
+      send(parent, {:path, conn.request_path})
+
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.send_resp(
+        200,
+        Jason.encode!(%{
+          "content" => [%{"type" => "text", "text" => json}],
+          "usage" => %{"input_tokens" => 3, "output_tokens" => 4, "cost" => 0.02}
+        })
+      )
+    end
+
+    assert {:ok, %{tasks: tasks}} =
+             Decompose.run(%{goal: "ship"},
+               provider: "opencode-go",
+               model: "minimax-m3",
+               plug: plug
+             )
+
+    assert_receive {:path, path}
+    assert String.ends_with?(path, "/messages")
+    assert hd(tasks).title == "one"
+  end
 end

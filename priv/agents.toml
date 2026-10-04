@@ -43,10 +43,10 @@ env = { GITHUB_TOKEN = "$GITHUB_TOKEN", OPENROUTER_API_KEY = "$OPENROUTER_API_KE
 
 # Optional: pi RPC via OpenCode Go (subscription, https://opencode.ai/zen/go/v1).
 # Same OPENCODE_API_KEY for Zen (provider = "opencode", https://opencode.ai/zen/v1).
-# List the key in env — empty env does not inherit the host. Use a chat/completions
-# model id (e.g. glm-5.3-flash). In-app Decompose / /setup stay OpenRouter-only.
-# See docs/agents.md. Do not uncomment this in place of [agent.default] unless you
-# intend to switch the live default off OpenRouter.
+# List the key in env — empty env does not inherit the host. Default example is a
+# chat/completions id (glm-5.3-flash). In-app Decompose also completes Go MiniMax/
+# Qwen /messages ids; see priv/providers.toml. Do not uncomment this in place of
+# [agent.default] unless you intend to switch the live default off OpenRouter.
 # [agent.opencode_go]
 # name = "Pi (OpenCode Go)"
 # role = "Backend"
