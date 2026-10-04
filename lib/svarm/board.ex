@@ -258,10 +258,11 @@ defmodule Svarm.Board do
 
   - `:costs` — `task_id => %{total_cost_usd: number, ...}`. Missing or
     non-number cost counts as 0.
-  - `:run_meta` — `task_id => meta` passed to `review_glance/2`.
+  - `:run_meta` — `task_id => meta` for a PR that exists only on the run.
 
-  Missing or `0` `created_at` sorts last inside the class. Does not call
-  `review_evidence/3` (that reads the usage ledger per card).
+  PR class uses preloaded `pr_url` / `pull_request_url` plus run meta. It
+  does not call `Coordination.get/1`. Missing or `0` `created_at` sorts last
+  inside the class. Does not call `review_evidence/3`.
   """
   def sort_review_tasks(tasks, opts \\ []) when is_list(tasks) do
     costs = opt_map(opts, :costs)
@@ -299,7 +300,7 @@ defmodule Svarm.Board do
     case review_ci(task).state do
       :fail -> 0
       :pending -> 1
-      _ -> glance_class(review_glance(task, meta))
+      _ -> glance_class(if known_pr_url(task, meta), do: :has_pr, else: :no_pr)
     end
   end
 
@@ -460,11 +461,14 @@ defmodule Svarm.Board do
 
   @doc "PR URL from coordination, run meta, or task map when known (no inventing)."
   def pr_url(task, meta \\ %{}) do
+    known_pr_url(task, meta) || coord_pr_url_fallback(task)
+  end
+
+  defp known_pr_url(task, meta) do
     [
       map_get(task, :pr_url),
       meta_get(meta, :pr_url),
-      map_get(task, :pull_request_url),
-      coord_pr_url_fallback(task)
+      map_get(task, :pull_request_url)
     ]
     |> Enum.find(&(is_binary(&1) and &1 != ""))
   end

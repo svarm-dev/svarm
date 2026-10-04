@@ -101,6 +101,21 @@ defmodule Svarm.BoardReviewSortTest do
     assert ids == ["na_none", "na_pr", "pass_pr", "unknown_pr"]
   end
 
+  test "sort_review_tasks uses preloaded PR and run meta only" do
+    tasks = [
+      %{id: "bare", status: "review", created_at: 10},
+      %{id: "meta_pr", status: "review", created_at: 20}
+    ]
+
+    ids =
+      Board.sort_review_tasks(tasks,
+        run_meta: %{"meta_pr" => %{pr_url: "https://example/pr/9"}}
+      )
+      |> Enum.map(& &1.id)
+
+    assert ids == ["bare", "meta_pr"]
+  end
+
   test "sort_review_tasks empty list stays empty" do
     assert Board.sort_review_tasks([]) == []
     assert Board.sort_review_tasks([], costs: %{}, run_meta: %{}) == []
