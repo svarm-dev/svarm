@@ -387,6 +387,7 @@ defmodule SvarmWeb.BoardLive do
 
   @impl true
   def handle_info({:run_started, task_id, meta}, socket) do
+    before_review_ids = review_ids(socket)
     started_mono = meta[:started_mono_ms] || System.monotonic_time(:millisecond)
 
     socket =
@@ -397,7 +398,9 @@ defmodule SvarmWeb.BoardLive do
       |> restream_task(task_id)
 
     # The preceding :run_marker stream event owns display. Auto-select hydrates
-    # that persisted marker from RunLog.
+    # that persisted marker from RunLog. Reset after that select: a later
+    # stream_insert is the newest row, and LiveView renders it ahead of the
+    # sorted reset.
     socket =
       cond do
         is_nil(socket.assigns.selected_task_id) ->
@@ -410,7 +413,7 @@ defmodule SvarmWeb.BoardLive do
           socket
       end
 
-    {:noreply, socket}
+    {:noreply, maybe_reset_review_stream(socket, before_review_ids)}
   end
 
   @impl true
@@ -432,6 +435,7 @@ defmodule SvarmWeb.BoardLive do
     orchestrator = Map.put(socket.assigns.orchestrator, :session_cost, session_cost)
 
     running_started = Map.delete(socket.assigns.running_started, task_id)
+    before_review_ids = review_ids(socket)
 
     socket =
       socket
@@ -441,6 +445,7 @@ defmodule SvarmWeb.BoardLive do
       |> update_costs_for_task(task_id)
       # Stream items freeze card DOM; re-insert so cost badges pick up new @costs.
       |> restream_task(task_id)
+      |> maybe_reset_review_stream(before_review_ids)
 
     {:noreply, socket}
   end
@@ -595,7 +600,10 @@ defmodule SvarmWeb.BoardLive do
   defp put_columns(socket, tasks, costs \\ nil) do
     costs = costs || compute_costs(tasks)
     column_ids = Board.column_ids()
-    grouped = Board.group_by_status(tasks)
+
+    grouped =
+      Board.group_by_status(tasks, costs: costs, run_meta: socket.assigns.run_meta)
+
     counts = Map.new(column_ids, fn col -> {col, length(Map.get(grouped, col, []))} end)
     tasks_by_id = Map.new(tasks, fn t -> {t.id, card_task(t)} end)
 
@@ -625,6 +633,8 @@ defmodule SvarmWeb.BoardLive do
     task = if old, do: Map.merge(old, incoming), else: incoming
     old_status = old && old.status
     new_status = task.status
+    touches_review? = old_status == "review" or new_status == "review"
+    before_review_ids = if touches_review?, do: review_ids(socket)
 
     socket =
       cond do
@@ -644,11 +654,18 @@ defmodule SvarmWeb.BoardLive do
     counts = recompute_column_counts(tasks_by_id, socket.assigns.column_ids)
     workload = Board.counts_by_assignee(Map.values(tasks_by_id))
 
-    socket
-    |> assign(:tasks_by_id, tasks_by_id)
-    |> assign(:column_counts, counts)
-    |> assign(:task_count, map_size(tasks_by_id))
-    |> assign(:workload, workload)
+    socket =
+      socket
+      |> assign(:tasks_by_id, tasks_by_id)
+      |> assign(:column_counts, counts)
+      |> assign(:task_count, map_size(tasks_by_id))
+      |> assign(:workload, workload)
+
+    if touches_review? do
+      maybe_reset_review_stream(socket, before_review_ids)
+    else
+      socket
+    end
   end
 
   defp insert_into_column(socket, status, task) do
@@ -673,6 +690,40 @@ defmodule SvarmWeb.BoardLive do
   end
 
   defp restream_task(socket, _), do: socket
+
+  # stream_insert leaves an existing card in place. A class change would keep
+  # the old visual order, so replace the review stream from Board's sort.
+  defp maybe_reset_review_stream(socket, before_ids) do
+    if review_ids(socket) == before_ids do
+      socket
+    else
+      reset_review_stream(socket)
+    end
+  end
+
+  defp reset_review_stream(socket) do
+    case stream_name("review") do
+      nil -> socket
+      name -> stream(socket, name, review_tasks(socket), reset: true)
+    end
+  end
+
+  defp review_ids(socket) do
+    socket
+    |> review_tasks()
+    |> Enum.map(& &1.id)
+  end
+
+  defp review_tasks(socket) do
+    socket.assigns.tasks_by_id
+    |> Map.values()
+    |> Enum.filter(&(&1.status == "review"))
+    |> Board.sort_review_tasks(review_sort_opts(socket))
+  end
+
+  defp review_sort_opts(socket) do
+    [costs: socket.assigns.costs, run_meta: socket.assigns.run_meta]
+  end
 
   defp reset_column_streams(socket, column_ids) do
     Enum.reduce(column_ids, socket, fn col, s ->
@@ -857,7 +908,7 @@ defmodule SvarmWeb.BoardLive do
   defp handle_board_key(socket, _), do: socket
 
   defp select_relative(socket, delta) do
-    ids = task_ids_in_order(socket.assigns.tasks_by_id, socket.assigns.column_ids)
+    ids = task_ids_in_order(socket)
 
     case ids do
       [] ->
@@ -871,14 +922,21 @@ defmodule SvarmWeb.BoardLive do
     end
   end
 
-  defp task_ids_in_order(tasks_by_id, column_ids) do
-    by_status = Enum.group_by(Map.values(tasks_by_id), & &1.status)
+  defp task_ids_in_order(socket) do
+    grouped =
+      socket.assigns.tasks_by_id
+      |> Map.values()
+      |> Board.group_by_status(review_sort_opts(socket))
 
-    Enum.flat_map(column_ids, fn col ->
-      by_status
-      |> Map.get(col, [])
-      |> Enum.sort_by(&{&1.priority || 0, &1.created_at || 0, &1.id})
-      |> Enum.map(& &1.id)
+    Enum.flat_map(socket.assigns.column_ids, fn
+      "review" = col ->
+        grouped |> Map.get(col, []) |> Enum.map(& &1.id)
+
+      col ->
+        grouped
+        |> Map.get(col, [])
+        |> Enum.sort_by(&{&1.priority || 0, &1.created_at || 0, &1.id})
+        |> Enum.map(& &1.id)
     end)
   end
 

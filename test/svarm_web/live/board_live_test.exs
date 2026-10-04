@@ -1114,6 +1114,139 @@ defmodule SvarmWeb.BoardLiveTest do
     assert html =~ "No work waiting for human review"
   end
 
+  test "review column lists CI fail before pending and no PR", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    no_pr =
+      KanbanBridge.create_task(%{
+        title: "No PR yet",
+        status: "review",
+        assignee: "demo",
+        created_at: 100
+      })
+
+    pending =
+      KanbanBridge.create_task(%{
+        title: "CI pending",
+        status: "review",
+        assignee: "demo",
+        created_at: 200
+      })
+
+    failed =
+      KanbanBridge.create_task(%{
+        title: "CI fail",
+        status: "review",
+        assignee: "demo",
+        created_at: 300
+      })
+
+    assert {:ok, _} =
+             Svarm.Coordination.record_pr(
+               pending.id,
+               "https://github.com/example/repo/pull/2",
+               []
+             )
+
+    assert {:ok, _} = Svarm.Coordination.upsert(pending.id, %{ci_last_conclusion: "pending"})
+
+    assert {:ok, _} =
+             Svarm.Coordination.record_pr(failed.id, "https://github.com/example/repo/pull/3", [])
+
+    assert {:ok, _} = Svarm.Coordination.upsert(failed.id, %{ci_last_conclusion: "failed"})
+
+    {:ok, view, html} = live(conn, ~p"/board")
+
+    assert review_column_task_ids(html) == [failed.id, pending.id, no_pr.id]
+    refute html =~ "No work waiting for human review"
+
+    render_keydown(view, "board_keydown", %{"key" => "j"})
+    assert has_element?(view, "#run-console", "CI fail")
+    refute has_element?(view, "#run-console", "CI pending")
+  end
+
+  test "CI fail update moves that review card ahead of an older pass", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    older =
+      KanbanBridge.create_task(%{
+        title: "Older pass",
+        status: "review",
+        assignee: "demo",
+        created_at: 1_700_000_001
+      })
+
+    newer =
+      KanbanBridge.create_task(%{
+        title: "Newer pass",
+        status: "review",
+        assignee: "demo",
+        created_at: 1_700_000_100
+      })
+
+    assert {:ok, _} =
+             Svarm.Coordination.record_pr(older.id, "https://github.com/example/repo/pull/1", [])
+
+    assert {:ok, _} = Svarm.Coordination.upsert(older.id, %{ci_last_conclusion: "passed"})
+
+    assert {:ok, _} =
+             Svarm.Coordination.record_pr(newer.id, "https://github.com/example/repo/pull/2", [])
+
+    assert {:ok, _} = Svarm.Coordination.upsert(newer.id, %{ci_last_conclusion: "passed"})
+
+    {:ok, view, html} = live(conn, ~p"/board")
+    assert review_column_task_ids(html) == [older.id, newer.id]
+
+    Phoenix.PubSub.broadcast(
+      Svarm.PubSub,
+      Events.topic(),
+      {:task_updated,
+       %{
+         id: newer.id,
+         status: "review",
+         title: "Newer pass",
+         ci_conclusion: "failed",
+         pr_url: "https://github.com/example/repo/pull/2"
+       }}
+    )
+
+    :sys.get_state(view.pid)
+    assert review_column_task_ids(render(view)) == [newer.id, older.id]
+  end
+
+  test "run_started PR link reorders review ahead of cards that still lack a PR", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    older =
+      KanbanBridge.create_task(%{
+        title: "Older no PR",
+        status: "review",
+        assignee: "demo",
+        created_at: 100
+      })
+
+    newer =
+      KanbanBridge.create_task(%{
+        title: "Newer no PR",
+        status: "review",
+        assignee: "demo",
+        created_at: 200
+      })
+
+    {:ok, view, html} = live(conn, ~p"/board")
+    assert review_column_task_ids(html) == [older.id, newer.id]
+
+    Phoenix.PubSub.broadcast(
+      Svarm.PubSub,
+      Events.topic(),
+      {:run_started, older.id,
+       %{assignee: "demo", pr_url: "https://github.com/example/repo/pull/4"}}
+    )
+
+    :sys.get_state(view.pid)
+    assert review_column_task_ids(render(view)) == [newer.id, older.id]
+  end
+
   test "appends text stream events once", %{conn: conn} do
     task =
       KanbanBridge.create_task(%{
@@ -1551,6 +1684,15 @@ defmodule SvarmWeb.BoardLiveTest do
     # task_cost_summary renders total_cost_usd for known models
     assert html =~ "$"
     assert has_element?(view, "#task-#{task.id}")
+  end
+
+  defp review_column_task_ids(html) do
+    [_, rest] = String.split(html, ~s(id="col-review-tasks"), parts: 2)
+    [col | _] = String.split(rest, ~s(id="col-), parts: 2)
+
+    ~r/id="task-([^"]+)"/
+    |> Regex.scan(col)
+    |> Enum.map(fn [_, id] -> id end)
   end
 
   defp put_orchestrator_running(task, worker) do
