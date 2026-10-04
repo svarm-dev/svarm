@@ -237,6 +237,56 @@ defmodule SvarmWeb.SetupLiveTest do
     assert html =~ "glm-5.3-flash"
   end
 
+  test "setup chips omit ids the Go adapter cannot complete", %{conn: conn} do
+    prev = System.get_env("OPENCODE_API_KEY")
+    System.put_env("OPENCODE_API_KEY", "sk-oc-stub")
+
+    plug = fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.send_resp(
+        200,
+        Jason.encode!(%{
+          "data" => [
+            %{"id" => "minimax-m3"},
+            %{"id" => "glm-5.3-flash"},
+            %{"id" => "grok-4.7"},
+            %{"id" => "gpt-6-luna"}
+          ]
+        })
+      )
+    end
+
+    Application.put_env(:svarm, :provider_req_plug, plug)
+
+    on_exit(fn ->
+      Application.delete_env(:svarm, :provider_req_plug)
+
+      if prev,
+        do: System.put_env("OPENCODE_API_KEY", prev),
+        else: System.delete_env("OPENCODE_API_KEY")
+    end)
+
+    {:ok, view, _html} = live(conn, ~p"/setup")
+
+    view
+    |> element("#setup-form")
+    |> render_change(%{
+      "setup" => %{
+        "provider_id" => "opencode-go",
+        "provider_api_key" => "",
+        "agent_model" => "glm-5.3-flash",
+        "tracker_kind" => "local"
+      }
+    })
+
+    html = render_click(view, "test_provider", %{})
+    assert html =~ ~s(phx-value-model="minimax-m3")
+    assert html =~ ~s(phx-value-model="glm-5.3-flash")
+    refute html =~ ~s(phx-value-model="grok-4.7")
+    refute html =~ ~s(phx-value-model="gpt-6-luna")
+  end
+
   test "selected provider without a key is not ready even if another key exists", %{conn: conn} do
     prev_or = System.get_env("OPENROUTER_API_KEY")
     prev_oc = System.get_env("OPENCODE_API_KEY")

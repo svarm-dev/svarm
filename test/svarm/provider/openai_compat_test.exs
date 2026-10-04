@@ -115,6 +115,41 @@ defmodule Svarm.Provider.OpenAICompatTest do
     refute Map.has_key?(oc_map, "x-openrouter-title")
   end
 
+  test "list_models drops ids the adapter cannot complete" do
+    System.put_env("OPENCODE_API_KEY", "sk-oc")
+    {:ok, {mod, go}} = Resolve.resolve("opencode-go")
+    {:ok, {_zen_mod, zen}} = Resolve.resolve("opencode")
+
+    go_plug = fn conn ->
+      json(conn, 200, %{
+        "data" => [
+          %{"id" => "minimax-m3"},
+          %{"id" => "glm-5.3-flash"},
+          %{"id" => "grok-4.7"},
+          %{"id" => "gpt-6-luna"}
+        ]
+      })
+    end
+
+    zen_plug = fn conn ->
+      json(conn, 200, %{
+        "data" => [
+          %{"id" => "qwen3.8-flash"},
+          %{"id" => "qwen3.8-max"},
+          %{"id" => "minimax-m3"},
+          %{"id" => "claude-sonnet-5"},
+          %{"id" => "gemini-3.8-flash"}
+        ]
+      })
+    end
+
+    assert {:ok, ["minimax-m3", "glm-5.3-flash"]} =
+             mod.list_models(config: go, plug: go_plug)
+
+    assert {:ok, ["qwen3.8-flash", "qwen3.8-max", "minimax-m3"]} =
+             mod.list_models(config: zen, plug: zen_plug)
+  end
+
   test "Settings secret provider.<id> wins over shared OPENCODE_API_KEY env" do
     System.put_env("OPENCODE_API_KEY", "from-env")
 
