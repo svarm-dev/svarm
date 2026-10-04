@@ -289,18 +289,40 @@ defmodule Svarm.Board do
   defp wait_reason_status(_), do: nil
 
   # Prefer preloaded field from list_tasks/get_task; fall back to one query.
+  # The flag is not the only open circuit: send-back also refuses when
+  # `ci_resume_count` is already at the shared cap, before the flag flips.
   defp circuit_open_for?(task) do
-    case map_get(task, :ci_circuit_open) do
-      true ->
-        true
+    flag_open =
+      case map_get(task, :ci_circuit_open) do
+        true ->
+          true
 
-      false ->
-        false
+        false ->
+          false
 
-      _ ->
-        id = map_get(task, :id)
-        is_binary(id) and Svarm.Coordination.circuit_open?(id)
+        _ ->
+          id = map_get(task, :id)
+          is_binary(id) and Svarm.Coordination.circuit_open?(id)
+      end
+
+    flag_open or resume_count_at_cap?(task)
+  end
+
+  defp resume_count_at_cap?(task) do
+    case map_get(task, :ci_resume_count) do
+      count when is_integer(count) -> count >= resume_max_attempts()
+      _ -> false
     end
+  end
+
+  defp resume_max_attempts do
+    config =
+      case Workflow.Store.get() do
+        %{config: config} -> config
+        _ -> nil
+      end
+
+    Svarm.CiResume.load_caps(config).max_attempts
   end
 
   defp agent_question_for?(task) do
@@ -710,6 +732,7 @@ defmodule Svarm.Board do
   defp merge_coord(task, nil) do
     task
     |> Map.put(:ci_circuit_open, false)
+    |> Map.put(:ci_resume_count, 0)
     |> Map.put(:review_decision, nil)
     |> Map.put(:ci_conclusion, nil)
     |> Map.put(:ci_summary, nil)
@@ -719,6 +742,7 @@ defmodule Svarm.Board do
   defp merge_coord(task, %Svarm.Coordination{} = c) do
     task
     |> Map.put(:ci_circuit_open, c.ci_circuit_open == true)
+    |> Map.put(:ci_resume_count, c.ci_resume_count || 0)
     |> Map.put(:review_decision, c.review_decision)
     |> Map.put(:ci_conclusion, c.ci_last_conclusion)
     |> Map.put(:ci_summary, c.ci_context_summary)

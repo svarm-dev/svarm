@@ -33,6 +33,16 @@ defmodule Svarm.BoardWaitReasonTest do
     assert Board.wait_reason(%{status: "review", id: "x", review_decision: nil}) == :review
   end
 
+  test "resume count at the cap is a circuit even when the flag is still false" do
+    assert Board.wait_reason(%{
+             status: "review",
+             id: "t_cap",
+             ci_circuit_open: false,
+             ci_resume_count: 99,
+             review_decision: "changes_requested"
+           }) == :ci_circuit
+  end
+
   test "ci_circuit wins over changes_requested" do
     assert Board.wait_reason(%{
              status: "review",
