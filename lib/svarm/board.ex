@@ -260,8 +260,9 @@ defmodule Svarm.Board do
     non-number cost counts as 0.
   - `:run_meta` — `task_id => meta` for a PR that exists only on the run.
 
-  PR class uses preloaded `pr_url` / `pull_request_url` plus run meta.
-  Missing or `0` `created_at` sorts last inside the class.
+  PR class uses the same glance as the chip (`review_glance/2`), including
+  run meta and the coordination fallback. Missing or `0` `created_at` sorts
+  last inside the class.
   """
   def sort_review_tasks(tasks, opts \\ []) when is_list(tasks) do
     costs = opt_map(opts, :costs)
@@ -299,7 +300,7 @@ defmodule Svarm.Board do
     case review_ci(task).state do
       :fail -> 0
       :pending -> 1
-      _ -> glance_class(if known_pr_url(task, meta), do: :has_pr, else: :no_pr)
+      _ -> glance_class(review_glance(task, meta))
     end
   end
 

@@ -682,8 +682,14 @@ defmodule SvarmWeb.BoardLive do
 
   defp restream_task(socket, id) when is_binary(id) do
     case Map.get(socket.assigns.tasks_by_id, id) do
-      nil -> socket
-      task -> insert_into_column(socket, task.status, task)
+      %{status: "review"} ->
+        reset_review_stream(socket)
+
+      task when is_map(task) ->
+        insert_into_column(socket, task.status, task)
+
+      nil ->
+        socket
     end
   end
 

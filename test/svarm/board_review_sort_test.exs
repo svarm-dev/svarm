@@ -1,7 +1,7 @@
 defmodule Svarm.BoardReviewSortTest do
   use ExUnit.Case, async: false
 
-  alias Svarm.Board
+  alias Svarm.{Board, Coordination}
 
   test "sort_review_tasks orders fail, pending, no PR, cost, age, then id" do
     tasks = [
@@ -101,19 +101,23 @@ defmodule Svarm.BoardReviewSortTest do
     assert ids == ["na_none", "na_pr", "pass_pr", "unknown_pr"]
   end
 
-  test "sort_review_tasks uses preloaded PR and run meta only" do
-    tasks = [
-      %{id: "bare", status: "review", created_at: 10},
-      %{id: "meta_pr", status: "review", created_at: 20}
-    ]
+  test "sort_review_tasks matches glance when PR lives only in coordination" do
+    {:ok, _} =
+      Coordination.record_pr("fresh", "https://github.com/example/repo/pull/2")
 
-    ids =
-      Board.sort_review_tasks(tasks,
-        run_meta: %{"meta_pr" => %{pr_url: "https://example/pr/9"}}
-      )
-      |> Enum.map(& &1.id)
+    older = %{
+      id: "older",
+      status: "review",
+      pr_url: "https://github.com/example/repo/pull/1",
+      created_at: 10
+    }
 
-    assert ids == ["bare", "meta_pr"]
+    fresh = %{id: "fresh", status: "review", created_at: 20}
+
+    assert Board.review_glance(fresh) == :has_pr
+
+    ids = Board.sort_review_tasks([fresh, older]) |> Enum.map(& &1.id)
+    assert ids == ["older", "fresh"]
   end
 
   test "sort_review_tasks empty list stays empty" do

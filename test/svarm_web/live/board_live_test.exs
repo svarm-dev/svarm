@@ -1214,6 +1214,40 @@ defmodule SvarmWeb.BoardLiveTest do
     assert review_column_task_ids(render(view)) == [newer.id, older.id]
   end
 
+  test "deep link to a CI-fail review card keeps fail first", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    pass =
+      KanbanBridge.create_task(%{
+        title: "Deep pass",
+        status: "review",
+        assignee: "demo",
+        created_at: 1_700_000_001
+      })
+
+    fail =
+      KanbanBridge.create_task(%{
+        title: "Deep fail",
+        status: "review",
+        assignee: "demo",
+        created_at: 1_700_000_100
+      })
+
+    assert {:ok, _} =
+             Svarm.Coordination.record_pr(pass.id, "https://github.com/example/repo/pull/1", [])
+
+    assert {:ok, _} = Svarm.Coordination.upsert(pass.id, %{ci_last_conclusion: "passed"})
+
+    assert {:ok, _} =
+             Svarm.Coordination.record_pr(fail.id, "https://github.com/example/repo/pull/2", [])
+
+    assert {:ok, _} = Svarm.Coordination.upsert(fail.id, %{ci_last_conclusion: "failed"})
+
+    {:ok, _view, html} = live(conn, ~p"/board?task=#{fail.id}")
+    assert review_column_task_ids(html) == [fail.id, pass.id]
+    assert html =~ "Deep fail"
+  end
+
   test "run_started PR link reorders review ahead of cards that still lack a PR", %{conn: conn} do
     KanbanBridge.delete_all_tasks()
 
