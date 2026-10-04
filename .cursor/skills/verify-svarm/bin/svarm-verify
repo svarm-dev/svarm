@@ -92,14 +92,13 @@ wait_health() {
 }
 
 csrf_from_html() {
-  python3 - <<'PY'
-import re, sys
+  python3 -c 'import re, sys
 html = sys.stdin.read()
-m = re.search(r'name="csrf-token"\s+content="([^"]+)"', html)
+m = re.search(r"name=\"csrf-token\"[^>]*content=\"([^\"]+)\"", html) or re.search(r"data-csrf=\"([^\"]+)\"", html)
 if not m:
     sys.exit(1)
 print(m.group(1))
-PY
+'
 }
 
 cmd_launch() {
@@ -307,7 +306,7 @@ cmd_cleanup() {
     fi
   fi
   rm -rf "${DATA_ROOT:-}"
-  rm -f "$STATE" "$RUN_DIR/server.pid" "$RUN_DIR/cookies.txt"
+  rm -f "$STATE" "$RUN_DIR/server.pid" "$RUN_DIR/cookies.txt" "$RUN_DIR/server.log"
   echo "svarm-verify: cleaned instance (evidence kept under ${SVARM_VERIFY_EVIDENCE:-$DEFAULT_EVIDENCE})"
 }
 
