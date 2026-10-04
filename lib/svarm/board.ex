@@ -102,6 +102,84 @@ defmodule Svarm.Board do
     do: "The run was stopped, but the ticket could not be moved to Todo."
 
   @doc """
+  Queue an operator follow-up on a **settled** card so the next run starts
+  with the note included once.
+
+  Works for `review` and `failed` cards only — a live `in_progress` run uses
+  `RunSteer` instead. This is a fresh orchestrator dispatch (CLI or PiRPC),
+  not an inject into a dead session.
+
+  1. Trims and persists the text on the ticket (Local `follow_up` metadata;
+     GitHub `<!-- svarm-follow-up: ... -->` in the issue body).
+  2. Moves the ticket to `todo` like Abort — gated assignees re-enter
+     `pending_approval` on the next poll. Also drops the id from the
+     orchestrator's `completed` set so that poll can see it.
+  3. Writes the muted `[board] follow-up queued` transcript line.
+
+  The text is cleared after the first spawn attempt (see `Dispatch`).
+
+  Returns `:ok`. Errors: `{:error, :empty}` (blank text), `{:error,
+  :unsupported}` (status is not review/failed), `{:error, :not_found}`,
+  `{:error, {:persist, reason}}` (text not saved), or
+  `{:error, {:status, reason}}` (saved but ticket could not move to Todo).
+  """
+  @spec follow_up(String.t(), String.t()) :: :ok | {:error, term()}
+  def follow_up(id, text) when is_binary(id) and is_binary(text) do
+    trimmed = String.trim(text)
+    if trimmed == "", do: {:error, :empty}, else: persist_follow_up(id, trimmed)
+  end
+
+  @doc "User-facing flash for `follow_up/2` errors."
+  @spec follow_up_flash_error(term()) :: String.t()
+  def follow_up_flash_error(:empty), do: "Follow-up text is empty."
+
+  def follow_up_flash_error(:unsupported),
+    do: "Follow-up works after a run settles (review or failed). Use Steer on a live run."
+
+  def follow_up_flash_error(:not_found), do: "Task not found."
+
+  def follow_up_flash_error({:persist, reason}),
+    do: "Could not save the follow-up (#{inspect(reason)})."
+
+  def follow_up_flash_error({:status, reason}),
+    do: "The follow-up was saved, but the ticket could not move to Todo (#{inspect(reason)})."
+
+  def follow_up_flash_error(other), do: "Could not queue follow-up (#{inspect(other)})."
+
+  defp persist_follow_up(id, trimmed) do
+    {adapter, config} = Tracker.Resolve.adapter_and_config()
+
+    case adapter.get_issue(config, id) do
+      {:ok, %{status: status}} when status in ["review", "failed"] ->
+        save_follow_up(adapter, config, id, trimmed)
+
+      {:ok, _} ->
+        {:error, :unsupported}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp save_follow_up(adapter, config, id, trimmed) do
+    case adapter.update_follow_up(config, id, trimmed) do
+      :ok ->
+        case adapter.update_status(config, id, "todo") do
+          :ok ->
+            Orchestrator.release_completed(id)
+            Svarm.Events.broadcast_agent_line(id, "\n[board] follow-up queued\n")
+            :ok
+
+          {:error, reason} ->
+            {:error, {:status, reason}}
+        end
+
+      {:error, reason} ->
+        {:error, {:persist, reason}}
+    end
+  end
+
+  @doc """
   Agent configs for board UI (agents.toml + Settings overrides).
 
   LiveViews load agents through this read facade — not `AgentRunner` directly.

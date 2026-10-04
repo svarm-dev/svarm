@@ -301,13 +301,16 @@ defmodule Svarm.Orchestrator.Dispatch do
       {:ok, pid} ->
         # One-shot approval: clear only after a real worker starts (re-gate if
         # the agent fails back to todo). A supervisor {:error, _} must not burn
-        # the permit or the next tick cannot retry gated work.
+        # the permit or the next tick cannot retry gated work. Same lifetime for
+        # the follow-up note: the worker already holds `task`, so clearing the
+        # tracker copy cannot remove it from this spawn's prompt.
         state = %{
           state
           | approved_once: MapSet.delete(state.approved_once, task.id),
             overage_once: MapSet.delete(state.overage_once || MapSet.new(), task.id)
         }
 
+        state = maybe_clear_follow_up(state, task)
         Budget.clear_hold(task.id)
         register_spawned_worker(state, task, pid, run_id)
 
@@ -321,6 +324,24 @@ defmodule Svarm.Orchestrator.Dispatch do
 
   defp task_supervisor(%{task_supervisor: sup}) when not is_nil(sup), do: sup
   defp task_supervisor(_), do: Svarm.TaskSup
+
+  # One-shot follow-up: consumption is the spawn itself. Only touch the
+  # tracker when this task actually carried a queued note (avoids a REST
+  # GET+PATCH on every ordinary dispatch). Failure to clear is logged, never
+  # fatal — a stale marker still reads as already-consumed metadata.
+  defp maybe_clear_follow_up(state, %{follow_up: text} = task)
+       when is_binary(text) and text != "" do
+    case state.tracker.update_follow_up(state.tracker_config, task.id, nil) do
+      :ok ->
+        state
+
+      {:error, reason} ->
+        Logger.warning("orchestrator: follow-up clear failed for #{task.id}: #{inspect(reason)}")
+        state
+    end
+  end
+
+  defp maybe_clear_follow_up(state, _task), do: state
 
   defp register_spawned_worker(state, task, pid, run_id) do
     mref = Process.monitor(pid)

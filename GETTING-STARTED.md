@@ -56,7 +56,7 @@ cp .env.example .env
 | Variable | Required | Notes |
 |----------|----------|--------|
 | `SECRET_KEY_BASE` | **Yes** | `openssl rand -base64 48` |
-| `APPROVALS_USER` / `APPROVALS_PASSWORD` | **Yes** for Docker/prod (UI + board mutations) | Strong unique pair in `.env` (`.env.example` leaves them empty). **Demo** compose profile still defaults to `svarm`/`svarm` for the zero-key demo only. Without credentials, production high-trust board mutations (approve/reject/mark-done/answer/steer/overage) fail closed |
+| `APPROVALS_USER` / `APPROVALS_PASSWORD` | **Yes** for Docker/prod (UI + board mutations) | Strong unique pair in `.env` (`.env.example` leaves them empty). **Demo** compose profile still defaults to `svarm`/`svarm` for the zero-key demo only. Without credentials, production high-trust board mutations (approve/reject/mark-done/answer/steer/follow-up/overage) fail closed |
 | `BOARD_READ_AUTH` | Optional, default **off** | Set `true` to require the same `APPROVALS_*` Basic Auth for `/board` and `/dashboard` reads (HTTP + LiveView). `/health` stays open. Requires `APPROVALS_USER` / `APPROVALS_PASSWORD` or reads fail closed. Local Mix and the demo profile leave this unset |
 | `GITHUB_TOKEN` | For GitHub tracker | Classic PAT with `repo` scope |
 | `OPENROUTER_API_KEY` | For real agents (default) | From [openrouter.ai/keys](https://openrouter.ai/keys). List it in the agent `env` block — empty `env` does not inherit the host |
@@ -159,7 +159,7 @@ GitHub `list_eligible` / `list_issues` follow `Link` pages (`per_page: 100`, max
 | Step | Do this |
 |------|---------|
 | Bot identity | [docs/github-app.md](docs/github-app.md); comments as `svarm[bot]` |
-| Approvals | **Required in production/Docker:** strong `APPROVALS_USER` / `APPROVALS_PASSWORD` before exposing the port. Gates `/approvals`, `/setup`, and board approve/reject/mark-done/answer/steer/overage. Missing credentials → board mutations fail closed (local Mix `dev_routes` may stay open). Keep `approval.mode: untrusted`. Board **reads** stay open — still firewall the UI (see [SECURITY.md](SECURITY.md)) |
+| Approvals | **Required in production/Docker:** strong `APPROVALS_USER` / `APPROVALS_PASSWORD` before exposing the port. Gates `/approvals`, `/setup`, and board approve/reject/mark-done/answer/steer/follow-up/overage. Missing credentials → board mutations fail closed (local Mix `dev_routes` may stay open). Keep `approval.mode: untrusted`. Board **reads** stay open — still firewall the UI (see [SECURITY.md](SECURITY.md)) |
 | Agents | Edit `svarm-config/agents.toml` models; list required API keys in each agent’s `env` (no full host inheritance). Optional `skills` paths attach packs — start Svärm from a CWD where those packs live. Optional `tools` / `tools_mode` declare PATH executables (fail or warn before spawn; Svärm does not install them) ([docs/agents.md](docs/agents.md)) |
 | Budgets | Optional: `SVARM_BUDGET_MAX_USD_PER_TICKET` / `SVARM_BUDGET_MAX_USD_PER_DAY` or WORKFLOW `budget.*` — block **new** spawns when spent ≥ cap. Mode `hard` (default) skips spawn; `hold` (`SVARM_BUDGET_MODE` / `budget.mode`) parks the ticket for a one-shot **Approve overage** on the board. Raising the cap also clears the hold. Estimated ledger rows count toward the cap. |
 | CI resume | Optional: re-dispatch when a managed PR’s Checks fail (see below). **Off by default.** |
@@ -297,6 +297,18 @@ While a run is live (**CLI** or **PiRPC**), the console has **Abort**. That kill
 
 ---
 
+## Follow up after a run settles
+
+When a card is in **review** or **failed** (the run process is gone), the console has a **Follow up** field. Typing a note and clicking **Follow up** queues it for the **next** run — this is a new orchestrator dispatch (CLI **or** PiRPC), not a live steer into the old session.
+
+- Same board auth as approve / steer / abort (`APPROVALS_*` + `board_auth_at` TTL). Empty text is refused with a flash.
+- Submits trim the note, persist it on the ticket, then move the ticket to **Todo** (like Abort): Local stores `follow_up` task metadata; GitHub stores an HTML comment in the issue body (`<!-- svarm-follow-up: ... -->`, same family as `depends_on`). Secrets never go into that metadata — only your note.
+- Gated assignees re-enter the approval gate on the next poll; trusted assignees may be picked up immediately.
+- The next spawn's prompt includes the note **once**; the stored text is cleared after that first spawn attempt (one-shot lifetime, like approval overlays).
+- Transcript shows a muted `[board] follow-up queued` line. Steer remains the right control while the card is still `in_progress`; follow-up is **unsupported** there.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Check |
@@ -304,7 +316,7 @@ While a run is live (**CLI** or **PiRPC**), the console has **Abort**. That kill
 | Container exits immediately | Check `docker compose logs`. `SECRET_KEY_BASE` is generated if unset; set it in `.env` only for stable sessions |
 | Config is a directory named `WORKFLOW.md` | Old file mounts. Use directory mount `./svarm-config:/app/config` (current compose) and delete the bogus dirs |
 | `/approvals` 404 text about APPROVALS_* | Set `APPROVALS_USER` and `APPROVALS_PASSWORD` in `.env` |
-| Board approve/reject/mark-done/answer/steer/abort/overage blocked without auth flash | Production needs `APPROVALS_*`; sign in via `/approvals` then return to the board. Local Mix without credentials is open only when `dev_routes` is on. Sticky proof expires after 8h by default (`BOARD_AUTH_TTL_SECONDS`) — re-sign in if mid-session mutations start failing |
+| Board approve/reject/mark-done/answer/steer/follow-up/abort/overage blocked without auth flash | Production needs `APPROVALS_*`; sign in via `/approvals` then return to the board. Local Mix without credentials is open only when `dev_routes` is on. Sticky proof expires after 8h by default (`BOARD_AUTH_TTL_SECONDS`) — re-sign in if mid-session mutations start failing |
 | `/approvals` 401 | Wrong Basic Auth credentials |
 | `/board` or `/dashboard` 401 | `BOARD_READ_AUTH` is on — same `APPROVALS_*` pair as `/approvals` |
 | Nothing happens | `docker compose logs -f` (polling / eligibility) |

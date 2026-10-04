@@ -697,6 +697,119 @@ defmodule Svarm.OrchestratorTest do
       end
     end
 
+    test "follow-up note is cleared after the first spawn attempt" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "settled follow-up",
+          status: "todo",
+          assignee: "demo"
+        })
+
+      :ok = KanbanBridge.update_follow_up(task.id, "also fix the tests")
+      assert %{follow_up: "also fix the tests"} = KanbanBridge.get_task(task.id)
+
+      original = :sys.get_state(Orchestrator)
+
+      local_config = %{
+        kind: :local,
+        active_states: ["todo", "in_progress"],
+        terminal_states: ["done", "failed", "review"],
+        ignored_assignees: []
+      }
+
+      # `true` exits 0 fast; approval off so the poll spawns immediately.
+      demo_agent = %{
+        command: "true",
+        args: [],
+        env: %{},
+        adapter: "cli",
+        display_name: "Demo",
+        name: "demo"
+      }
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | tracker: Svarm.Tracker.Local,
+            tracker_config: local_config,
+            approval: %{mode: :off, trusted_assignees: MapSet.new()},
+            agents: Map.put(original.agents, "demo", demo_agent),
+            budget_caps: %{},
+            claimed: MapSet.delete(state.claimed, task.id),
+            running: Map.delete(state.running, task.id),
+            completed: MapSet.delete(state.completed, task.id),
+            approved_once: MapSet.new(),
+            last_budget_block: nil
+        }
+      end)
+
+      try do
+        send(Orchestrator, :tick)
+
+        # The note lives on the tracker, so consuming it means the tracker
+        # copy is cleared exactly once the first worker started.
+        assert wait_until(fn -> KanbanBridge.get_task(task.id).follow_up == nil end)
+
+        # The spawn really happened (agent exited → terminal status).
+        assert KanbanBridge.get_task(task.id).status in ["review", "failed", "done"]
+      after
+        :sys.replace_state(Orchestrator, fn _ -> original end)
+      end
+    end
+
+    test "follow-up drops a settled ticket from completed so the next poll can spawn" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "settled follow-up release",
+          status: "review",
+          assignee: "demo"
+        })
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{state | completed: MapSet.put(state.completed, task.id)}
+      end)
+
+      assert MapSet.member?(:sys.get_state(Orchestrator).completed, task.id)
+      assert :ok = Svarm.Board.follow_up(task.id, "please also update the docs")
+      refute MapSet.member?(:sys.get_state(Orchestrator).completed, task.id)
+      assert KanbanBridge.get_task(task.id).status == "todo"
+      assert KanbanBridge.get_task(task.id).follow_up == "please also update the docs"
+    end
+
+    test "run exit after follow-up leaves the queued todo alone" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "follow-up during exit",
+          status: "review",
+          assignee: "demo"
+        })
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | running:
+              Map.put(state.running, task.id, %{
+                task: task,
+                run_id: "run_follow",
+                started_mono_ms: System.monotonic_time(:millisecond)
+              }),
+            completed: MapSet.put(state.completed, task.id)
+        }
+      end)
+
+      assert :ok = Svarm.Board.follow_up(task.id, "keep the note")
+      send(Orchestrator, {:run_exit, task.id, :ok})
+
+      assert wait_until(fn ->
+               :sys.get_state(Orchestrator).running[task.id] == nil
+             end)
+
+      got = KanbanBridge.get_task(task.id)
+      assert got.status == "todo"
+      assert got.follow_up == "keep the note"
+      refute MapSet.member?(:sys.get_state(Orchestrator).completed, task.id)
+    end
+
     test "budget_exceeded sets last_budget_block and does not claim task" do
       task =
         KanbanBridge.create_task(%{

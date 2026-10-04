@@ -164,6 +164,18 @@ defmodule Svarm.Test.FakeTracker do
   end
 
   @impl true
+  def update_follow_up(_config, id, text) do
+    case get(id) do
+      nil ->
+        {:error, :not_found}
+
+      issue ->
+        put(%{issue | follow_up: text})
+        :ok
+    end
+  end
+
+  @impl true
   def claim(_config, _id), do: :ok
 
   @impl true

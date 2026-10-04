@@ -469,6 +469,117 @@ defmodule SvarmWeb.BoardLiveTest do
     end
   end
 
+  test "selected review card queues a follow-up → todo + persisted + muted line", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Review me",
+        status: "review",
+        assignee: "demo"
+      })
+
+    {:ok, view, html} = live(conn, ~p"/board?task=#{task.id}")
+    assert html =~ "Follow up"
+
+    view
+    |> element("#follow-up-#{task.id} form")
+    |> render_submit(%{"task_id" => task.id, "message" => "  also fix the tests  "})
+
+    html = render(view)
+    assert html =~ "Follow-up queued"
+    assert %{status: "todo", follow_up: "also fix the tests"} = KanbanBridge.get_task(task.id)
+    assert Svarm.RunLog.get(task.id) =~ "[board] follow-up queued"
+  end
+
+  test "failed card follow-up returns the ticket to Todo", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Failed run",
+        status: "failed",
+        assignee: "demo"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/board?task=#{task.id}")
+
+    view
+    |> element("#follow-up-#{task.id} form")
+    |> render_submit(%{"task_id" => task.id, "message" => "retry with a plan"})
+
+    assert render(view) =~ "Follow-up queued"
+    assert %{status: "todo", follow_up: "retry with a plan"} = KanbanBridge.get_task(task.id)
+    assert Svarm.RunLog.get(task.id) =~ "[board] follow-up queued"
+  end
+
+  test "empty follow-up text is refused with a flash", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Empty note",
+        status: "review",
+        assignee: "demo"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/board?task=#{task.id}")
+
+    view
+    |> element("#follow-up-#{task.id} form")
+    |> render_submit(%{"task_id" => task.id, "message" => "   "})
+
+    assert render(view) =~ "Follow-up text is empty"
+    assert KanbanBridge.get_task(task.id).status == "review"
+    assert KanbanBridge.get_task(task.id).follow_up == nil
+  end
+
+  test "in_progress card uses Steer, not the settled follow-up control", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Live run",
+        status: "in_progress",
+        assignee: "demo"
+      })
+
+    {:ok, _view, html} = live(conn, ~p"/board?task=#{task.id}")
+    assert html =~ "Steer"
+    refute html =~ "Follow up"
+  end
+
+  test "unauthorized follow-up mutation flashes like approve/reject", %{conn: conn} do
+    prev_auth = Application.get_env(:svarm, :approvals_auth)
+    Application.put_env(:svarm, :approvals_auth, %{username: "op", password: "secret"})
+
+    on_exit(fn ->
+      if prev_auth == nil,
+        do: Application.delete_env(:svarm, :approvals_auth),
+        else: Application.put_env(:svarm, :approvals_auth, prev_auth)
+    end)
+
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Auth follow-up",
+        status: "review",
+        assignee: "demo"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/board?task=#{task.id}")
+
+    view
+    |> element("#follow-up-#{task.id} form")
+    |> render_submit(%{"task_id" => task.id, "message" => "nudge"})
+
+    assert render(view) =~ "Authentication required to queue a follow-up"
+    assert KanbanBridge.get_task(task.id).status == "review"
+    assert KanbanBridge.get_task(task.id).follow_up == nil
+    refute Svarm.RunLog.get(task.id) =~ "[board] follow-up queued"
+  end
+
   test "not-running ticket shows Abort disabled", %{conn: conn} do
     KanbanBridge.delete_all_tasks()
 
