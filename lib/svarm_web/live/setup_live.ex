@@ -390,8 +390,8 @@ defmodule SvarmWeb.SetupLive do
             </div>
 
             <p class="text-xs text-base-content/55">
-              Test {ProviderResolve.label(@form["provider_id"])} to load model chips, or paste a
-              model id this adapter can complete.
+              Test {ProviderResolve.label(@form["provider_id"])} to load model chips this adapter
+              can complete, or paste a completable id.
             </p>
           </.connection_section>
 
