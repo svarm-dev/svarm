@@ -470,6 +470,65 @@ defmodule Svarm.Board do
   """
   def review_ci(task) when is_map(task), do: evidence_ci(task)
 
+  @doc """
+  Deterministic review-column sort key (proof risk, cheapest "don't merge yet"
+  signals first). First match wins:
+
+  1. CI `fail`
+  2. CI `pending`
+  3. no PR
+  4. higher ticket cost
+  5. older time in `review` (`created_at` — the same "since created" age
+     signal the Evidence pack shows when there is no usage row)
+  6. task id (stable tiebreak)
+
+  Built from **existing** Evidence signals only: coordination-attached CI
+  (`review_ci/1`), the PR glance (`review_glance/2`), the optional batched
+  cost map, and the card's `created_at`. No new GitHub HTTP, no new
+  StreamEvent kinds, no new coordination columns, no per-task usage queries.
+
+  `cost` (optional) is a `%{total_cost_usd: number}` summary from
+  `Usage.task_cost_summaries/1`; missing or malformed values sort as `0.0`.
+  `meta` (optional) is the `run_started` run-meta map — the same source the
+  column's PR glance chip reads via `review_glance/2`, so a PR that only
+  arrived in run meta still counts as `has_pr` for the sort.
+
+  Returns a sortable tuple; ascending order is the review-column display order.
+  """
+  def review_sort_key(task, cost \\ nil, meta \\ %{}) when is_map(task) do
+    ci =
+      case review_ci(task).state do
+        :fail -> 0
+        :pending -> 1
+        _ -> 2
+      end
+
+    pr = if review_glance(task, meta) == :no_pr, do: 0, else: 1
+
+    {ci, pr, -review_cost_usd(cost), review_created_seconds(map_get(task, :created_at)),
+     to_string(map_get(task, :id) || "")}
+  end
+
+  @doc """
+  Sort review tasks by `review_sort_key/3` — ascending order is the column.
+
+  `costs` is `%{task_id => cost summary}` (the batched
+  `Usage.task_cost_summaries/1` map); `metas` is `%{task_id => run_meta}`.
+  Either may be `%{}` — tasks with no usage ledger sort below tasks that have
+  cost (same relative order as the "higher ticket cost" step of the key).
+  """
+  def review_sorted(tasks, costs \\ %{}, metas \\ %{}) when is_list(tasks) do
+    Enum.sort_by(tasks, fn task ->
+      review_sort_key(task, Map.get(costs, task.id), Map.get(metas, task.id, %{}))
+    end)
+  end
+
+  defp review_cost_usd(%{total_cost_usd: usd}) when is_number(usd), do: usd
+  defp review_cost_usd(_), do: 0.0
+
+  defp review_created_seconds(n) when is_integer(n) and n > 0, do: n
+  defp review_created_seconds(_), do: 0
+
   defp coord_pr_url_fallback(task) do
     # Only hit Repo when list_tasks did not preload pr_url.
     case map_get(task, :pr_url) do

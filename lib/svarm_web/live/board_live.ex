@@ -60,6 +60,7 @@ defmodule SvarmWeb.BoardLive do
       |> assign(:demo_routes, Svarm.Demo.routes_enabled?())
       |> assign(:board_auth_at, board_auth_at)
       |> assign(:last_status_cost_mono, 0)
+      |> assign(:review_order, [])
       |> assign(:board_error, nil)
       |> reset_column_streams(column_ids)
 
@@ -598,10 +599,19 @@ defmodule SvarmWeb.BoardLive do
     grouped = Board.group_by_status(tasks)
     counts = Map.new(column_ids, fn col -> {col, length(Map.get(grouped, col, []))} end)
     tasks_by_id = Map.new(tasks, fn t -> {t.id, card_task(t)} end)
+    run_meta = socket.assigns.run_meta
+    # Review is ordered by proof risk (CI fail → pending → no PR → cost → age → id).
+    review_items = review_items(grouped, costs, run_meta)
+    review_order = Enum.map(review_items, & &1.id)
 
     socket =
       Enum.reduce(column_ids, socket, fn col, s ->
-        items = Map.get(grouped, col, []) |> Enum.map(&card_task/1)
+        items =
+          if col == "review" do
+            review_items
+          else
+            Map.get(grouped, col, []) |> Enum.map(&card_task/1)
+          end
 
         case stream_name(col) do
           nil -> s
@@ -610,6 +620,7 @@ defmodule SvarmWeb.BoardLive do
       end)
 
     socket
+    |> assign(:review_order, review_order)
     |> assign(:column_ids, column_ids)
     |> assign(:column_counts, counts)
     |> assign(:tasks_by_id, tasks_by_id)
@@ -654,14 +665,94 @@ defmodule SvarmWeb.BoardLive do
   defp insert_into_column(socket, status, task) do
     case stream_name(status) do
       nil -> socket
-      name -> stream_insert(socket, name, task)
+      name -> insert_into_stream(socket, name, task)
     end
+  end
+
+  # Review stays keyed (CI fail → pending → no PR → cost → age → id) on every
+  # insert/update so a CI flip re-sorts live; other columns keep append order.
+  defp insert_into_stream(socket, name, task) do
+    if name == :col_review do
+      insert_review(socket, task)
+    else
+      stream_insert(socket, name, task)
+    end
+  end
+
+  defp insert_review(socket, task) do
+    order = socket.assigns.review_order
+    present? = task.id in order
+    key = review_key_for(socket, task)
+    rest = Enum.reject(order, &(&1 == task.id))
+    idx = Enum.count(rest, fn id -> review_key_le?(socket, id, key) end)
+
+    if present? and not review_key_changed?(socket, task) do
+      # Same risk signals — in-place refresh (selection chrome, chips) without
+      # DOM churn; the review_order mirror is unchanged.
+      stream_insert(socket, :col_review, task)
+    else
+      # New card or the proof-risk signals changed → re-sort into place.
+      socket
+      |> maybe_delete_review(task, present?)
+      |> stream_insert(:col_review, task, at: idx)
+      |> assign(:review_order, List.insert_at(rest, idx, task.id))
+    end
+  end
+
+  defp maybe_delete_review(socket, _task, false), do: socket
+  defp maybe_delete_review(socket, task, true), do: stream_delete(socket, :col_review, task)
+
+  defp review_key_changed?(socket, task) do
+    key = review_key_for(socket, task)
+
+    case Map.get(socket.assigns.tasks_by_id, task.id) do
+      nil -> true
+      old -> review_key_for(socket, old) != key
+    end
+  end
+
+  defp review_key_for(socket, task) when is_map(task) do
+    Board.review_sort_key(
+      task,
+      Map.get(socket.assigns.costs, task.id),
+      Map.get(socket.assigns.run_meta, task.id, %{})
+    )
+  end
+
+  defp review_key_for(_socket, nil), do: nil
+
+  defp review_key_le?(socket, id, key) do
+    case Map.get(socket.assigns.tasks_by_id, id) do
+      nil -> false
+      task -> review_key_for(socket, task) <= key
+    end
+  end
+
+  defp review_items(grouped, costs, run_meta) do
+    grouped
+    |> Map.get("review", [])
+    |> Enum.map(&card_task/1)
+    |> Board.review_sorted(costs, run_meta)
   end
 
   defp delete_from_column(socket, status, task) do
     case stream_name(status) do
-      nil -> socket
-      name -> stream_delete(socket, name, task)
+      nil ->
+        socket
+
+      name ->
+        socket =
+          if name == :col_review do
+            assign(
+              socket,
+              :review_order,
+              Enum.reject(socket.assigns.review_order, &(&1 == task.id))
+            )
+          else
+            socket
+          end
+
+        stream_delete(socket, name, task)
     end
   end
 

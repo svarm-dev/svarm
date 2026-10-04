@@ -1106,6 +1106,61 @@ defmodule SvarmWeb.BoardLiveTest do
     assert html =~ ~s(title="PR linked)
   end
 
+  test "review column orders by proof risk: fail CI first, then pending, then no-PR age", %{
+    conn: conn
+  } do
+    KanbanBridge.delete_all_tasks()
+
+    fail_ci =
+      KanbanBridge.create_task(%{
+        title: "Fail CI first",
+        status: "review",
+        assignee: "demo"
+      })
+
+    pending_ci =
+      KanbanBridge.create_task(%{
+        title: "Pending CI next",
+        status: "review",
+        assignee: "demo"
+      })
+
+    no_pr_old =
+      KanbanBridge.create_task(%{
+        title: "No PR oldest",
+        status: "review",
+        assignee: "demo",
+        created_at: 1_600_000_000
+      })
+
+    no_pr_new =
+      KanbanBridge.create_task(%{
+        title: "No PR newer",
+        status: "review",
+        assignee: "demo",
+        created_at: 1_700_000_000
+      })
+
+    assert {:ok, _} =
+             Svarm.Coordination.upsert(fail_ci.id, %{ci_last_conclusion: "failed"})
+
+    assert {:ok, _} =
+             Svarm.Coordination.upsert(pending_ci.id, %{ci_last_conclusion: "in_progress"})
+
+    {:ok, _view, html} = live(conn, ~p"/board")
+
+    position = fn id -> html_position(html, "task-#{id}") end
+
+    assert position.(fail_ci.id) < position.(pending_ci.id),
+           "CI fail card must come before CI pending card"
+
+    assert position.(pending_ci.id) < position.(no_pr_old.id),
+           "CI pending card must come before no-CI cards"
+
+    assert position.(no_pr_old.id) < position.(no_pr_new.id),
+           "older no-PR card must come before newer no-PR card"
+  end
+
   test "review column empty hint names human review", %{conn: conn} do
     KanbanBridge.delete_all_tasks()
     KanbanBridge.create_task(%{title: "Only todo", status: "todo", assignee: "demo"})
@@ -1551,6 +1606,13 @@ defmodule SvarmWeb.BoardLiveTest do
     # task_cost_summary renders total_cost_usd for known models
     assert html =~ "$"
     assert has_element?(view, "#task-#{task.id}")
+  end
+
+  defp html_position(html, needle) when is_binary(html) and is_binary(needle) do
+    case :binary.match(html, needle) do
+      {pos, _len} -> pos
+      :nomatch -> -1
+    end
   end
 
   defp put_orchestrator_running(task, worker) do
