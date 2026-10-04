@@ -276,6 +276,7 @@ defmodule Svarm.Board do
   defp wait_reason_status(%{status: "review"} = task) do
     cond do
       circuit_open_for?(task) -> :ci_circuit
+      changes_requested_for?(task) and resume_count_at_cap?(task) -> :ci_circuit
       changes_requested_for?(task) -> :changes_requested
       true -> :review
     end
@@ -289,23 +290,20 @@ defmodule Svarm.Board do
   defp wait_reason_status(_), do: nil
 
   # Prefer preloaded field from list_tasks/get_task; fall back to one query.
-  # The flag is not the only open circuit: send-back also refuses when
-  # `ci_resume_count` is already at the shared cap, before the flag flips.
+  # The open flag is the circuit for every review card. A resume count at the
+  # cap only blocks Send back on a changes-requested card (see wait_reason).
   defp circuit_open_for?(task) do
-    flag_open =
-      case map_get(task, :ci_circuit_open) do
-        true ->
-          true
+    case map_get(task, :ci_circuit_open) do
+      true ->
+        true
 
-        false ->
-          false
+      false ->
+        false
 
-        _ ->
-          id = map_get(task, :id)
-          is_binary(id) and Svarm.Coordination.circuit_open?(id)
-      end
-
-    flag_open or resume_count_at_cap?(task)
+      _ ->
+        id = map_get(task, :id)
+        is_binary(id) and Svarm.Coordination.circuit_open?(id)
+    end
   end
 
   defp resume_count_at_cap?(task) do
