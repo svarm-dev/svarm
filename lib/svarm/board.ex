@@ -112,7 +112,8 @@ defmodule Svarm.Board do
   1. Trims and persists the text on the ticket (Local `follow_up` metadata;
      GitHub `<!-- svarm-follow-up: ... -->` in the issue body).
   2. Moves the ticket to `todo` like Abort — gated assignees re-enter
-     `pending_approval` on the next poll.
+     `pending_approval` on the next poll. Also drops the id from the
+     orchestrator's `completed` set so that poll can see it.
   3. Writes the muted `[board] follow-up queued` transcript line.
 
   The text is cleared after the first spawn attempt (see `Dispatch`).
@@ -165,6 +166,7 @@ defmodule Svarm.Board do
       :ok ->
         case adapter.update_status(config, id, "todo") do
           :ok ->
+            Orchestrator.release_completed(id)
             Svarm.Events.broadcast_agent_line(id, "\n[board] follow-up queued\n")
             :ok
 

@@ -757,6 +757,25 @@ defmodule Svarm.OrchestratorTest do
       end
     end
 
+    test "follow-up drops a settled ticket from completed so the next poll can spawn" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "settled follow-up release",
+          status: "review",
+          assignee: "demo"
+        })
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{state | completed: MapSet.put(state.completed, task.id)}
+      end)
+
+      assert MapSet.member?(:sys.get_state(Orchestrator).completed, task.id)
+      assert :ok = Svarm.Board.follow_up(task.id, "please also update the docs")
+      refute MapSet.member?(:sys.get_state(Orchestrator).completed, task.id)
+      assert KanbanBridge.get_task(task.id).status == "todo"
+      assert KanbanBridge.get_task(task.id).follow_up == "please also update the docs"
+    end
+
     test "budget_exceeded sets last_budget_block and does not claim task" do
       task =
         KanbanBridge.create_task(%{

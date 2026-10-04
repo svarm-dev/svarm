@@ -417,7 +417,7 @@ defmodule Svarm.Tracker.GitHub do
         patch_issue_body(
           config,
           issue.source_id,
-          Normalize.put_depends_on_marker(issue.body || "", depends_on)
+          Normalize.put_depends_on_marker(marker_source_body(issue), depends_on)
         )
 
       {:error, reason} ->
@@ -432,7 +432,7 @@ defmodule Svarm.Tracker.GitHub do
         patch_issue_body(
           config,
           issue.source_id,
-          Normalize.put_follow_up_marker(issue.body || "", text)
+          Normalize.put_follow_up_marker(marker_source_body(issue), text)
         )
 
       {:error, reason} ->
@@ -567,7 +567,15 @@ defmodule Svarm.Tracker.GitHub do
   defp maybe_close(body, status) when status in ["done", "failed"],
     do: Map.merge(body, %{state: "closed", state_reason: "completed"})
 
-  defp maybe_close(body, _status), do: body
+  # `failed` closes the issue. A later `todo` (follow-up, abort) must reopen
+  # it or `list_eligible/1` (open issues only) never sees the queued note.
+  defp maybe_close(body, _status), do: Map.put(body, :state, "open")
+
+  # `Issue.body` is already stripped of markers. Patch the raw GitHub body so
+  # a follow-up write keeps `svarm-depends-on` and the reverse stays true.
+  defp marker_source_body(%{raw: %{"body" => body}}) when is_binary(body), do: body
+  defp marker_source_body(%{body: body}) when is_binary(body), do: body
+  defp marker_source_body(_), do: ""
 
   # Unknown status (no reverse label): leave labels unchanged (legacy behavior).
   defp update_label_list(current_labels, nil, _reverse_labels, _status_labels), do: current_labels

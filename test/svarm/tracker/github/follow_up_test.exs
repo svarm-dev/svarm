@@ -98,4 +98,75 @@ defmodule Svarm.Tracker.GitHub.FollowUpTest do
     assert refetched.follow_up == nil
     refute GitHubIssuesReq.get_issue(3)["body"] =~ "svarm-follow-up"
   end
+
+  test "update_follow_up keeps an existing depends_on marker" do
+    GitHubIssuesReq.seed(%{
+      "number" => 4,
+      "node_id" => "I_four",
+      "title" => "blocked",
+      "body" => "work\n\n<!-- svarm-depends-on: I_a -->",
+      "labels" => [%{"name" => "status: review"}],
+      "assignee" => nil,
+      "user" => %{"login" => "svarm"},
+      "created_at" => "2026-01-01T00:00:00Z",
+      "repository_url" => "https://api.github.com/repos/acme/widgets",
+      "state" => "open"
+    })
+
+    assert :ok = GitHub.update_follow_up(@config, "I_four", "also fix the tests")
+
+    raw = GitHubIssuesReq.get_issue(4)["body"]
+    assert Normalize.depends_on_from_body(raw) == ["I_a"]
+    assert Normalize.follow_up_from_body(raw) == "also fix the tests"
+
+    assert :ok = GitHub.update_depends_on(@config, "I_four", ["I_b"])
+    rewritten = GitHubIssuesReq.get_issue(4)["body"]
+    assert Normalize.depends_on_from_body(rewritten) == ["I_b"]
+    assert Normalize.follow_up_from_body(rewritten) == "also fix the tests"
+  end
+
+  test "follow-up text containing an HTML comment closer round-trips" do
+    note = "stop --> then continue & retry"
+
+    GitHubIssuesReq.seed(%{
+      "number" => 5,
+      "node_id" => "I_five",
+      "title" => "review card",
+      "body" => "work",
+      "labels" => [%{"name" => "status: review"}],
+      "assignee" => nil,
+      "user" => %{"login" => "svarm"},
+      "created_at" => "2026-01-01T00:00:00Z",
+      "repository_url" => "https://api.github.com/repos/acme/widgets",
+      "state" => "open"
+    })
+
+    assert :ok = GitHub.update_follow_up(@config, "I_five", note)
+    raw = GitHubIssuesReq.get_issue(5)["body"]
+    refute raw =~ "stop -->"
+    assert {:ok, fetched} = GitHub.get_issue(@config, "I_five")
+    assert fetched.follow_up == note
+    assert fetched.body == "work"
+  end
+
+  test "update_status todo reopens a closed failed issue" do
+    GitHubIssuesReq.seed(%{
+      "number" => 6,
+      "node_id" => "I_six",
+      "title" => "failed card",
+      "body" => "work",
+      "labels" => [%{"name" => "status: failed"}],
+      "assignee" => nil,
+      "user" => %{"login" => "svarm"},
+      "created_at" => "2026-01-01T00:00:00Z",
+      "repository_url" => "https://api.github.com/repos/acme/widgets",
+      "state" => "closed"
+    })
+
+    assert :ok = GitHub.update_status(@config, "I_six", "todo")
+    stored = GitHubIssuesReq.get_issue(6)
+    assert stored["state"] == "open"
+    assert {:ok, issues} = GitHub.list_eligible(@config)
+    assert Enum.any?(issues, &(&1.id == "I_six"))
+  end
 end

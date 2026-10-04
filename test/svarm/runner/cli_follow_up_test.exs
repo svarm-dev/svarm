@@ -71,7 +71,7 @@ defmodule Svarm.Runner.CliFollowUpTest do
     assert log =~ "Operator follow-up for this run:"
     assert log =~ "also fix the tests"
     # Included exactly once — never repeated for the same note.
-    assert length(String.split(log, "Operator follow-up for this run:")) == 2
+    assert match?([_, _], String.split(log, "Operator follow-up for this run:"))
   end
 
   test "no follow-up queued → prompt has no follow-up block", %{
