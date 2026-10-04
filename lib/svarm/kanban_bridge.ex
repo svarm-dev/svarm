@@ -28,7 +28,8 @@ defmodule Svarm.KanbanBridge do
     :created_at,
     :tenant,
     :wait_reason,
-    :pending_question
+    :pending_question,
+    :follow_up
   ]
 
   def create_task(attrs), do: GenServer.call(__MODULE__, {:create, attrs})
@@ -69,6 +70,13 @@ defmodule Svarm.KanbanBridge do
 
   def update_attempts(id, attempts),
     do: GenServer.call(__MODULE__, {:update, id, :attempts, attempts})
+
+  @doc "Set or clear the one-shot operator follow-up text on a task."
+  @spec update_follow_up(String.t(), String.t() | nil) :: :ok
+  def update_follow_up(id, text) when is_binary(id) do
+    text = if is_binary(text) and String.trim(text) == "", do: nil, else: text
+    GenServer.call(__MODULE__, {:update_follow_up, id, text})
+  end
 
   @doc "Set or clear the durable `wait_reason` string on a task."
   def update_wait_reason(id, reason),
@@ -241,6 +249,19 @@ defmodule Svarm.KanbanBridge do
     end
   end
 
+  def handle_call({:update_follow_up, id, text}, _from, state) do
+    {1, _} =
+      from(t in Task, where: t.id == ^id)
+      |> Repo.update_all(set: [follow_up: text])
+
+    case Repo.get(Task, id) do
+      nil -> :ok
+      task -> Events.broadcast_task_updated(task_to_map(task))
+    end
+
+    {:reply, :ok, state}
+  end
+
   def handle_call({:update_depends_on, id, depends_on}, _from, state) do
     {1, _} =
       from(t in Task, where: t.id == ^id)
@@ -274,7 +295,8 @@ defmodule Svarm.KanbanBridge do
       created_at: t.created_at,
       tenant: t.tenant,
       wait_reason: t.wait_reason,
-      pending_question: t.pending_question
+      pending_question: t.pending_question,
+      follow_up: t.follow_up
     }
   end
 

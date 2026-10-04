@@ -38,7 +38,10 @@ defmodule Svarm.Issue do
     # Mid-run Q&A wait (`"agent_question"` or nil)
     wait_reason: nil,
     # Pending agent question payload (string-key map) or nil
-    pending_question: nil
+    pending_question: nil,
+    # Operator follow-up queued after settle (review/failed), shown to the next
+    # spawn once then cleared (Local metadata / GitHub issue-body marker)
+    follow_up: nil
   ]
 
   @type t :: %__MODULE__{
@@ -58,6 +61,7 @@ defmodule Svarm.Issue do
           depends_on: [String.t()],
           wait_reason: String.t() | nil,
           pending_question: map() | nil,
+          follow_up: String.t() | nil,
           tracker: atom(),
           raw: map() | nil
         }

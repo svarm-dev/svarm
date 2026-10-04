@@ -15,6 +15,7 @@ defmodule Svarm.Tracker.GitHub.Normalize do
   alias Svarm.{Coordination, Issue}
 
   @depends_on_marker ~r/<!--\s*svarm-depends-on:\s*([^>]*?)\s*-->/
+  @follow_up_marker ~r/<!--\s*svarm-follow-up:\s*(.*?)\s*-->/s
   @max_depends_on 32
   @id_re ~r/^[A-Za-z0-9._:-]+$/
 
@@ -26,12 +27,13 @@ defmodule Svarm.Tracker.GitHub.Normalize do
     labels = Map.get(gh_issue, "labels", []) |> Enum.map(& &1["name"])
     raw_body = gh_issue["body"] || ""
     depends_on = depends_on_from_body(raw_body)
+    follow_up = follow_up_from_body(raw_body)
 
     %Issue{
       id: build_id(gh_issue),
       source_id: to_string(gh_issue["number"]),
       title: gh_issue["title"],
-      body: strip_depends_on_marker(raw_body),
+      body: strip_markers(raw_body),
       type: infer_type(labels),
       assignee: extract_assignee(gh_issue),
       status: map_status(labels, config),
@@ -42,6 +44,7 @@ defmodule Svarm.Tracker.GitHub.Normalize do
       tenant: gh_issue["repository_url"] |> String.split("/") |> Enum.at(-2) || "",
       labels: labels,
       depends_on: depends_on,
+      follow_up: follow_up,
       tracker: :github,
       raw: gh_issue
     }
@@ -109,6 +112,74 @@ defmodule Svarm.Tracker.GitHub.Normalize do
   end
 
   defp valid_dep_id?(_), do: false
+
+  @doc """
+  Parse `<!-- svarm-follow-up: ... -->` from a GitHub issue body.
+
+  Returns the trimmed text of the first marker, or nil. Like `depends_on`,
+  this is sequencing metadata persisted as an HTML comment so it survives
+  list/get and stays operator-visible and editable on GitHub.
+  """
+  @spec follow_up_from_body(String.t() | nil) :: String.t() | nil
+  def follow_up_from_body(body) when is_binary(body) do
+    case Regex.run(@follow_up_marker, body) do
+      [_, text] ->
+        text |> unescape_follow_up() |> String.trim() |> then(&if &1 == "", do: nil, else: &1)
+
+      _ ->
+        nil
+    end
+  end
+
+  def follow_up_from_body(_), do: nil
+
+  @doc """
+  Insert or replace the `svarm-follow-up` body marker. `nil` / empty removes it.
+  """
+  @spec put_follow_up_marker(String.t() | nil, String.t() | nil) :: String.t()
+  def put_follow_up_marker(body, text) do
+    stripped = strip_follow_up_marker(body || "")
+    put_follow_up_text(stripped, trim_marker_text(text))
+  end
+
+  defp trim_marker_text(text) when is_binary(text), do: String.trim(text)
+  defp trim_marker_text(_), do: nil
+
+  defp put_follow_up_text(stripped, text) when text in [nil, ""], do: stripped
+  defp put_follow_up_text("", text), do: wrap_follow_up(text)
+  defp put_follow_up_text(stripped, text), do: stripped <> "\n\n" <> wrap_follow_up(text)
+
+  defp wrap_follow_up(text), do: "<!-- svarm-follow-up: #{escape_follow_up(text)} -->"
+
+  # `-->` would close the HTML comment and leave the rest of the note as body.
+  defp escape_follow_up(text) do
+    text
+    |> String.replace("&", "&amp;")
+    |> String.replace("-->", "--&gt;")
+  end
+
+  defp unescape_follow_up(text) do
+    text
+    |> String.replace("--&gt;", "-->")
+    |> String.replace("&amp;", "&")
+  end
+
+  @spec strip_follow_up_marker(String.t()) :: String.t()
+  def strip_follow_up_marker(body) when is_binary(body) do
+    body
+    |> then(&Regex.replace(@follow_up_marker, &1, ""))
+    |> String.trim_trailing()
+  end
+
+  def strip_follow_up_marker(_), do: ""
+
+  @doc "Strip every Svärm body marker (depends_on + follow-up) for Issue.body."
+  @spec strip_markers(String.t()) :: String.t()
+  def strip_markers(body) when is_binary(body) do
+    body |> strip_depends_on_marker() |> strip_follow_up_marker()
+  end
+
+  def strip_markers(_), do: ""
 
   @doc """
   Overlay stored retry attempts from coordination onto normalized issues.

@@ -238,6 +238,30 @@ defmodule SvarmWeb.BoardLive do
     end
   end
 
+  def handle_event("follow_up_task", params, socket) do
+    case authorize_board_mutation(socket) do
+      {:error, :unauthorized} ->
+        {:noreply, put_flash(socket, :error, unauthorized_mutation_flash("queue a follow-up"))}
+
+      :ok ->
+        id = params["id"] || params["task_id"]
+
+        case Board.follow_up(id, params["message"] || "") do
+          :ok ->
+            {:noreply,
+             socket
+             |> put_flash(:info, "Follow-up queued — #{id} returned to Todo")
+             |> load_board()
+             |> then(fn s ->
+               if s.assigns.selected_task_id == id, do: select_task(s, id), else: s
+             end)}
+
+          {:error, reason} ->
+            {:noreply, put_flash(socket, :error, Board.follow_up_flash_error(reason))}
+        end
+    end
+  end
+
   def handle_event("abort_run", %{"id" => id}, socket) do
     case authorize_board_mutation(socket) do
       {:error, :unauthorized} ->
