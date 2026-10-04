@@ -354,6 +354,7 @@ defmodule Svarm.Board do
   defp wait_reason_status(%{status: "review"} = task) do
     cond do
       circuit_open_for?(task) -> :ci_circuit
+      changes_requested_for?(task) and resume_count_at_cap?(task) -> :ci_circuit
       changes_requested_for?(task) -> :changes_requested
       true -> :review
     end
@@ -367,6 +368,8 @@ defmodule Svarm.Board do
   defp wait_reason_status(_), do: nil
 
   # Prefer preloaded field from list_tasks/get_task; fall back to one query.
+  # The open flag is the circuit for every review card. A resume count at the
+  # cap only blocks Send back on a changes-requested card (see wait_reason).
   defp circuit_open_for?(task) do
     case map_get(task, :ci_circuit_open) do
       true ->
@@ -379,6 +382,23 @@ defmodule Svarm.Board do
         id = map_get(task, :id)
         is_binary(id) and Svarm.Coordination.circuit_open?(id)
     end
+  end
+
+  defp resume_count_at_cap?(task) do
+    case map_get(task, :ci_resume_count) do
+      count when is_integer(count) -> count >= resume_max_attempts()
+      _ -> false
+    end
+  end
+
+  defp resume_max_attempts do
+    config =
+      case Workflow.Store.get() do
+        %{config: config} -> config
+        _ -> nil
+      end
+
+    Svarm.CiResume.load_caps(config).max_attempts
   end
 
   defp agent_question_for?(task) do
@@ -592,6 +612,31 @@ defmodule Svarm.Board do
     end
   end
 
+  @doc """
+  Send a changes-requested `review` ticket back to `todo` (Review Station).
+
+  Human-gated board verb: delegates to `Svarm.Orchestrator.send_back/1` so
+  the shared resume circuit, coordination summary, and orchestrator state
+  (`completed` / `approved_once`) stay consistent. Gated assignees re-enter
+  `pending_approval` on the next poll. See `Svarm.Orchestrator.send_back/1`.
+  """
+  @spec send_back(String.t()) ::
+          :ok | {:error, :not_in_review | :no_review_context | :circuit_open | term()}
+  def send_back(id) when is_binary(id), do: Orchestrator.send_back(id)
+
+  @doc "User-facing flash message for `send_back/1` errors."
+  @spec send_back_flash_error(:not_in_review | :no_review_context | :circuit_open | term()) ::
+          String.t()
+  def send_back_flash_error(:not_in_review), do: "Task is not awaiting review"
+
+  def send_back_flash_error(:no_review_context),
+    do: "No review summary on this card — nothing to send back"
+
+  def send_back_flash_error(:circuit_open),
+    do: "Resume retries exhausted — shared circuit is open, no more spawns from the board"
+
+  def send_back_flash_error(other), do: "Could not send back: #{inspect(other)}"
+
   defp meta_get(meta, key) when is_map(meta) do
     Map.get(meta, key) || Map.get(meta, Atom.to_string(key))
   end
@@ -763,6 +808,7 @@ defmodule Svarm.Board do
   defp merge_coord(task, nil) do
     task
     |> Map.put(:ci_circuit_open, false)
+    |> Map.put(:ci_resume_count, 0)
     |> Map.put(:review_decision, nil)
     |> Map.put(:ci_conclusion, nil)
     |> Map.put(:ci_summary, nil)
@@ -772,6 +818,7 @@ defmodule Svarm.Board do
   defp merge_coord(task, %Svarm.Coordination{} = c) do
     task
     |> Map.put(:ci_circuit_open, c.ci_circuit_open == true)
+    |> Map.put(:ci_resume_count, c.ci_resume_count || 0)
     |> Map.put(:review_decision, c.review_decision)
     |> Map.put(:ci_conclusion, c.ci_last_conclusion)
     |> Map.put(:ci_summary, c.ci_context_summary)
