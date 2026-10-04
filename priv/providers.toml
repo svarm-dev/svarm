@@ -14,15 +14,21 @@ default_model = "openrouter/free"
 adapter = "openai_compat"
 auth_env = "OPENCODE_API_KEY"
 base_url = "https://opencode.ai/zen/go/v1"
-# Chat/completions family (not MiniMax/Qwen /messages). Ids churn — see OpenCode Go docs.
+# Default stays chat/completions. MiniMax + Qwen speak Anthropic /messages
+# (OpenCode Go docs). Prefixes; ids churn — check those docs.
 default_model = "glm-5.3-flash"
+messages_models = ["minimax-", "qwen"]
+incomplete_prefixes = ["gpt-", "grok-", "muse-spark-"]
 
 [provider.opencode]
 adapter = "openai_compat"
 auth_env = "OPENCODE_API_KEY"
 base_url = "https://opencode.ai/zen/v1"
-# Zen catalog differs from Go — chat/completions id only.
+# Zen MiniMax + qwen3.8-max stay chat/completions; other Qwen ids are /messages.
 default_model = "kimi-k2.6"
+messages_models = ["qwen"]
+chat_models = ["qwen3.8-max"]
+incomplete_prefixes = ["gpt-", "grok-", "muse-spark-", "gemini-", "jev-", "claude-"]
 
 # Future providers (uncomment when ready):
 #
