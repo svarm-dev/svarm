@@ -38,6 +38,18 @@ need_repo() {
   fi
 }
 
+resolve_mix() {
+  local resolved=""
+  if command -v mise >/dev/null 2>&1; then
+    resolved="$(mise which mix 2>/dev/null || true)"
+  fi
+  if [[ -n "$resolved" && -x "$resolved" ]]; then
+    printf '%s\n' "$resolved"
+  else
+    command -v mix
+  fi
+}
+
 load_state() {
   if [[ ! -f "$STATE" ]]; then
     echo "svarm-verify: no instance state at $STATE (run launch first)" >&2
@@ -146,10 +158,14 @@ PY
   export MIX_ENV=dev
 
   # New session so cleanup can signal the BEAM tree by PGID, not by process name.
-  local pid
+  # Python's setsid works on macOS, where the setsid binary is missing.
+  # The resolved mix path skips the mise shim, which reloads .env and would
+  # put the unset operator values back.
+  local pid mixbin
+  mixbin="$(resolve_mix)"
   (
     cd "$REPO"
-    exec setsid mix phx.server
+    exec python3 -c 'import os, sys; os.setsid(); os.execv(sys.argv[1], sys.argv[1:])' "$mixbin" phx.server
   ) >"$log" 2>&1 &
   pid=$!
   echo "$pid" >"$pidfile"

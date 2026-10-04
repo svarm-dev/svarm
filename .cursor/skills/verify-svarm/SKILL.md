@@ -24,7 +24,8 @@ Ready when `GET /health` returns `ok` and doctor prints `OK`. Default listen URL
 
 What launch actually does:
 
-- `setsid mix phx.server` with `MIX_ENV=dev`
+- `mix phx.server` in a new session (`python3` `os.setsid`, so macOS works) with `MIX_ENV=dev`
+- the mix binary from `mise which` when mise is installed, so the shim does not reload `.env` over the isolation unsets
 - `PORT` = chosen verify port
 - `SVARM_DB_PATH` = `.cursor/skills/verify-svarm/.run/data/kanban.db`
 - `SVARM_WORKFLOW_PATH` = a copy of `priv/workflow_template.md` whose `workspace.root` is the verify data dir (not `~/svarm_workspaces`)
