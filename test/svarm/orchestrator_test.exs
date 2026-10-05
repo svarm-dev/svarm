@@ -790,6 +790,8 @@ defmodule Svarm.OrchestratorTest do
           | running:
               Map.put(state.running, task.id, %{
                 task: task,
+                pid: self(),
+                mref: make_ref(),
                 run_id: "run_follow",
                 started_mono_ms: System.monotonic_time(:millisecond)
               }),
@@ -808,6 +810,34 @@ defmodule Svarm.OrchestratorTest do
       assert got.status == "todo"
       assert got.follow_up == "keep the note"
       refute MapSet.member?(:sys.get_state(Orchestrator).completed, task.id)
+    end
+
+    test "a DOWN for another worker ignores a running entry with no monitor ref" do
+      task =
+        KanbanBridge.create_task(%{
+          title: "partial running row",
+          status: "in_progress",
+          assignee: "demo"
+        })
+
+      :sys.replace_state(Orchestrator, fn state ->
+        %{
+          state
+          | running:
+              Map.put(state.running, task.id, %{
+                task: task,
+                run_id: "run_partial",
+                started_mono_ms: System.monotonic_time(:millisecond)
+              })
+        }
+      end)
+
+      send(Orchestrator, {:DOWN, make_ref(), :process, self(), :normal})
+      flush_orchestrator()
+
+      state = :sys.get_state(Orchestrator)
+      assert Map.has_key?(state.running, task.id)
+      assert KanbanBridge.get_task(task.id).status == "in_progress"
     end
 
     test "budget_exceeded sets last_budget_block and does not claim task" do
