@@ -268,8 +268,10 @@ defmodule Svarm.Orchestrator do
     if is_nil(state.running) or is_nil(state.claimed) do
       {:noreply, state}
     else
+      # Map.get: a running entry with no monitor ref must not crash this scan.
+      # One partial row used to take the process down on an unrelated DOWN.
       {task_id, _entry} =
-        Enum.find(state.running, fn {_id, e} -> e.mref == mref end) || {nil, nil}
+        Enum.find(state.running, fn {_id, e} -> Map.get(e, :mref) == mref end) || {nil, nil}
 
       if task_id == nil do
         {:noreply, state}
