@@ -120,7 +120,10 @@ defmodule Svarm.Test.GitHubIssuesReq do
   defp listed_issues(_), do: issues()
 
   defp next_number do
-    :ets.update_counter(@table, :seq, {2, 1})
+    # reset! deletes :seq before it inserts a fresh counter. Another
+    # process can post in that window. The default object makes the
+    # increment succeed when the key is missing.
+    :ets.update_counter(@table, :seq, {2, 1}, {:seq, 0})
   end
 
   defp bump_seq(number) when is_integer(number) do

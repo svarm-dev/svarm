@@ -15,6 +15,8 @@ defmodule Svarm.OrchestratorSendBackTest do
     def update_status(_config, _id, _status) do
       {:error, %{type: :forbidden, message: "nope"}}
     end
+
+    def update_attempts(_config, _id, _attempts), do: :ok
   end
 
   setup do
