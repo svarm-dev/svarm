@@ -76,6 +76,10 @@ defmodule Svarm.OrchestratorTest do
   describe "board abort" do
     defmodule AbortFailTracker do
       def update_status(_config, _id, _status), do: {:error, :forbidden}
+      # A late run_exit from another worker is handled while this tracker is
+      # installed. schedule_retry calls update_attempts; a missing callback
+      # kills the orchestrator and fails the rest of the suite.
+      def update_attempts(_config, _id, _attempts), do: :ok
       def list_eligible(_config), do: {:ok, []}
 
       def get_issue(_config, id) do
@@ -306,6 +310,7 @@ defmodule Svarm.OrchestratorTest do
         do: {:error, %{type: :rate_limit, message: "rate limited", retry_after: 60}}
 
       def get_issue(_config, _id), do: {:error, :not_found}
+      def update_attempts(_config, _id, _attempts), do: :ok
     end
 
     test "tick survives tracker list_eligible errors" do
@@ -2497,6 +2502,8 @@ defmodule Svarm.OrchestratorTest do
         Agent.update(config.statuses, &[{id, status} | &1])
         :ok
       end
+
+      def update_attempts(_config, _id, _attempts), do: :ok
     end
 
     test "reconcile_stalls reaps the OS hang child" do
