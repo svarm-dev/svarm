@@ -799,18 +799,14 @@ defmodule SvarmWeb.SetupLive do
     }
   end
 
+  @dirty_fields ~w(
+    provider_id tracker_kind tracker_owner tracker_repo tracker_base_url
+    tracker_workspace tracker_project tracker_labels agent_model
+  )
+
   defp form_dirty?(form, baseline) do
-    form["provider_api_key"] != "" or
-      form["tracker_api_key"] != "" or
-      form["provider_id"] != baseline["provider_id"] or
-      form["tracker_kind"] != baseline["tracker_kind"] or
-      form["tracker_owner"] != baseline["tracker_owner"] or
-      form["tracker_repo"] != baseline["tracker_repo"] or
-      form["tracker_base_url"] != baseline["tracker_base_url"] or
-      form["tracker_workspace"] != baseline["tracker_workspace"] or
-      form["tracker_project"] != baseline["tracker_project"] or
-      form["tracker_labels"] != baseline["tracker_labels"] or
-      form["agent_model"] != baseline["agent_model"]
+    form["provider_api_key"] != "" or form["tracker_api_key"] != "" or
+      Enum.any?(@dirty_fields, fn key -> form[key] != baseline[key] end)
   end
 
   # Projected readiness after Apply (form + stored secrets + live env).
@@ -855,22 +851,22 @@ defmodule SvarmWeb.SetupLive do
     %{ready?: ready?, badge: readiness_badge(ready?, pending?)}
   end
 
-  defp tracker_form_ready?(form, tracker) do
-    case form["tracker_kind"] do
-      "local" ->
-        true
+  defp tracker_form_ready?(%{"tracker_kind" => "local"}, _tracker), do: true
 
-      "github" ->
-        present?(form["tracker_owner"]) and present?(form["tracker_repo"]) and
-          (present?(form["tracker_api_key"]) or tracker[:api_key_set?] == true)
+  defp tracker_form_ready?(%{"tracker_kind" => "github"} = form, tracker) do
+    present?(form["tracker_owner"]) and present?(form["tracker_repo"]) and
+      tracker_key_present?(form, tracker)
+  end
 
-      "kaneo" ->
-        present?(form["tracker_base_url"]) and present?(form["tracker_project"]) and
-          (present?(form["tracker_api_key"]) or tracker[:api_key_set?] == true)
+  defp tracker_form_ready?(%{"tracker_kind" => "kaneo"} = form, tracker) do
+    present?(form["tracker_base_url"]) and present?(form["tracker_project"]) and
+      tracker_key_present?(form, tracker)
+  end
 
-      _ ->
-        false
-    end
+  defp tracker_form_ready?(_form, _tracker), do: false
+
+  defp tracker_key_present?(form, tracker) do
+    present?(form["tracker_api_key"]) or tracker[:api_key_set?] == true
   end
 
   defp agent_readiness(form, assigns) do
