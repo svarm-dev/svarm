@@ -50,14 +50,21 @@ defmodule Svarm.RedactTest do
         config: %{"tracker" => %{"api_key" => "github_pat_ALSO_SECRET"}},
         prompt_template: "hi"
       },
-      agents: %{}
+      agents: %{},
+      workspace_git: %{
+        repo: "/tmp/repo",
+        remote: "https://git.example.com/org/repo.git",
+        token: "forgejo-secret-token"
+      }
     }
 
     text = inspect(state)
     refute text =~ "github_pat_DO_NOT_LOG"
     refute text =~ "github_pat_ALSO_SECRET"
-    assert text =~ "redacted"
+    refute text =~ "forgejo-secret-token"
+    assert text =~ "[redacted]"
     assert text =~ "svarm-dev"
+    assert text =~ "https://git.example.com/org/repo.git"
   end
 
   test "text redacts env dumps and token shapes" do

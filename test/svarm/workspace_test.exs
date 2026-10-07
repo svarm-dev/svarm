@@ -111,6 +111,27 @@ defmodule Svarm.WorkspaceTest do
     refute recorded =~ "set-url origin https://oauth2:"
   end
 
+  test "failed origin reset does not leave the token in .git/config", %{root: root} do
+    log = Path.join(root, "git.log")
+    fake = fake_git_set_url_fails(root, log)
+    clone_root = Path.join(root, "clones")
+    File.mkdir_p!(clone_root)
+
+    remote = "https://git.example.com/org/repo.git"
+    token = "forgejo-secret-token"
+
+    assert {:error, {:git_clone_failed, 1, _}} =
+             Workspace.ensure("issue-91", clone_root,
+               isolation: :clone,
+               git_remote: remote,
+               git_token: token,
+               git: fake
+             )
+
+    refute File.dir?(Path.join(clone_root, "issue-91"))
+    refute tree_contains?(clone_root, token)
+  end
+
   test "clone recreates a leftover non-clone directory", %{root: root} do
     repo = init_git_repo(Path.join(root, "origin_repo"))
     clone_root = Path.join(root, "clones")
@@ -314,5 +335,39 @@ defmodule Svarm.WorkspaceTest do
 
     File.chmod!(fake, 0o755)
     fake
+  end
+
+  # Simulates git writing the authenticated URL into .git/config, then failing
+  # `remote set-url`. The workspace must drop that tree.
+  defp fake_git_set_url_fails(root, log) do
+    fake = Path.join(root, "fake_git_fail_set_url.sh")
+
+    File.write!(fake, """
+    #!/bin/sh
+    printf '%s\\n' "$*" >> "#{log}"
+    if [ "$3" = "clone" ]; then
+      dest="$5"
+      url="$4"
+      mkdir -p "$dest/.git"
+      printf '[remote "origin"]\\n\\turl = %s\\n' "$url" > "$dest/.git/config"
+      exit 0
+    fi
+    if [ "$4" = "set-url" ]; then
+      exit 1
+    fi
+    exit 0
+    """)
+
+    File.chmod!(fake, 0o755)
+    fake
+  end
+
+  defp tree_contains?(dir, needle) do
+    dir
+    |> Path.join("**")
+    |> Path.wildcard()
+    |> Enum.any?(fn path ->
+      File.regular?(path) and File.read!(path) =~ needle
+    end)
   end
 end

@@ -20,6 +20,8 @@ defmodule Svarm.Workspace do
   @default_root Path.join([System.tmp_dir!(), "svarm_workspaces"])
   @default_git_timeout_ms 30_000
 
+  require Logger
+
   def default_root, do: @default_root
 
   @doc """
@@ -151,27 +153,63 @@ defmodule Svarm.Workspace do
 
     case git_cmd(parent, ["clone", clone_url, abs], opts) do
       {:ok, _out} ->
-        _ = configure_clone(abs, remote, token, opts)
-        {:ok, {abs, true}}
+        case configure_clone(abs, remote, token, opts) do
+          :ok ->
+            {:ok, {abs, true}}
+
+          {:error, reason} ->
+            discard_clone(abs, root_abs, token)
+            {:error, normalize_clone_error(reason, token)}
+        end
 
       {:error, reason} ->
-        _ = bounded_rm_rf(abs, root_abs)
+        discard_clone(abs, root_abs, token)
         {:error, normalize_clone_error(reason, token)}
     end
   end
 
   # Keep `origin` clean (token never lands in `.git/config`). When a token was
   # used, leave a credential helper that reads `GIT_TOKEN` at push time; the
-  # runner injects that var into the agent env.
+  # runner injects that var into the agent env. A failed reset is an error so
+  # the caller can drop the tree instead of leaving the token in origin.
   defp configure_clone(abs, remote, token, opts) do
-    _ = git_cmd(abs, ["remote", "set-url", "origin", remote], opts)
+    with :ok <- git_ok(git_cmd(abs, ["remote", "set-url", "origin", remote], opts)) do
+      maybe_credential_helper(abs, token, opts)
+    end
+  end
 
-    if is_binary(token) do
-      _ = git_cmd(abs, ["config", "--local", "credential.helper", credential_helper()], opts)
+  defp maybe_credential_helper(_abs, token, _opts) when not is_binary(token), do: :ok
+
+  defp maybe_credential_helper(abs, _token, opts) do
+    git_ok(git_cmd(abs, ["config", "--local", "credential.helper", credential_helper()], opts))
+  end
+
+  defp git_ok({:ok, _}), do: :ok
+  defp git_ok({:error, reason}), do: {:error, reason}
+
+  # Scrub first so a failed delete still does not leave the token in config.
+  defp discard_clone(abs, root_abs, token) do
+    _ = scrub_clone_token(abs, token)
+    _ = bounded_rm_rf(abs, root_abs)
+    :ok
+  end
+
+  defp scrub_clone_token(abs, token) when is_binary(token) and token != "" do
+    config = Path.join(abs, ".git/config")
+
+    if File.regular?(config) do
+      scrubbed = config |> File.read!() |> redact_token(token)
+      File.write!(config, scrubbed)
     end
 
     :ok
+  rescue
+    e in [File.Error] ->
+      Logger.warning("workspace: could not scrub clone token: #{Exception.message(e)}")
+      :ok
   end
+
+  defp scrub_clone_token(_abs, _token), do: :ok
 
   defp credential_helper do
     ~s|!f() { echo username=oauth2; echo "password=$GIT_TOKEN"; }; f|

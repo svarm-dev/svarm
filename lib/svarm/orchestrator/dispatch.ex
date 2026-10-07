@@ -274,13 +274,15 @@ defmodule Svarm.Orchestrator.Dispatch do
   defp do_spawn_worker(state, task) do
     run_id = "run_" <> Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)
 
+    git = state.workspace_git || %{}
+
     opts = [
       agents: state.agents,
       workspace_root: state.workspace_root,
       workspace_isolation: isolation_opt(state.workspace_isolation),
-      workspace_git_repo: state.workspace_git_repo,
-      workspace_git_remote: state.workspace_git_remote,
-      workspace_git_token: state.workspace_git_token,
+      workspace_git_repo: git[:repo],
+      workspace_git_remote: git[:remote],
+      workspace_git_token: git[:token],
       tracker: state.tracker,
       tracker_config: state.tracker_config,
       run_id: run_id
