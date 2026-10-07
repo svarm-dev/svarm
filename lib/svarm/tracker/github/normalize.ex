@@ -12,7 +12,8 @@ defmodule Svarm.Tracker.GitHub.Normalize do
   so Orchestrator `dependencies_met?/2` works even when `list_issues` later
   drops the body.
   """
-  alias Svarm.{Coordination, Issue}
+  alias Svarm.Issue
+  alias Svarm.Tracker.NormalizeSupport
 
   @depends_on_marker ~r/<!--\s*svarm-depends-on:\s*([^>]*?)\s*-->/
   @follow_up_marker ~r/<!--\s*svarm-follow-up:\s*(.*?)\s*-->/s
@@ -40,7 +41,7 @@ defmodule Svarm.Tracker.GitHub.Normalize do
       priority: 0,
       attempts: 0,
       created_by: gh_issue["user"]["login"] || "github",
-      created_at: parse_created_at(gh_issue["created_at"]),
+      created_at: NormalizeSupport.created_unix(gh_issue["created_at"]),
       tenant: gh_issue["repository_url"] |> String.split("/") |> Enum.at(-2) || "",
       labels: labels,
       depends_on: depends_on,
@@ -186,22 +187,7 @@ defmodule Svarm.Tracker.GitHub.Normalize do
 
   Missing rows stay `0`. Lists use one `get_many/1` (not N+1).
   """
-  @spec attach_attempts(Issue.t()) :: Issue.t()
-  @spec attach_attempts([Issue.t()]) :: [Issue.t()]
-  def attach_attempts(%Issue{} = issue) do
-    hd(attach_attempts([issue]))
-  end
-
-  def attach_attempts(issues) when is_list(issues) do
-    by_id = Coordination.get_many(Enum.map(issues, & &1.id))
-
-    Enum.map(issues, fn issue ->
-      case Map.get(by_id, issue.id) do
-        %{attempts: n} when is_integer(n) and n >= 0 -> %{issue | attempts: n}
-        _ -> issue
-      end
-    end)
-  end
+  defdelegate attach_attempts(issues), to: NormalizeSupport
 
   defp build_id(gh_issue) do
     # Use node_id for stability (survives issue number changes on transfer)
@@ -230,13 +216,4 @@ defmodule Svarm.Tracker.GitHub.Normalize do
       true -> "code"
     end
   end
-
-  defp parse_created_at(iso_string) when is_binary(iso_string) do
-    case DateTime.from_iso8601(iso_string) do
-      {:ok, dt, _} -> DateTime.to_unix(dt)
-      _ -> 0
-    end
-  end
-
-  defp parse_created_at(_), do: 0
 end

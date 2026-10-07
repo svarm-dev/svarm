@@ -11,8 +11,9 @@ defmodule Svarm.Tracker.Kaneo.Normalize do
   (`Svarm.Tracker.Kaneo.Columns`). Stock slugs `to-do` and `in-progress`
   become `todo` and `in_progress`.
   """
-  alias Svarm.{Coordination, Issue}
+  alias Svarm.Issue
   alias Svarm.Tracker.Kaneo.Columns
+  alias Svarm.Tracker.NormalizeSupport
 
   @priority_to_int %{
     "urgent" => 4,
@@ -40,7 +41,7 @@ defmodule Svarm.Tracker.Kaneo.Normalize do
       priority: priority(task["priority"]),
       attempts: 0,
       created_by: task["userId"] || "kaneo",
-      created_at: parse_created_at(task["createdAt"]),
+      created_at: NormalizeSupport.created_unix(task["createdAt"]),
       tenant: task["projectId"],
       labels: labels,
       depends_on: [],
@@ -75,25 +76,7 @@ defmodule Svarm.Tracker.Kaneo.Normalize do
   end
 
   @doc "Overlay durable retry counters for one issue or many."
-  @spec attach_attempts(Issue.t()) :: Issue.t()
-  @spec attach_attempts([Issue.t()]) :: [Issue.t()]
-  def attach_attempts(%Issue{} = issue) do
-    case Coordination.get(issue.id) do
-      %{attempts: n} when is_integer(n) and n >= 0 -> %{issue | attempts: n}
-      _ -> issue
-    end
-  end
-
-  def attach_attempts(issues) when is_list(issues) do
-    by_id = Coordination.get_many(Enum.map(issues, & &1.id))
-
-    Enum.map(issues, fn issue ->
-      case Map.get(by_id, issue.id) do
-        %{attempts: n} when is_integer(n) and n >= 0 -> %{issue | attempts: n}
-        _ -> issue
-      end
-    end)
-  end
+  defdelegate attach_attempts(issues), to: NormalizeSupport
 
   @doc "Map a Svärm integer priority to a Kaneo priority string."
   @spec to_api_priority(term()) :: String.t()
@@ -127,13 +110,4 @@ defmodule Svarm.Tracker.Kaneo.Normalize do
       true -> "code"
     end
   end
-
-  defp parse_created_at(iso) when is_binary(iso) do
-    case DateTime.from_iso8601(iso) do
-      {:ok, dt, _} -> DateTime.to_unix(dt)
-      _ -> 0
-    end
-  end
-
-  defp parse_created_at(_), do: 0
 end
