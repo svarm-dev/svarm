@@ -17,6 +17,8 @@ defmodule Svarm.Workflow.Config do
       workspace_root: get_string(config, ["workspace", "root"], Workspace.default_root()),
       workspace_isolation: workspace_isolation(config),
       workspace_git_repo: workspace_git_repo(config),
+      workspace_git_remote: workspace_git_remote(config),
+      workspace_git_token: workspace_git_token(config),
       active_states: get_list(config, ["tracker", "active_states"], ["todo", "in_progress"]),
       terminal_states:
         get_list(config, ["tracker", "terminal_states"], ["done", "failed", "review"]),
@@ -51,13 +53,30 @@ defmodule Svarm.Workflow.Config do
 
       match?({:error, :invalid_workspace_isolation}, cfg.workspace_isolation) ->
         Logger.warning(
-          "workflow: invalid workspace.isolation #{inspect(isolation_raw(wf))}; expected path or worktree"
+          "workflow: invalid workspace.isolation #{inspect(isolation_raw(wf))}; expected path, worktree, or clone"
         )
 
         {:error, :invalid_workspace_isolation}
 
       true ->
-        validate_tracker_config(cfg.tracker_config)
+        with :ok <- validate_workspace_git(cfg) do
+          validate_tracker_config(cfg.tracker_config)
+        end
+    end
+  end
+
+  # A separate git remote (e.g. Forgejo) is opt-in. `git_remote` alone selects
+  # clone mode, so a config with no remote behaves exactly as before.
+  defp validate_workspace_git(cfg) do
+    cond do
+      cfg.workspace_isolation == :clone and blank?(cfg.workspace_git_remote) ->
+        {:error, :git_remote_required}
+
+      is_binary(cfg.workspace_git_remote) and String.contains?(cfg.workspace_git_remote, " ") ->
+        {:error, :invalid_git_remote}
+
+      true ->
+        :ok
     end
   end
 
@@ -94,11 +113,13 @@ defmodule Svarm.Workflow.Config do
   defp blank?(""), do: true
   defp blank?(_), do: false
 
-  # Omitted → :path. Only the exact strings "path" and "worktree" are valid.
+  # Omitted → :path (or :clone when a separate git remote is configured).
+  # Only the exact strings "path", "worktree", and "clone" are valid.
   defp workspace_isolation(config) do
     case get_in_path(config, ["workspace", "isolation"]) do
-      nil -> :path
-      "path" -> :path
+      nil -> if workspace_git_remote(config), do: :clone, else: :path
+      "clone" -> :clone
+      "path" -> if workspace_git_remote(config), do: :clone, else: :path
       "worktree" -> :worktree
       _other -> {:error, :invalid_workspace_isolation}
     end
@@ -113,6 +134,33 @@ defmodule Svarm.Workflow.Config do
     case get_string(config, ["workspace", "git_repo"], nil) do
       path when is_binary(path) and path != "" -> expand_path(path)
       _ -> nil
+    end
+  end
+
+  # Separate code remote (e.g. `https://git.example.com/org/repo.git`).
+  # Distinct from the tracker owner/repo; never derived from GitHub config.
+  defp workspace_git_remote(config) do
+    case get_string(config, ["workspace", "git_remote"], nil) do
+      remote when is_binary(remote) and remote != "" -> String.trim(remote)
+      _ -> nil
+    end
+  end
+
+  # Optional credential for the separate remote. `$FORGEJO_TOKEN` resolves from
+  # the host env; a bare value is a literal (tests). Injected as `GIT_TOKEN`.
+  defp workspace_git_token(config) do
+    case get_in_path(config, ["workspace", "git_token"]) do
+      token when is_binary(token) -> resolve_git_token(token)
+      _ -> nil
+    end
+  end
+
+  defp resolve_git_token("$" <> var), do: System.get_env(var)
+
+  defp resolve_git_token(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> trimmed
     end
   end
 

@@ -279,6 +279,8 @@ defmodule Svarm.Orchestrator.Dispatch do
       workspace_root: state.workspace_root,
       workspace_isolation: isolation_opt(state.workspace_isolation),
       workspace_git_repo: state.workspace_git_repo,
+      workspace_git_remote: state.workspace_git_remote,
+      workspace_git_token: state.workspace_git_token,
       tracker: state.tracker,
       tracker_config: state.tracker_config,
       run_id: run_id
@@ -366,6 +368,6 @@ defmodule Svarm.Orchestrator.Dispatch do
     }
   end
 
-  defp isolation_opt(mode) when mode in [:path, :worktree], do: mode
+  defp isolation_opt(mode) when mode in [:path, :worktree, :clone], do: mode
   defp isolation_opt(_), do: :path
 end

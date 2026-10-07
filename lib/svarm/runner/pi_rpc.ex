@@ -68,6 +68,8 @@ defmodule Svarm.Runner.PiRPC do
     workspace_root = Keyword.get(opts, :workspace_root, Workspace.default_root())
     isolation = Keyword.get(opts, :workspace_isolation, :path)
     git_repo = Keyword.get(opts, :workspace_git_repo)
+    git_remote = Keyword.get(opts, :workspace_git_remote)
+    git_token = Keyword.get(opts, :workspace_git_token)
     {tracker, tracker_config} = Tracker.Resolve.from_opts(opts)
 
     workspace_key = Workspace.key_for_issue(task)
@@ -75,7 +77,9 @@ defmodule Svarm.Runner.PiRPC do
     {workspace_path, _created_now} =
       Workspace.ensure!(workspace_key, workspace_root,
         isolation: isolation,
-        git_repo: git_repo
+        git_repo: git_repo,
+        git_remote: git_remote,
+        git_token: git_token
       )
 
     attempt = (task.attempts || 0) + 1
@@ -147,7 +151,7 @@ defmodule Svarm.Runner.PiRPC do
 
     env =
       (agent_config[:env] || %{})
-      |> Svarm.Runner.with_github_token(tracker_config)
+      |> Svarm.Runner.with_git_env(tracker_config, opts)
 
     timeout_ms = Keyword.get(opts, :timeout_ms, @default_timeout_ms)
     abort_grace_ms = Keyword.get(opts, :abort_grace_ms, @default_abort_grace_ms)

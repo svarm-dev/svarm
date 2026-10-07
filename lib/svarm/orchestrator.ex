@@ -72,6 +72,8 @@ defmodule Svarm.Orchestrator do
     :workspace_root,
     :workspace_isolation,
     :workspace_git_repo,
+    :workspace_git_remote,
+    :workspace_git_token,
     :agents,
     :workflow,
     :approval,
@@ -199,6 +201,8 @@ defmodule Svarm.Orchestrator do
       workspace_root: Keyword.get(opts, :workspace_root) || Workspace.default_root(),
       workspace_isolation: Keyword.get(opts, :workspace_isolation, :path),
       workspace_git_repo: Keyword.get(opts, :workspace_git_repo),
+      workspace_git_remote: Keyword.get(opts, :workspace_git_remote),
+      workspace_git_token: Keyword.get(opts, :workspace_git_token),
       active_states: Keyword.get(opts, :active_states, @default_active_states),
       terminal_states: Keyword.get(opts, :terminal_states, @default_terminal_states),
       agents: %{}
@@ -621,6 +625,8 @@ defmodule Svarm.Orchestrator do
         workspace_isolation:
           apply_workspace_isolation(cfg.workspace_isolation, state.workspace_isolation),
         workspace_git_repo: Map.get(cfg, :workspace_git_repo),
+        workspace_git_remote: Map.get(cfg, :workspace_git_remote),
+        workspace_git_token: Map.get(cfg, :workspace_git_token),
         active_states: cfg.active_states,
         terminal_states: cfg.terminal_states,
         tracker_config: Settings.Resolve.tracker_overlay(cfg.tracker_config),
@@ -634,8 +640,8 @@ defmodule Svarm.Orchestrator do
   # from_map/1 stores {:error, :invalid_workspace_isolation} so validate_workflow/1
   # can fail closed. Never copy that tuple into runner-facing state — it is
   # truthy, so `|| :path` would leak it into Workspace.ensure/3.
-  defp apply_workspace_isolation(mode, _prev) when mode in [:path, :worktree], do: mode
-  defp apply_workspace_isolation(_invalid, prev) when prev in [:path, :worktree], do: prev
+  defp apply_workspace_isolation(mode, _prev) when mode in [:path, :worktree, :clone], do: mode
+  defp apply_workspace_isolation(_invalid, prev) when prev in [:path, :worktree, :clone], do: prev
   defp apply_workspace_isolation(_invalid, _prev), do: :path
 
   defp put_approval_config(%{workflow: nil} = state),

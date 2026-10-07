@@ -175,6 +175,29 @@ defmodule Svarm.Runner do
   def with_github_token(env_map, _), do: env_map
 
   @doc """
+  Inject git credentials for the agent's branch/push.
+
+  When `workspace.git_remote` is configured the code remote is not GitHub, so
+  the configured token is injected as `GIT_TOKEN` and `GITHUB_TOKEN` /
+  `GH_TOKEN` are **not** injected even if the tracker uses GitHub App auth.
+  Without a configured remote this is `with_github_token/2` (default GitHub
+  installs are unchanged).
+  """
+  def with_git_env(env_map, tracker_config, opts)
+      when is_map(env_map) and is_list(opts) do
+    case Keyword.get(opts, :workspace_git_remote) do
+      remote when is_binary(remote) and remote != "" ->
+        case Keyword.get(opts, :workspace_git_token) do
+          token when is_binary(token) and token != "" -> Map.put(env_map, "GIT_TOKEN", token)
+          _ -> env_map
+        end
+
+      _ ->
+        with_github_token(env_map, tracker_config)
+    end
+  end
+
+  @doc """
   Write agent output to the workspace `run.log`, redacting secrets first.
 
   Same scrubbing as PubSub/`RunLog` (`Svarm.Redact.text/1`) so env dumps and

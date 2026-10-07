@@ -26,6 +26,8 @@ defmodule Svarm.Runner.Cli do
     workspace_root = Keyword.get(opts, :workspace_root, Workspace.default_root())
     isolation = Keyword.get(opts, :workspace_isolation, :path)
     git_repo = Keyword.get(opts, :workspace_git_repo)
+    git_remote = Keyword.get(opts, :workspace_git_remote)
+    git_token = Keyword.get(opts, :workspace_git_token)
     {tracker, tracker_config} = Tracker.Resolve.from_opts(opts)
     assignee = task.assignee || ProfileRouter.assign("#{task.title} #{task.body}")
 
@@ -34,7 +36,9 @@ defmodule Svarm.Runner.Cli do
     {workspace_path, _created_now} =
       Workspace.ensure!(workspace_key, workspace_root,
         isolation: isolation,
-        git_repo: git_repo
+        git_repo: git_repo,
+        git_remote: git_remote,
+        git_token: git_token
       )
 
     attempt = (task.attempts || 0) + 1
@@ -85,7 +89,7 @@ defmodule Svarm.Runner.Cli do
 
     env_map =
       (agent_config[:env] || %{})
-      |> Svarm.Runner.with_github_token(tracker_config)
+      |> Svarm.Runner.with_git_env(tracker_config, opts)
 
     timeout_ms = Keyword.get(opts, :timeout_ms, 3_600_000)
 

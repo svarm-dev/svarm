@@ -6,6 +6,9 @@ defmodule Svarm.Workspace do
 
   - `:path` (default) — directory under the workspace root with a path-escape guard
   - `:worktree` — `git worktree add` under the root from a configured source repo
+  - `:clone` — `git clone` from a separate remote URL (e.g. a Forgejo repo).
+    Selected automatically when `workspace.git_remote` is set and
+    `workspace.isolation` is omitted (or `path`). Plain `git`, no `gh`.
 
   Worktrees are **not** a container/VM sandbox — they isolate git working trees only.
   See SECURITY.md.
@@ -23,9 +26,12 @@ defmodule Svarm.Workspace do
   Ensure a workspace for `identifier` under `root`.
 
   Options:
-  - `:isolation` — `:path` (default) or `:worktree`
+  - `:isolation` — `:path` (default), `:worktree`, or `:clone`
   - `:git_repo` — absolute path to the source git repo (required for `:worktree`)
-  - `:git_timeout_ms` — bound for git add/list (default 30_000)
+  - `:git_remote` — remote URL to clone (required for `:clone`)
+  - `:git_token` — optional token for `:clone`; used as the HTTPS password and
+    left as `GIT_TOKEN` in the agent env (never written to `.git/config`)
+  - `:git_timeout_ms` — bound for git add/list/clone (default 30_000)
   - `:git` — git executable (default `"git"`)
 
   Returns `{:ok, {path, created_now}}` or `{:error, reason}`.
@@ -38,6 +44,7 @@ defmodule Svarm.Workspace do
       case isolation do
         :path -> ensure_path(abs)
         :worktree -> ensure_worktree(abs, root_abs, key, opts)
+        :clone -> ensure_clone(abs, root_abs, opts)
       end
     end
   end
@@ -59,6 +66,7 @@ defmodule Svarm.Workspace do
       case isolation do
         :path -> cleanup_path(abs)
         :worktree -> cleanup_worktree(abs, opts)
+        :clone -> cleanup_path(abs)
       end
     end
   end
@@ -77,6 +85,8 @@ defmodule Svarm.Workspace do
 
   defp isolation_mode(:worktree), do: {:ok, :worktree}
   defp isolation_mode("worktree"), do: {:ok, :worktree}
+  defp isolation_mode(:clone), do: {:ok, :clone}
+  defp isolation_mode("clone"), do: {:ok, :clone}
   defp isolation_mode(:path), do: {:ok, :path}
   defp isolation_mode("path"), do: {:ok, :path}
   defp isolation_mode(nil), do: {:ok, :path}
@@ -110,6 +120,132 @@ defmodule Svarm.Workspace do
       {:error, reason, _file} -> {:error, {:rm, reason}}
     end
   end
+
+  # `:clone` — fresh `git clone` from the configured remote. A matching
+  # existing clone is reused; anything else under the ticket path is cleared
+  # (bounded to `root_abs`) and re-cloned so a partial run self-heals.
+  defp ensure_clone(abs, root_abs, opts) do
+    remote = opts |> Keyword.get(:git_remote) |> normalize_remote()
+    token = opts |> Keyword.get(:git_token) |> normalize_token()
+
+    cond do
+      is_nil(remote) ->
+        {:error, :git_remote_required}
+
+      clone_matches?(abs, remote, opts) ->
+        {:ok, {abs, false}}
+
+      File.exists?(abs) ->
+        with :ok <- bounded_rm_rf(abs, root_abs) do
+          clone_into(abs, root_abs, remote, token, opts)
+        end
+
+      true ->
+        clone_into(abs, root_abs, remote, token, opts)
+    end
+  end
+
+  defp clone_into(abs, root_abs, remote, token, opts) do
+    parent = Path.dirname(abs)
+    clone_url = authenticated_remote(remote, token)
+
+    case git_cmd(parent, ["clone", clone_url, abs], opts) do
+      {:ok, _out} ->
+        _ = configure_clone(abs, remote, token, opts)
+        {:ok, {abs, true}}
+
+      {:error, reason} ->
+        _ = bounded_rm_rf(abs, root_abs)
+        {:error, normalize_clone_error(reason, token)}
+    end
+  end
+
+  # Keep `origin` clean (token never lands in `.git/config`). When a token was
+  # used, leave a credential helper that reads `GIT_TOKEN` at push time; the
+  # runner injects that var into the agent env.
+  defp configure_clone(abs, remote, token, opts) do
+    _ = git_cmd(abs, ["remote", "set-url", "origin", remote], opts)
+
+    if is_binary(token) do
+      _ = git_cmd(abs, ["config", "--local", "credential.helper", credential_helper()], opts)
+    end
+
+    :ok
+  end
+
+  defp credential_helper do
+    ~s|!f() { echo username=oauth2; echo "password=$GIT_TOKEN"; }; f|
+  end
+
+  defp clone_matches?(abs, remote, opts) do
+    if File.dir?(Path.join(abs, ".git")) do
+      case git_cmd(abs, ["remote", "get-url", "origin"], opts) do
+        {:ok, out} -> String.trim(out) == remote
+        _ -> false
+      end
+    else
+      false
+    end
+  end
+
+  defp normalize_clone_error({:git_failed, code, out}, token) do
+    {:git_clone_failed, code, redact_git_output(out, token)}
+  end
+
+  defp normalize_clone_error(reason, _token), do: reason
+
+  defp redact_git_output(out, token) when is_binary(out) do
+    out
+    |> redact_token(token)
+    |> Svarm.Redact.text()
+  end
+
+  defp redact_git_output(out, _token), do: out
+
+  defp redact_token(out, token) when is_binary(token) and token != "" do
+    encoded = URI.encode(token, &URI.char_unreserved?/1)
+
+    out
+    |> String.replace(token, "[redacted]")
+    |> String.replace(encoded, "[redacted]")
+  end
+
+  defp redact_token(out, _token), do: out
+
+  # HTTPS remotes get `oauth2:<token>` userinfo for the clone only; the URL is
+  # reset to the clean form right after. SSH and non-HTTPS remotes are untouched.
+  defp authenticated_remote(remote, token) when is_binary(token) do
+    case URI.parse(remote) do
+      %URI{scheme: "https", host: host} = uri when is_binary(host) ->
+        encoded = URI.encode(token, &URI.char_unreserved?/1)
+        URI.to_string(%{uri | userinfo: "oauth2:" <> encoded})
+
+      _ ->
+        remote
+    end
+  end
+
+  defp authenticated_remote(remote, _token), do: remote
+
+  defp normalize_remote(nil), do: nil
+
+  defp normalize_remote(remote) when is_binary(remote) do
+    case String.trim(remote) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp normalize_remote(_), do: nil
+
+  defp normalize_token(token) when is_binary(token) do
+    case String.trim(token) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp normalize_token(_), do: nil
 
   defp ensure_worktree(abs, root_abs, key, opts) do
     repo = opts |> Keyword.get(:git_repo) |> normalize_repo()
