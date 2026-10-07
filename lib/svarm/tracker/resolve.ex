@@ -22,7 +22,8 @@ defmodule Svarm.Tracker.Resolve do
   # Kind atoms shipped in OSS. A third tracker is one module + this map + tests.
   @adapters %{
     local: Tracker.Local,
-    github: Tracker.GitHub
+    github: Tracker.GitHub,
+    kaneo: Tracker.Kaneo
   }
 
   @default_active_states ["todo", "in_progress"]
@@ -109,6 +110,8 @@ defmodule Svarm.Tracker.Resolve do
   defp normalize_kind("github"), do: :github
   defp normalize_kind(:local), do: :local
   defp normalize_kind("local"), do: :local
+  defp normalize_kind(:kaneo), do: :kaneo
+  defp normalize_kind("kaneo"), do: :kaneo
   defp normalize_kind(_), do: :local
 
   defp prepare_config(:local, tc, opts) do

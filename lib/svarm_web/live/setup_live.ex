@@ -263,6 +263,9 @@ defmodule SvarmWeb.SetupLive do
                 <option value="github" selected={@form["tracker_kind"] == "github"}>
                   GitHub issues
                 </option>
+                <option value="kaneo" selected={@form["tracker_kind"] == "kaneo"}>
+                  Kaneo
+                </option>
               </select>
             </label>
 
@@ -317,6 +320,61 @@ defmodule SvarmWeb.SetupLive do
                   autocomplete="off"
                 />
               </label>
+            </div>
+
+            <div :if={@form["tracker_kind"] == "kaneo"} class="space-y-3">
+              <label class="form-control w-full gap-1" for="setup-tracker-base-url">
+                <span class="label-text text-xs text-base-content/55">Base URL</span>
+                <input
+                  id="setup-tracker-base-url"
+                  type="text"
+                  name="setup[tracker_base_url]"
+                  value={@form["tracker_base_url"]}
+                  class="input input-bordered input-sm w-full font-mono"
+                  placeholder="https://kaneo.example.com"
+                  autocomplete="off"
+                />
+              </label>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label class="form-control w-full gap-1" for="setup-tracker-workspace">
+                  <span class="label-text text-xs text-base-content/55">Workspace</span>
+                  <input
+                    id="setup-tracker-workspace"
+                    type="text"
+                    name="setup[tracker_workspace]"
+                    value={@form["tracker_workspace"]}
+                    class="input input-bordered input-sm w-full font-mono"
+                    autocomplete="off"
+                  />
+                </label>
+                <label class="form-control w-full gap-1" for="setup-tracker-project">
+                  <span class="label-text text-xs text-base-content/55">Project id</span>
+                  <input
+                    id="setup-tracker-project"
+                    type="text"
+                    name="setup[tracker_project]"
+                    value={@form["tracker_project"]}
+                    class="input input-bordered input-sm w-full font-mono"
+                    placeholder="not the display name"
+                    autocomplete="off"
+                  />
+                </label>
+              </div>
+              <label class="form-control w-full gap-1" for="setup-tracker-kaneo-key">
+                <span class="label-text text-xs text-base-content/55">Kaneo API key</span>
+                <input
+                  id="setup-tracker-kaneo-key"
+                  type="password"
+                  name="setup[tracker_api_key]"
+                  class="input input-bordered input-sm w-full font-mono"
+                  value={@form["tracker_api_key"]}
+                  placeholder={tracker_placeholder(@tracker)}
+                  autocomplete="off"
+                />
+              </label>
+              <p class="text-xs text-base-content/55">
+                Project is the Kaneo project id. Stock columns are to-do, in-progress, in-review, and done. Add a pending-approval column before unattended holds.
+              </p>
             </div>
 
             <p :if={@form["tracker_kind"] == "local"} class="text-xs text-base-content/55">
@@ -612,6 +670,9 @@ defmodule SvarmWeb.SetupLive do
       "tracker_kind" => to_string(tracker["kind"] || "local"),
       "tracker_owner" => tracker["owner"] || "",
       "tracker_repo" => tracker["repo"] || "",
+      "tracker_base_url" => tracker["base_url"] || "",
+      "tracker_workspace" => tracker["workspace"] || "",
+      "tracker_project" => tracker["project"] || "",
       "tracker_api_key" => "",
       "tracker_labels" => labels_to_csv(tracker["required_labels"]),
       "agent_provider" => provider_id,
@@ -646,12 +707,15 @@ defmodule SvarmWeb.SetupLive do
       "provider_id" => provider_id,
       "provider_api_key" => blank_to_empty(params["provider_api_key"]),
       "tracker_kind" =>
-        if(params["tracker_kind"] in ["local", "github"],
+        if(params["tracker_kind"] in ["local", "github", "kaneo"],
           do: params["tracker_kind"],
           else: "local"
         ),
       "tracker_owner" => blank_to_empty(params["tracker_owner"]),
       "tracker_repo" => blank_to_empty(params["tracker_repo"]),
+      "tracker_base_url" => blank_to_empty(params["tracker_base_url"]),
+      "tracker_workspace" => blank_to_empty(params["tracker_workspace"]),
+      "tracker_project" => blank_to_empty(params["tracker_project"]),
       "tracker_api_key" => blank_to_empty(params["tracker_api_key"]),
       "tracker_labels" => blank_to_empty(params["tracker_labels"]),
       "agent_provider" => provider_id,
@@ -725,6 +789,9 @@ defmodule SvarmWeb.SetupLive do
       "tracker_kind" => form["tracker_kind"],
       "tracker_owner" => form["tracker_owner"],
       "tracker_repo" => form["tracker_repo"],
+      "tracker_base_url" => form["tracker_base_url"],
+      "tracker_workspace" => form["tracker_workspace"],
+      "tracker_project" => form["tracker_project"],
       "tracker_labels" => form["tracker_labels"],
       "agent_model" => form["agent_model"],
       "provider_key_set?" => !!provider[:api_key_set?],
@@ -732,15 +799,14 @@ defmodule SvarmWeb.SetupLive do
     }
   end
 
+  @dirty_fields ~w(
+    provider_id tracker_kind tracker_owner tracker_repo tracker_base_url
+    tracker_workspace tracker_project tracker_labels agent_model
+  )
+
   defp form_dirty?(form, baseline) do
-    form["provider_api_key"] != "" or
-      form["tracker_api_key"] != "" or
-      form["provider_id"] != baseline["provider_id"] or
-      form["tracker_kind"] != baseline["tracker_kind"] or
-      form["tracker_owner"] != baseline["tracker_owner"] or
-      form["tracker_repo"] != baseline["tracker_repo"] or
-      form["tracker_labels"] != baseline["tracker_labels"] or
-      form["agent_model"] != baseline["agent_model"]
+    form["provider_api_key"] != "" or form["tracker_api_key"] != "" or
+      Enum.any?(@dirty_fields, fn key -> form[key] != baseline[key] end)
   end
 
   # Projected readiness after Apply (form + stored secrets + live env).
@@ -785,18 +851,22 @@ defmodule SvarmWeb.SetupLive do
     %{ready?: ready?, badge: readiness_badge(ready?, pending?)}
   end
 
-  defp tracker_form_ready?(form, tracker) do
-    case form["tracker_kind"] do
-      "local" ->
-        true
+  defp tracker_form_ready?(%{"tracker_kind" => "local"}, _tracker), do: true
 
-      "github" ->
-        present?(form["tracker_owner"]) and present?(form["tracker_repo"]) and
-          (present?(form["tracker_api_key"]) or tracker[:api_key_set?] == true)
+  defp tracker_form_ready?(%{"tracker_kind" => "github"} = form, tracker) do
+    present?(form["tracker_owner"]) and present?(form["tracker_repo"]) and
+      tracker_key_present?(form, tracker)
+  end
 
-      _ ->
-        false
-    end
+  defp tracker_form_ready?(%{"tracker_kind" => "kaneo"} = form, tracker) do
+    present?(form["tracker_base_url"]) and present?(form["tracker_project"]) and
+      tracker_key_present?(form, tracker)
+  end
+
+  defp tracker_form_ready?(_form, _tracker), do: false
+
+  defp tracker_key_present?(form, tracker) do
+    present?(form["tracker_api_key"]) or tracker[:api_key_set?] == true
   end
 
   defp agent_readiness(form, assigns) do
@@ -858,6 +928,9 @@ defmodule SvarmWeb.SetupLive do
       "kind" => form["tracker_kind"],
       "owner" => form["tracker_owner"],
       "repo" => form["tracker_repo"],
+      "base_url" => form["tracker_base_url"],
+      "workspace" => form["tracker_workspace"],
+      "project" => form["tracker_project"],
       "api_key" => form["tracker_api_key"],
       "auth" => "token",
       "required_labels" => parse_labels(form["tracker_labels"])

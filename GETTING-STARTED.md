@@ -204,6 +204,12 @@ workspace:
 
 See [`priv/workflow_template.forgejo.md`](priv/workflow_template.forgejo.md) for a ready-to-copy WORKFLOW body that omits `gh`.
 
+#### Kaneo tracker
+
+`tracker.kind: kaneo` polls a self-hosted Kaneo board. `project` is the Kaneo **project id**, not the display name. Stock columns are `to-do`, `in-progress`, `in-review`, and `done`; Svärm maps `todo`, `in_progress`, `review`, and `done` onto those slugs. Approval holds need a `pending-approval` column (or `column_slugs.pending_approval`). A missing slug fails the status move instead of looking successful.
+
+[`priv/workflow_template.self_hosted.md`](priv/workflow_template.self_hosted.md) sets `kind: kaneo` and `workspace.git_remote` together.
+
 ### CI resume (optional)
 
 When a Svärm-managed ticket lands in **review** with a PR, and **GitHub Checks** later fail, Svärm can **re-open the ticket** and spawn a **fresh** agent run with a short CI failure summary in the prompt (not a magic pi session resume). After **N** resume attempts, a **circuit** opens: no more auto-resume; the board shows **“CI retries exhausted”** while the card stays in `review` so you can still merge or intervene.

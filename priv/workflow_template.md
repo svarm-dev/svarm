@@ -2,7 +2,7 @@
 # tracker: where tickets live
 # Default is local (SQLite board) — zero-key demo works out of the box.
 tracker:
-  kind: local                    # local | github
+  kind: local                    # local | github | kaneo
   active_states: ["todo", "in_progress"]
   # review is terminal for dispatch — human closes/merges after PR review
   terminal_states: ["done", "failed", "review"]
@@ -29,6 +29,23 @@ tracker:
   #   "status: pending-approval": pending_approval
   # reverse_labels:
   #   pending_approval: "status: pending-approval"
+
+  # ═══════════════════════════════════════════════════════════════════
+  # UNCOMMENT FOR KANEO — set kind: kaneo above, fill the self-hosted
+  # base URL / workspace / project id, and put KANEO_API_KEY in .env.
+  # `project` is the Kaneo project id, not the display name.
+  # Stock columns are to-do, in-progress, in-review, done. Svärm maps
+  # todo / in_progress / review / done onto those slugs. Add a
+  # pending-approval column (or set column_slugs) before approval holds.
+  # ═══════════════════════════════════════════════════════════════════
+  # base_url: https://kaneo.example.com
+  # workspace: my-workspace
+  # project: proj_abc123
+  # api_key: $KANEO_API_KEY       # never a literal key
+  # active_states: ["todo", "in_progress"]
+  # terminal_states: ["done", "failed", "review"]
+  # column_slugs:
+  #   pending_approval: pending-approval
 
 polling:
   interval_ms: 30000

@@ -283,6 +283,9 @@ defmodule Svarm.Settings do
     |> copy_string_key(:owner)
     |> copy_string_key(:repo)
     |> copy_string_key(:auth)
+    |> copy_string_key(:base_url)
+    |> copy_string_key(:workspace)
+    |> copy_string_key(:project)
     |> copy_string_key(:required_labels)
   end
 
@@ -310,17 +313,25 @@ defmodule Svarm.Settings do
 
   defp tracker_config_from_form(form) do
     base = Resolve.tracker_overlay(workflow_tracker_config())
-    kind = if form["tracker_kind"] == "github", do: :github, else: :local
 
     %{
-      kind: kind,
+      kind: form_tracker_kind(form["tracker_kind"], base[:kind]),
       auth: :token,
       owner: blank_to_nil(form["tracker_owner"]) || base[:owner],
       repo: blank_to_nil(form["tracker_repo"]) || base[:repo],
+      base_url: blank_to_nil(form["tracker_base_url"]) || base[:base_url],
+      workspace: blank_to_nil(form["tracker_workspace"]) || base[:workspace],
+      project: blank_to_nil(form["tracker_project"]) || base[:project],
       api_key: form_tracker_api_key(form, base),
       required_labels: form_tracker_labels(form, base)
     }
   end
+
+  defp form_tracker_kind("github", _), do: :github
+  defp form_tracker_kind("kaneo", _), do: :kaneo
+  defp form_tracker_kind("local", _), do: :local
+  defp form_tracker_kind(_, :kaneo), do: :kaneo
+  defp form_tracker_kind(_, _), do: :local
 
   defp form_tracker_api_key(form, base) do
     case form["tracker_api_key"] do
