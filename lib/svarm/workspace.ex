@@ -238,8 +238,6 @@ defmodule Svarm.Workspace do
     |> Svarm.Redact.text()
   end
 
-  defp redact_git_output(out, _token), do: out
-
   defp redact_token(out, token) when is_binary(token) and token != "" do
     encoded = URI.encode(token, &URI.char_unreserved?/1)
 
