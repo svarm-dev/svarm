@@ -434,6 +434,73 @@ defmodule Svarm.WorkflowTest do
     end
   end
 
+  describe "Config.tracker_config kaneo" do
+    test "parses base_url, workspace, project, and api_key env var" do
+      System.put_env("KANEO_TEST_KEY", "secret")
+      on_exit(fn -> System.delete_env("KANEO_TEST_KEY") end)
+
+      cfg =
+        Config.tracker_config(%{
+          "tracker" => %{
+            "kind" => "kaneo",
+            "base_url" => "https://kaneo.example.com",
+            "workspace" => "homelab",
+            "project" => "proj_1",
+            "api_key" => "$KANEO_TEST_KEY",
+            "active_states" => ["todo"],
+            "terminal_states" => ["done"]
+          }
+        })
+
+      assert cfg.kind == :kaneo
+      assert cfg.base_url == "https://kaneo.example.com"
+      assert cfg.workspace == "homelab"
+      assert cfg.project == "proj_1"
+      assert cfg.api_key == "secret"
+      assert cfg.active_states == ["todo"]
+      assert cfg.terminal_states == ["done"]
+    end
+
+    test "defaults api_key lookup to KANEO_API_KEY" do
+      System.put_env("KANEO_API_KEY", "from-default")
+      on_exit(fn -> System.delete_env("KANEO_API_KEY") end)
+
+      cfg =
+        Config.tracker_config(%{
+          "tracker" => %{"kind" => "kaneo", "base_url" => "https://k.example", "project" => "p"}
+        })
+
+      assert cfg.api_key == "from-default"
+    end
+
+    test "validate rejects kaneo without base_url or project" do
+      wf = %Workflow{
+        config: %{"tracker" => %{"kind" => "kaneo", "base_url" => "https://k.example"}},
+        prompt_template: "Do {{issue.id}}",
+        path: "x"
+      }
+
+      assert {:error, :kaneo_tracker_missing_base_url_or_project} =
+               Config.validate_workflow(wf)
+    end
+
+    test "validate accepts a complete kaneo config" do
+      wf = %Workflow{
+        config: %{
+          "tracker" => %{
+            "kind" => "kaneo",
+            "base_url" => "https://k.example",
+            "project" => "p"
+          }
+        },
+        prompt_template: "Do {{issue.id}}",
+        path: "x"
+      }
+
+      assert :ok = Config.validate_workflow(wf)
+    end
+  end
+
   describe "Config.review_checklist/1" do
     test "omitted, empty, or non-list is empty" do
       assert Config.review_checklist(nil) == []

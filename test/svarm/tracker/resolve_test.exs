@@ -37,6 +37,23 @@ defmodule Svarm.Tracker.ResolveTest do
       assert config.api_key == "ghp_test"
     end
 
+    test "maps kaneo kind to Tracker.Kaneo and keeps base_url/workspace/project" do
+      tc = %{
+        kind: :kaneo,
+        base_url: "https://kaneo.example.com",
+        workspace: "homelab",
+        project: "proj_1",
+        api_key: "kaneo_test"
+      }
+
+      assert {Tracker.Kaneo, config} = Resolve.adapter_and_config(config: tc)
+      assert config.kind == :kaneo
+      assert config.base_url == "https://kaneo.example.com"
+      assert config.workspace == "homelab"
+      assert config.project == "proj_1"
+      assert config.api_key == "kaneo_test"
+    end
+
     test "unknown kind falls back to Local" do
       assert {Tracker.Local, %{kind: :local}} =
                Resolve.adapter_and_config(config: %{kind: :linear})
@@ -88,6 +105,12 @@ defmodule Svarm.Tracker.ResolveTest do
       assert Resolve.supports?(Tracker.GitHub, :ci_poll)
       assert Resolve.supports?(Tracker.GitHub, :review_poll)
       assert Resolve.supports?(Tracker.GitHub, :connectivity_probe)
+    end
+
+    test "Kaneo opts out of CI, review, and connectivity probe" do
+      refute Resolve.supports?(Tracker.Kaneo, :ci_poll)
+      refute Resolve.supports?(Tracker.Kaneo, :review_poll)
+      refute Resolve.supports?(Tracker.Kaneo, :connectivity_probe)
     end
 
     test "adapters without capabilities/0 still poll CI and reviews" do

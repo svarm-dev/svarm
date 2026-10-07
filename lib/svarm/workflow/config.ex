@@ -82,6 +82,7 @@ defmodule Svarm.Workflow.Config do
 
   defp validate_tracker_config(t) when is_map(t) do
     with :ok <- validate_github_fields(t),
+         :ok <- validate_kaneo_fields(t),
          :ok <- validate_label_map_field(t[:status_labels]) do
       validate_label_map_field(t[:reverse_labels])
     end
@@ -101,6 +102,16 @@ defmodule Svarm.Workflow.Config do
   end
 
   defp validate_github_fields(_), do: :ok
+
+  defp validate_kaneo_fields(%{kind: :kaneo} = t) do
+    if blank?(t[:base_url]) or blank?(t[:project]) do
+      {:error, :kaneo_tracker_missing_base_url_or_project}
+    else
+      :ok
+    end
+  end
+
+  defp validate_kaneo_fields(_), do: :ok
 
   defp validate_label_map_field({:error, reason}), do: {:error, reason}
   defp validate_label_map_field(_), do: :ok
@@ -311,6 +322,16 @@ defmodule Svarm.Workflow.Config do
 
       :local ->
         Map.put(base, :ignored_assignees, [])
+
+      :kaneo ->
+        api_key_env = get_string(tracker, ["api_key"], "KANEO_API_KEY")
+
+        Map.merge(base, %{
+          base_url: get_string(tracker, ["base_url"], nil),
+          workspace: get_string(tracker, ["workspace"], nil),
+          project: get_string(tracker, ["project"], nil),
+          api_key: resolve_env(api_key_env)
+        })
 
       _ ->
         base

@@ -2,7 +2,7 @@
 # tracker: where tickets live
 # Default is local (SQLite board) — zero-key demo works out of the box.
 tracker:
-  kind: local                    # local | github
+  kind: local                    # local | github | kaneo
   active_states: ["todo", "in_progress"]
   # review is terminal for dispatch — human closes/merges after PR review
   terminal_states: ["done", "failed", "review"]
@@ -29,6 +29,19 @@ tracker:
   #   "status: pending-approval": pending_approval
   # reverse_labels:
   #   pending_approval: "status: pending-approval"
+
+  # ═══════════════════════════════════════════════════════════════════
+  # UNCOMMENT FOR KANEO — set kind: kaneo above, fill the self-hosted
+  # base URL / workspace / project, and put KANEO_API_KEY in .env.
+  # active_states / terminal_states are Kaneo column slugs (the board's
+  # columns), not GitHub labels. Eligible tasks sit in the active columns.
+  # ═══════════════════════════════════════════════════════════════════
+  # base_url: https://kaneo.example.com
+  # workspace: my-workspace
+  # project: my-project-id
+  # api_key: $KANEO_API_KEY       # never a literal key
+  # active_states: ["todo", "in_progress"]
+  # terminal_states: ["done", "failed", "review"]
 
 polling:
   interval_ms: 30000
