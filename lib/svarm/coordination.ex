@@ -60,6 +60,10 @@ defmodule Svarm.Coordination do
   ]
 
   @pr_url_re ~r{https://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)}i
+  # GitHub closing keywords, optional colon: "Closes #264", "Fixes: #264".
+  @closing_re ~r/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+#(\d+)\b/i
+  @score_ticket 2
+  @score_bare 1
 
   @doc "Fetch coordination for a task, or nil."
   @spec get(String.t()) :: t() | nil
@@ -205,17 +209,101 @@ defmodule Svarm.Coordination do
   end
 
   @doc """
-  Extract the first GitHub PR URL from free text (agent log / summary).
-  """
-  @spec extract_pr_url(String.t() | nil) :: String.t() | nil
-  def extract_pr_url(nil), do: nil
+  Extract the PR URL this run opened from an agent transcript.
 
-  def extract_pr_url(text) when is_binary(text) do
-    case Regex.run(@pr_url_re, text) do
-      [full | _] -> full
-      _ -> nil
+  File reads land in the same log, so the first `pull/` link is often a
+  changelog citation. A line counts only when it is the URL alone (`gh pr
+  create` prints it that way) or it also names this ticket (`Closes #N`,
+  `Fixes #N`, `Resolves #N`, or branch `svarm/N`). A ticket line outranks a
+  bare URL. Ties keep the later line. Anything else is ignored, and the
+  result is nil when nothing qualifies — a missing link is safer than
+  pointing CI resume at the wrong PR.
+
+  Options:
+  - `:source_id` — tracker issue number (`Issue.source_id`)
+  - `:owner` / `:repo` — when set, drop URLs for other repositories
+  """
+  @spec extract_pr_url(String.t() | nil, keyword()) :: String.t() | nil
+  def extract_pr_url(text, opts \\ [])
+
+  def extract_pr_url(nil, _opts), do: nil
+
+  def extract_pr_url(text, opts) when is_binary(text) and is_list(opts) do
+    source_id = normalize_source_id(Keyword.get(opts, :source_id))
+
+    text
+    |> String.split("\n")
+    |> Enum.reduce({nil, 0}, fn line, acc -> consider_pr_line(line, source_id, opts, acc) end)
+    |> elem(0)
+  end
+
+  defp consider_pr_line(line, source_id, opts, acc) do
+    case line_pr_urls(line, opts) do
+      [] ->
+        acc
+
+      urls ->
+        cond do
+          names_ticket?(line, source_id) ->
+            prefer_pr(acc, List.last(urls), @score_ticket)
+
+          bare_pr_line?(line, urls) ->
+            prefer_pr(acc, hd(urls), @score_bare)
+
+          true ->
+            acc
+        end
     end
   end
+
+  defp line_pr_urls(line, opts) do
+    @pr_url_re
+    |> Regex.scan(line)
+    |> Enum.flat_map(fn
+      [full, owner, repo, _number] ->
+        if allowed_repo?(%{pr_owner: owner, pr_repo: repo}, opts), do: [full], else: []
+
+      _ ->
+        []
+    end)
+  end
+
+  defp bare_pr_line?(line, [url]), do: String.trim(line) == url
+  defp bare_pr_line?(_line, _urls), do: false
+
+  defp names_ticket?(_line, nil), do: false
+
+  defp names_ticket?(line, source_id) do
+    closes_ticket?(line, source_id) or branch_ticket?(line, source_id)
+  end
+
+  defp closes_ticket?(line, source_id) do
+    @closing_re
+    |> Regex.scan(line)
+    |> Enum.any?(fn
+      [_full, number] -> number == source_id
+      _ -> false
+    end)
+  end
+
+  # `svarm/264` names ticket 264. `svarm/2640` does not.
+  defp branch_ticket?(line, source_id) do
+    Regex.match?(~r/svarm\/#{Regex.escape(source_id)}(?!\d)/, line)
+  end
+
+  defp prefer_pr({_url, score}, url, new_score) when new_score >= score, do: {url, new_score}
+  defp prefer_pr(acc, _url, _new_score), do: acc
+
+  defp normalize_source_id(id) when is_integer(id) and id > 0, do: Integer.to_string(id)
+
+  defp normalize_source_id(id) when is_binary(id) do
+    case String.trim(id) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp normalize_source_id(_), do: nil
 
   @doc """
   Rows with a PR number that are eligible for CI / review-resume polling.
