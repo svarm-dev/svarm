@@ -168,7 +168,7 @@ GitHub `list_eligible` / `list_issues` follow `Link` pages (`per_page: 100`, max
 | Base URL | Point `SVARM_BASE_URL` at the deployed host (needed only if you opt in to comment console links) |
 | Comment console links | **Off by default.** `SVARM_COMMENT_CONSOLE_LINKS=true` embeds `/board?task=…&attach=1` in GitHub run comments. Do not enable on a public repo while board reads are open. Pair with `BOARD_READ_AUTH=true` if you need the link ([SECURITY.md](SECURITY.md)) |
 | HTTPS + host | Terminate TLS at a reverse proxy; set `PHX_HOST` to the public hostname (origin checks). Compose **app** leaves session cookies Secure by default; only set `PHX_SECURE_COOKIES=false` for plain-HTTP localhost. See [SECURITY.md](SECURITY.md) |
-| Workspace isolation | Optional: `workspace.isolation` `path` (default) or `worktree`. Not a container. Unknown values fail closed (see below). |
+| Workspace isolation | Optional: `workspace.isolation` `path` (default), `worktree`, or `clone`. Not a container. Unknown values fail closed (see below). |
 
 ### Workspace isolation
 
@@ -177,16 +177,32 @@ Per-ticket cwd lives under `workspace.root`. Isolation is a WORKFLOW switch, not
 | Key | Values | Default |
 |-----|--------|---------|
 | `workspace.root` | Directory for per-ticket workspaces | template uses `~/svarm_workspaces` |
-| `workspace.isolation` | `path` or `worktree` | **`path`** |
+| `workspace.isolation` | `path`, `worktree`, or `clone` | **`path`** (or `clone` when `git_remote` is set) |
 | `workspace.git_repo` | Source git repo path (needed for `worktree`) | unset |
+| `workspace.git_remote` | Separate code remote URL (e.g. `https://git.example.com/org/repo.git`); needed for `clone` | unset |
+| `workspace.git_token` | Token for the remote (`$FORGEJO_TOKEN` or literal); injected to the agent as `GIT_TOKEN` | unset |
 
-Unknown `workspace.isolation` values (`container`, `sandbox`, typos) **fail closed**: `validate_workflow/1` returns `{:error, :invalid_workspace_isolation}` and the orchestrator will not dispatch until the key is `path`, `worktree`, or omitted.
+Unknown `workspace.isolation` values (`container`, `sandbox`, typos) **fail closed**: `validate_workflow/1` returns `{:error, :invalid_workspace_isolation}` and the orchestrator will not dispatch until the key is `path`, `worktree`, `clone`, or omitted. `isolation: clone` without `git_remote` fails closed with `{:error, :git_remote_required}`.
 
 | Isolation | What it is | What it is not |
 |-----------|------------|----------------|
 | `path` (default) | Per-ticket directory under `workspace.root` with a path-escape guard | OS sandbox, chroot, container |
 | `worktree` | `git worktree` per ticket from `workspace.git_repo`; cleanup removes the tree; git add/list/remove are time-bounded (default 30s) | OS sandbox, container |
+| `clone` | `git clone` of `workspace.git_remote` per ticket (no `gh`); cleanup deletes the tree. A matching clone is reused | OS sandbox, container |
 | `container` | Later | — |
+
+#### Separate git remote (Forgejo)
+
+Set `workspace.git_remote` to clone the code from a remote that is not GitHub. It is independent of the tracker. `workspace.git_token` is resolved from the host env (for example `$FORGEJO_TOKEN`) and injected to the agent as `GIT_TOKEN`; the runner does **not** inject `GITHUB_TOKEN` / `GH_TOKEN` on this path. The clone itself uses the token as HTTPS userinfo, then resets `origin` to the clean URL and leaves a credential helper in `.git/config` that reads `GIT_TOKEN` at push time. `gh` is not used for clone, branch, or push.
+
+```yaml
+workspace:
+  isolation: clone   # optional; setting git_remote selects clone
+  git_remote: https://git.example.com/org/repo.git
+  git_token: $FORGEJO_TOKEN
+```
+
+See [`priv/workflow_template.forgejo.md`](priv/workflow_template.forgejo.md) for a ready-to-copy WORKFLOW body that omits `gh`.
 
 ### CI resume (optional)
 

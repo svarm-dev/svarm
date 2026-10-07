@@ -71,7 +71,9 @@ defmodule Svarm.Orchestrator do
     :max_retries,
     :workspace_root,
     :workspace_isolation,
-    :workspace_git_repo,
+    # %{repo, remote, token}. One field so the struct stays under Credo's
+    # field cap; the token is redacted by the Inspect impl below.
+    :workspace_git,
     :agents,
     :workflow,
     :approval,
@@ -198,7 +200,7 @@ defmodule Svarm.Orchestrator do
       max_retries: Keyword.get(opts, :max_retries, @default_max_retries),
       workspace_root: Keyword.get(opts, :workspace_root) || Workspace.default_root(),
       workspace_isolation: Keyword.get(opts, :workspace_isolation, :path),
-      workspace_git_repo: Keyword.get(opts, :workspace_git_repo),
+      workspace_git: workspace_git_from_keywords(opts),
       active_states: Keyword.get(opts, :active_states, @default_active_states),
       terminal_states: Keyword.get(opts, :terminal_states, @default_terminal_states),
       agents: %{}
@@ -620,7 +622,7 @@ defmodule Svarm.Orchestrator do
         workspace_root: workspace_root,
         workspace_isolation:
           apply_workspace_isolation(cfg.workspace_isolation, state.workspace_isolation),
-        workspace_git_repo: Map.get(cfg, :workspace_git_repo),
+        workspace_git: workspace_git_from_config(cfg),
         active_states: cfg.active_states,
         terminal_states: cfg.terminal_states,
         tracker_config: Settings.Resolve.tracker_overlay(cfg.tracker_config),
@@ -634,8 +636,24 @@ defmodule Svarm.Orchestrator do
   # from_map/1 stores {:error, :invalid_workspace_isolation} so validate_workflow/1
   # can fail closed. Never copy that tuple into runner-facing state — it is
   # truthy, so `|| :path` would leak it into Workspace.ensure/3.
-  defp apply_workspace_isolation(mode, _prev) when mode in [:path, :worktree], do: mode
-  defp apply_workspace_isolation(_invalid, prev) when prev in [:path, :worktree], do: prev
+  defp workspace_git_from_keywords(opts) do
+    %{
+      repo: Keyword.get(opts, :workspace_git_repo),
+      remote: Keyword.get(opts, :workspace_git_remote),
+      token: Keyword.get(opts, :workspace_git_token)
+    }
+  end
+
+  defp workspace_git_from_config(cfg) when is_map(cfg) do
+    %{
+      repo: Map.get(cfg, :workspace_git_repo),
+      remote: Map.get(cfg, :workspace_git_remote),
+      token: Map.get(cfg, :workspace_git_token)
+    }
+  end
+
+  defp apply_workspace_isolation(mode, _prev) when mode in [:path, :worktree, :clone], do: mode
+  defp apply_workspace_isolation(_invalid, prev) when prev in [:path, :worktree, :clone], do: prev
   defp apply_workspace_isolation(_invalid, _prev), do: :path
 
   defp put_approval_config(%{workflow: nil} = state),
@@ -690,12 +708,23 @@ defimpl Inspect, for: Svarm.Orchestrator do
       state
       |> Map.from_struct()
       |> Map.update(:tracker_config, %{}, &Svarm.Redact.map/1)
+      |> Map.update(:workspace_git, %{}, &redact_workspace_git/1)
       |> Map.update(:workflow, nil, &redact_workflow/1)
       |> Map.update(:agents, %{}, &redact_agents/1)
       |> Map.put(:issue_cache, :redacted)
 
     Inspect.Algebra.concat(["%Svarm.Orchestrator", Inspect.Algebra.to_doc(data, opts)])
   end
+
+  defp redact_workspace_git(git) when is_map(git) do
+    if Map.get(git, :token) in [nil, ""] do
+      git
+    else
+      Map.put(git, :token, "[redacted]")
+    end
+  end
+
+  defp redact_workspace_git(other), do: other
 
   defp redact_workflow(%Svarm.Workflow{} = wf) do
     %{path: wf.path, config: Svarm.Redact.map(wf.config || %{})}

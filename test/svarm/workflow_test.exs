@@ -147,6 +147,74 @@ defmodule Svarm.WorkflowTest do
     end
   end
 
+  describe "Config.from_map/1 workspace git remote" do
+    test "defaults to path without a remote" do
+      cfg = Config.from_map(%{})
+      assert cfg.workspace_isolation == :path
+      assert cfg.workspace_git_remote == nil
+      assert cfg.workspace_git_token == nil
+    end
+
+    test "git_remote selects clone mode and parses the URL" do
+      cfg =
+        Config.from_map(%{
+          "workspace" => %{"git_remote" => "https://git.example.com/org/repo.git"}
+        })
+
+      assert cfg.workspace_isolation == :clone
+      assert cfg.workspace_git_remote == "https://git.example.com/org/repo.git"
+    end
+
+    test "explicit path still selects clone when a remote is set" do
+      cfg =
+        Config.from_map(%{
+          "workspace" => %{
+            "isolation" => "path",
+            "git_remote" => "https://git.example.com/org/repo.git"
+          }
+        })
+
+      assert cfg.workspace_isolation == :clone
+    end
+
+    test "git_token resolves from the host env" do
+      System.put_env("SVARM_TEST_FORGEJO_TOKEN", "secret-token")
+      on_exit(fn -> System.delete_env("SVARM_TEST_FORGEJO_TOKEN") end)
+
+      cfg =
+        Config.from_map(%{"workspace" => %{"git_token" => "$SVARM_TEST_FORGEJO_TOKEN"}})
+
+      assert cfg.workspace_git_token == "secret-token"
+    end
+  end
+
+  describe "Config.validate_workflow/1 workspace git remote" do
+    test "accepts clone with git_remote" do
+      wf = %Workflow{
+        config: %{
+          "workspace" => %{
+            "isolation" => "clone",
+            "git_remote" => "https://git.example.com/org/repo.git"
+          }
+        },
+        prompt_template: "Do {{issue.id}}",
+        path: "x"
+      }
+
+      assert :ok = Config.validate_workflow(wf)
+    end
+
+    test "rejects clone without git_remote" do
+      wf = %Workflow{
+        config: %{"workspace" => %{"isolation" => "clone"}},
+        prompt_template: "Do {{issue.id}}",
+        path: "x"
+      }
+
+      assert {:error, :git_remote_required} = Config.validate_workflow(wf)
+    end
+  end
+
   describe "Config.validate_workflow/1 (strict render)" do
     test "rejects unknown placeholders in prompt_template" do
       wf = %Workflow{

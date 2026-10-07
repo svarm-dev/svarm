@@ -38,6 +38,119 @@ defmodule Svarm.WorkspaceTest do
              Workspace.cleanup("t1", root, isolation: :sandbox)
   end
 
+  test "clone requires git_remote", %{root: root} do
+    assert {:error, :git_remote_required} = Workspace.ensure("t1", root, isolation: :clone)
+  end
+
+  test "clone uses the configured remote and leaves origin clean", %{root: root} do
+    repo = init_git_repo(Path.join(root, "origin_repo"))
+    clone_root = Path.join(root, "clones")
+    File.mkdir_p!(clone_root)
+
+    assert {:ok, {path, true}} =
+             Workspace.ensure("issue-77", clone_root,
+               isolation: :clone,
+               git_remote: repo
+             )
+
+    assert File.exists?(Path.join(path, "README"))
+
+    {origin, 0} = System.cmd("git", ["-C", path, "remote", "get-url", "origin"])
+    assert String.trim(origin) == repo
+
+    assert {:ok, {^path, false}} =
+             Workspace.ensure("issue-77", clone_root,
+               isolation: :clone,
+               git_remote: repo
+             )
+
+    assert :ok = Workspace.cleanup("issue-77", clone_root, isolation: :clone)
+    refute File.dir?(path)
+  end
+
+  test "clone records the configured remote (fake git, no network)", %{root: root} do
+    log = Path.join(root, "git.log")
+    fake = fake_git(root, log)
+    clone_root = Path.join(root, "clones")
+    File.mkdir_p!(clone_root)
+
+    remote = "https://git.example.com/org/repo.git"
+
+    assert {:ok, {path, true}} =
+             Workspace.ensure("issue-88", clone_root,
+               isolation: :clone,
+               git_remote: remote,
+               git: fake
+             )
+
+    assert path == Path.join(clone_root, "issue-88")
+    assert File.read!(log) =~ "clone #{remote} #{path}"
+  end
+
+  test "clone authenticates over HTTPS and never persists the token", %{root: root} do
+    log = Path.join(root, "git.log")
+    fake = fake_git(root, log)
+    clone_root = Path.join(root, "clones")
+    File.mkdir_p!(clone_root)
+
+    remote = "https://git.example.com/org/repo.git"
+    token = "forgejo-secret-token"
+
+    assert {:ok, {path, true}} =
+             Workspace.ensure("issue-89", clone_root,
+               isolation: :clone,
+               git_remote: remote,
+               git_token: token,
+               git: fake
+             )
+
+    recorded = File.read!(log)
+    assert recorded =~ "clone https://oauth2:#{token}@git.example.com/org/repo.git #{path}"
+    assert recorded =~ "remote set-url origin #{remote}"
+    assert recorded =~ "credential.helper"
+    refute recorded =~ "set-url origin https://oauth2:"
+  end
+
+  test "failed origin reset does not leave the token in .git/config", %{root: root} do
+    log = Path.join(root, "git.log")
+    fake = fake_git_set_url_fails(root, log)
+    clone_root = Path.join(root, "clones")
+    File.mkdir_p!(clone_root)
+
+    remote = "https://git.example.com/org/repo.git"
+    token = "forgejo-secret-token"
+
+    assert {:error, {:git_clone_failed, 1, _}} =
+             Workspace.ensure("issue-91", clone_root,
+               isolation: :clone,
+               git_remote: remote,
+               git_token: token,
+               git: fake
+             )
+
+    refute File.dir?(Path.join(clone_root, "issue-91"))
+    refute tree_contains?(clone_root, token)
+  end
+
+  test "clone recreates a leftover non-clone directory", %{root: root} do
+    repo = init_git_repo(Path.join(root, "origin_repo"))
+    clone_root = Path.join(root, "clones")
+    File.mkdir_p!(clone_root)
+
+    leftover = Path.join(clone_root, "issue-90")
+    File.mkdir_p!(leftover)
+    File.write!(Path.join(leftover, "stale"), "x\n")
+
+    assert {:ok, {^leftover, true}} =
+             Workspace.ensure("issue-90", clone_root,
+               isolation: :clone,
+               git_remote: repo
+             )
+
+    assert File.exists?(Path.join(leftover, "README"))
+    refute File.exists?(Path.join(leftover, "stale"))
+  end
+
   test "worktree requires git_repo", %{root: root} do
     assert {:error, :git_repo_required} =
              Workspace.ensure("t1", root, isolation: :worktree)
@@ -209,5 +322,52 @@ defmodule Svarm.WorkspaceTest do
     {_, 0} = System.cmd("git", ["-C", repo, "add", "README"])
     {_, 0} = System.cmd("git", ["-C", repo, "commit", "-m", "init"], stderr_to_stdout: true)
     repo
+  end
+
+  defp fake_git(root, log) do
+    fake = Path.join(root, "fake_git.sh")
+
+    File.write!(fake, """
+    #!/bin/sh
+    printf '%s\\n' "$*" >> "#{log}"
+    exit 0
+    """)
+
+    File.chmod!(fake, 0o755)
+    fake
+  end
+
+  # Simulates git writing the authenticated URL into .git/config, then failing
+  # `remote set-url`. The workspace must drop that tree.
+  defp fake_git_set_url_fails(root, log) do
+    fake = Path.join(root, "fake_git_fail_set_url.sh")
+
+    File.write!(fake, """
+    #!/bin/sh
+    printf '%s\\n' "$*" >> "#{log}"
+    if [ "$3" = "clone" ]; then
+      dest="$5"
+      url="$4"
+      mkdir -p "$dest/.git"
+      printf '[remote "origin"]\\n\\turl = %s\\n' "$url" > "$dest/.git/config"
+      exit 0
+    fi
+    if [ "$4" = "set-url" ]; then
+      exit 1
+    fi
+    exit 0
+    """)
+
+    File.chmod!(fake, 0o755)
+    fake
+  end
+
+  defp tree_contains?(dir, needle) do
+    dir
+    |> Path.join("**")
+    |> Path.wildcard()
+    |> Enum.any?(fn path ->
+      File.regular?(path) and File.read!(path) =~ needle
+    end)
   end
 end

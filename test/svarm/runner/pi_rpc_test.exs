@@ -145,6 +145,25 @@ defmodule Svarm.Runner.PiRPCTest do
     assert env == Svarm.Runner.with_github_token(env, %{})
   end
 
+  test "with_git_env injects GIT_TOKEN and skips GITHUB_TOKEN for a separate remote" do
+    env = %{"FOO" => "bar"}
+
+    opts = [
+      workspace_git_remote: "https://git.example.com/org/repo.git",
+      workspace_git_token: "forgejo-token"
+    ]
+
+    got = Svarm.Runner.with_git_env(env, %{auth: :app}, opts)
+    assert got["GIT_TOKEN"] == "forgejo-token"
+    refute Map.has_key?(got, "GITHUB_TOKEN")
+    refute Map.has_key?(got, "GH_TOKEN")
+  end
+
+  test "with_git_env falls back to GitHub token injection without a remote" do
+    env = %{"FOO" => "bar"}
+    assert env == Svarm.Runner.with_git_env(env, %{auth: :token}, [])
+  end
+
   describe "take_lines/1" do
     test "holds partial line as remainder" do
       assert {"{\"a\":", []} = PiRPC.take_lines("{\"a\":")
