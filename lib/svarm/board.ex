@@ -102,6 +102,84 @@ defmodule Svarm.Board do
     do: "The run was stopped, but the ticket could not be moved to Todo."
 
   @doc """
+  Queue an operator follow-up on a **settled** card so the next run starts
+  with the note included once.
+
+  Works for `review` and `failed` cards only — a live `in_progress` run uses
+  `RunSteer` instead. This is a fresh orchestrator dispatch (CLI or PiRPC),
+  not an inject into a dead session.
+
+  1. Trims and persists the text on the ticket (Local `follow_up` metadata;
+     GitHub `<!-- svarm-follow-up: ... -->` in the issue body).
+  2. Moves the ticket to `todo` like Abort — gated assignees re-enter
+     `pending_approval` on the next poll. Also drops the id from the
+     orchestrator's `completed` set so that poll can see it.
+  3. Writes the muted `[board] follow-up queued` transcript line.
+
+  The text is cleared after the first spawn attempt (see `Dispatch`).
+
+  Returns `:ok`. Errors: `{:error, :empty}` (blank text), `{:error,
+  :unsupported}` (status is not review/failed), `{:error, :not_found}`,
+  `{:error, {:persist, reason}}` (text not saved), or
+  `{:error, {:status, reason}}` (saved but ticket could not move to Todo).
+  """
+  @spec follow_up(String.t(), String.t()) :: :ok | {:error, term()}
+  def follow_up(id, text) when is_binary(id) and is_binary(text) do
+    trimmed = String.trim(text)
+    if trimmed == "", do: {:error, :empty}, else: persist_follow_up(id, trimmed)
+  end
+
+  @doc "User-facing flash for `follow_up/2` errors."
+  @spec follow_up_flash_error(term()) :: String.t()
+  def follow_up_flash_error(:empty), do: "Follow-up text is empty."
+
+  def follow_up_flash_error(:unsupported),
+    do: "Follow-up works after a run settles (review or failed). Use Steer on a live run."
+
+  def follow_up_flash_error(:not_found), do: "Task not found."
+
+  def follow_up_flash_error({:persist, reason}),
+    do: "Could not save the follow-up (#{inspect(reason)})."
+
+  def follow_up_flash_error({:status, reason}),
+    do: "The follow-up was saved, but the ticket could not move to Todo (#{inspect(reason)})."
+
+  def follow_up_flash_error(other), do: "Could not queue follow-up (#{inspect(other)})."
+
+  defp persist_follow_up(id, trimmed) do
+    {adapter, config} = Tracker.Resolve.adapter_and_config()
+
+    case adapter.get_issue(config, id) do
+      {:ok, %{status: status}} when status in ["review", "failed"] ->
+        save_follow_up(adapter, config, id, trimmed)
+
+      {:ok, _} ->
+        {:error, :unsupported}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp save_follow_up(adapter, config, id, trimmed) do
+    case adapter.update_follow_up(config, id, trimmed) do
+      :ok ->
+        case adapter.update_status(config, id, "todo") do
+          :ok ->
+            Orchestrator.release_completed(id)
+            Svarm.Events.broadcast_agent_line(id, "\n[board] follow-up queued\n")
+            :ok
+
+          {:error, reason} ->
+            {:error, {:status, reason}}
+        end
+
+      {:error, reason} ->
+        {:error, {:persist, reason}}
+    end
+  end
+
+  @doc """
   Agent configs for board UI (agents.toml + Settings overrides).
 
   LiveViews load agents through this read facade — not `AgentRunner` directly.
@@ -224,16 +302,101 @@ defmodule Svarm.Board do
     |> Enum.sort_by(&column_rank/1)
   end
 
-  def group_by_status(tasks) when is_list(tasks) do
-    cols = column_ids()
+  @doc """
+  Buckets tasks by status for the board columns.
 
-    grouped =
-      tasks
-      |> Enum.group_by(& &1.status, fn t -> t end)
+  Only the `review` bucket is reordered (`sort_review_tasks/2`). Other columns
+  keep the order they had inside `tasks`. `opts` match `sort_review_tasks/2`.
+  """
+  def group_by_status(tasks, opts \\ []) when is_list(tasks) do
+    cols = column_ids()
+    grouped = Enum.group_by(tasks, & &1.status)
 
     Map.new(cols, fn col ->
-      {col, Map.get(grouped, col, [])}
+      items = Map.get(grouped, col, [])
+
+      items =
+        case col do
+          "review" -> sort_review_tasks(items, opts)
+          _ -> items
+        end
+
+      {col, items}
     end)
+  end
+
+  @doc """
+  Orders review cards by proof risk.
+
+  First match wins: CI fail, then CI pending, then no PR, then the rest.
+  `:na`, `:pass`, and `:unknown` CI skip the fail and pending classes.
+  Inside a class, higher cost comes first, then older `created_at`, then `id`.
+
+  `opts`:
+
+  - `:costs` — `task_id => %{total_cost_usd: number, ...}`. Missing or
+    non-number cost counts as 0.
+  - `:run_meta` — `task_id => meta` for a PR that exists only on the run.
+
+  PR class uses the same glance as the chip (`review_glance/2`), including
+  run meta and the coordination fallback. Missing or `0` `created_at` sorts
+  last inside the class.
+  """
+  def sort_review_tasks(tasks, opts \\ []) when is_list(tasks) do
+    costs = opt_map(opts, :costs)
+    run_meta = opt_map(opts, :run_meta)
+    Enum.sort_by(tasks, &review_sort_key(&1, costs, run_meta))
+  end
+
+  defp opt_map(opts, key) do
+    case Keyword.get(opts, key, %{}) do
+      %{} = map -> map
+      _ -> %{}
+    end
+  end
+
+  defp review_sort_key(task, costs, run_meta) do
+    id = map_get(task, :id)
+    meta = review_run_meta(run_meta, id)
+
+    {
+      review_proof_class(task, meta),
+      -review_cost_usd(costs, id),
+      review_age_key(task),
+      id
+    }
+  end
+
+  defp review_run_meta(run_meta, id) do
+    case Map.get(run_meta, id) do
+      %{} = meta -> meta
+      _ -> %{}
+    end
+  end
+
+  defp review_proof_class(task, meta) do
+    case review_ci(task).state do
+      :fail -> 0
+      :pending -> 1
+      _ -> glance_class(review_glance(task, meta))
+    end
+  end
+
+  defp glance_class(:no_pr), do: 2
+  defp glance_class(_glance), do: 3
+
+  defp review_cost_usd(costs, id) do
+    case Map.get(costs, id) do
+      %{total_cost_usd: usd} when is_number(usd) -> usd
+      _ -> 0
+    end
+  end
+
+  defp review_age_key(task) do
+    case map_get(task, :created_at) do
+      seconds when is_integer(seconds) and seconds > 0 -> {0, seconds}
+      _ -> {1, 0}
+    end
   end
 
   @doc "Count of non-terminal tasks per assignee (for board at-a-glance)."
@@ -276,6 +439,7 @@ defmodule Svarm.Board do
   defp wait_reason_status(%{status: "review"} = task) do
     cond do
       circuit_open_for?(task) -> :ci_circuit
+      changes_requested_for?(task) and resume_count_at_cap?(task) -> :ci_circuit
       changes_requested_for?(task) -> :changes_requested
       true -> :review
     end
@@ -289,6 +453,8 @@ defmodule Svarm.Board do
   defp wait_reason_status(_), do: nil
 
   # Prefer preloaded field from list_tasks/get_task; fall back to one query.
+  # The open flag is the circuit for every review card. A resume count at the
+  # cap only blocks Send back on a changes-requested card (see wait_reason).
   defp circuit_open_for?(task) do
     case map_get(task, :ci_circuit_open) do
       true ->
@@ -301,6 +467,23 @@ defmodule Svarm.Board do
         id = map_get(task, :id)
         is_binary(id) and Svarm.Coordination.circuit_open?(id)
     end
+  end
+
+  defp resume_count_at_cap?(task) do
+    case map_get(task, :ci_resume_count) do
+      count when is_integer(count) -> count >= resume_max_attempts()
+      _ -> false
+    end
+  end
+
+  defp resume_max_attempts do
+    config =
+      case Workflow.Store.get() do
+        %{config: config} -> config
+        _ -> nil
+      end
+
+    Svarm.CiResume.load_caps(config).max_attempts
   end
 
   defp agent_question_for?(task) do
@@ -374,11 +557,14 @@ defmodule Svarm.Board do
 
   @doc "PR URL from coordination, run meta, or task map when known (no inventing)."
   def pr_url(task, meta \\ %{}) do
+    known_pr_url(task, meta) || coord_pr_url_fallback(task)
+  end
+
+  defp known_pr_url(task, meta) do
     [
       map_get(task, :pr_url),
       meta_get(meta, :pr_url),
-      map_get(task, :pull_request_url),
-      coord_pr_url_fallback(task)
+      map_get(task, :pull_request_url)
     ]
     |> Enum.find(&(is_binary(&1) and &1 != ""))
   end
@@ -513,6 +699,31 @@ defmodule Svarm.Board do
         {:error, reason}
     end
   end
+
+  @doc """
+  Send a changes-requested `review` ticket back to `todo` (Review Station).
+
+  Human-gated board verb: delegates to `Svarm.Orchestrator.send_back/1` so
+  the shared resume circuit, coordination summary, and orchestrator state
+  (`completed` / `approved_once`) stay consistent. Gated assignees re-enter
+  `pending_approval` on the next poll. See `Svarm.Orchestrator.send_back/1`.
+  """
+  @spec send_back(String.t()) ::
+          :ok | {:error, :not_in_review | :no_review_context | :circuit_open | term()}
+  def send_back(id) when is_binary(id), do: Orchestrator.send_back(id)
+
+  @doc "User-facing flash message for `send_back/1` errors."
+  @spec send_back_flash_error(:not_in_review | :no_review_context | :circuit_open | term()) ::
+          String.t()
+  def send_back_flash_error(:not_in_review), do: "Task is not awaiting review"
+
+  def send_back_flash_error(:no_review_context),
+    do: "No review summary on this card — nothing to send back"
+
+  def send_back_flash_error(:circuit_open),
+    do: "Resume retries exhausted — shared circuit is open, no more spawns from the board"
+
+  def send_back_flash_error(other), do: "Could not send back: #{inspect(other)}"
 
   defp meta_get(meta, key) when is_map(meta) do
     Map.get(meta, key) || Map.get(meta, Atom.to_string(key))
@@ -685,6 +896,7 @@ defmodule Svarm.Board do
   defp merge_coord(task, nil) do
     task
     |> Map.put(:ci_circuit_open, false)
+    |> Map.put(:ci_resume_count, 0)
     |> Map.put(:review_decision, nil)
     |> Map.put(:ci_conclusion, nil)
     |> Map.put(:ci_summary, nil)
@@ -694,6 +906,7 @@ defmodule Svarm.Board do
   defp merge_coord(task, %Svarm.Coordination{} = c) do
     task
     |> Map.put(:ci_circuit_open, c.ci_circuit_open == true)
+    |> Map.put(:ci_resume_count, c.ci_resume_count || 0)
     |> Map.put(:review_decision, c.review_decision)
     |> Map.put(:ci_conclusion, c.ci_last_conclusion)
     |> Map.put(:ci_summary, c.ci_context_summary)

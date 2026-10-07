@@ -33,6 +33,26 @@ defmodule Svarm.BoardWaitReasonTest do
     assert Board.wait_reason(%{status: "review", id: "x", review_decision: nil}) == :review
   end
 
+  test "resume count at the cap blocks send-back on a changes-requested card" do
+    assert Board.wait_reason(%{
+             status: "review",
+             id: "t_cap",
+             ci_circuit_open: false,
+             ci_resume_count: 99,
+             review_decision: "changes_requested"
+           }) == :ci_circuit
+  end
+
+  test "resume count at the cap does not relabel a normal review" do
+    assert Board.wait_reason(%{
+             status: "review",
+             id: "t_plain",
+             ci_circuit_open: false,
+             ci_resume_count: 99,
+             review_decision: nil
+           }) == :review
+  end
+
   test "ci_circuit wins over changes_requested" do
     assert Board.wait_reason(%{
              status: "review",

@@ -41,6 +41,7 @@ defmodule Svarm.Orchestrator do
     Approval,
     Budget,
     CiResume,
+    Coordination,
     Demo,
     Events,
     ReviewResume,
@@ -145,6 +146,42 @@ defmodule Svarm.Orchestrator do
     GenServer.call(__MODULE__, {:abort, task_id}, 15_000)
   end
 
+  @doc """
+  Human-gated **Send back** (Review Station): move a `review` ticket in
+  changes-requested back to `todo` for another run.
+
+  Reuses the recorded review-resume prompt summary (no extra GitHub HTTP).
+  Unlike auto review-resume, gated assignees re-enter `pending_approval`
+  (`approved_once` is cleared) and `completed` is withdrawn so the next poll
+  can dispatch the ticket again.
+
+  Shares the review/CI resume circuit: the move increments
+  `ci_resume_count` so combined auto + human retries stay bounded by
+  `ci_resume.max_attempts`. When the circuit is already open (count at the
+  cap / `ci_circuit_open`), the move is rejected — no spawn.
+  """
+  @spec send_back(String.t()) ::
+          :ok
+          | {:error, :not_in_review | :no_review_context | :circuit_open | term()}
+  def send_back(task_id) when is_binary(task_id) do
+    GenServer.call(__MODULE__, {:send_back, task_id}, 15_000)
+  end
+
+  @doc """
+  Drop a settled ticket from the session `completed` set.
+
+  A follow-up moves the ticket back to `todo`. `process_candidate/2` still
+  skips ids in `completed`, so the next poll would never spawn, re-gate, or
+  consume the note. No-op when this process is not running.
+  """
+  @spec release_completed(String.t()) :: :ok
+  def release_completed(task_id) when is_binary(task_id) do
+    case Process.whereis(__MODULE__) do
+      nil -> :ok
+      _pid -> GenServer.call(__MODULE__, {:release_completed, task_id})
+    end
+  end
+
   @doc false
   defdelegate kill_worker(pid, reason), to: Reconcile
 
@@ -231,8 +268,10 @@ defmodule Svarm.Orchestrator do
     if is_nil(state.running) or is_nil(state.claimed) do
       {:noreply, state}
     else
+      # Map.get: a running entry with no monitor ref must not crash this scan.
+      # One partial row used to take the process down on an unrelated DOWN.
       {task_id, _entry} =
-        Enum.find(state.running, fn {_id, e} -> e.mref == mref end) || {nil, nil}
+        Enum.find(state.running, fn {_id, e} -> Map.get(e, :mref) == mref end) || {nil, nil}
 
       if task_id == nil do
         {:noreply, state}
@@ -359,9 +398,101 @@ defmodule Svarm.Orchestrator do
     end
   end
 
+  def handle_call({:release_completed, task_id}, _from, state) when is_binary(task_id) do
+    {:reply, :ok, %{state | completed: MapSet.delete(state.completed, task_id)}}
+  end
+
+  @impl true
+  def handle_call({:send_back, task_id}, _from, state) when is_binary(task_id) do
+    case send_back_one(state, task_id) do
+      {:ok, state} -> {:reply, :ok, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
   @impl true
   def handle_cast({:mark_approved, task_id}, state) when is_binary(task_id) do
     {:noreply, %{state | approved_once: MapSet.put(state.approved_once, task_id)}}
+  end
+
+  defp send_back_one(state, task_id) do
+    case Issues.get(state.tracker, state.tracker_config, task_id) do
+      {:ok, %{status: "review"}} -> send_back_review(state, task_id)
+      {:ok, _} -> {:error, :not_in_review}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp send_back_review(state, task_id) do
+    case Coordination.get(task_id) do
+      %{review_decision: "changes_requested"} = coord ->
+        cond do
+          not is_binary(coord.review_context_summary) or
+              coord.review_context_summary == "" ->
+            # No review-resume summary was recorded for this card — do not
+            # invent one. Detection persists it together with the decision.
+            {:error, :no_review_context}
+
+          resume_circuit_open?(state, coord) ->
+            {:error, :circuit_open}
+
+          true ->
+            apply_send_back(state, coord)
+        end
+
+      _ ->
+        {:error, :no_review_context}
+    end
+  end
+
+  defp resume_circuit_open?(state, coord) do
+    coord.ci_circuit_open == true or
+      (coord.ci_resume_count || 0) >= send_back_max_attempts(state)
+  end
+
+  defp send_back_max_attempts(%{ci_resume_caps: %{max_attempts: n}})
+       when is_integer(n) and n > 0,
+       do: n
+
+  defp send_back_max_attempts(_), do: 3
+
+  defp apply_send_back(state, coord) do
+    task_id = coord.task_id
+
+    case state.tracker.update_status(state.tracker_config, task_id, "todo") do
+      :ok ->
+        commit_send_back(state, coord)
+
+      {:error, reason} ->
+        Logger.warning("send_back: update_status failed for #{task_id}: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  defp commit_send_back(state, coord) do
+    task_id = coord.task_id
+    count = (coord.ci_resume_count || 0) + 1
+
+    case Coordination.upsert(task_id, %{ci_resume_count: count, ci_circuit_open: false}) do
+      {:ok, _} ->
+        Logger.info("send_back: returned #{task_id} to todo (shared resume #{count})")
+
+        Events.broadcast_task_updated(%{id: task_id, status: "todo", reason: :send_back})
+
+        state = %{
+          state
+          | completed: MapSet.delete(state.completed, task_id),
+            approved_once: MapSet.delete(state.approved_once, task_id)
+        }
+
+        Status.broadcast(state)
+        {:ok, state}
+
+      {:error, reason} ->
+        Logger.warning("send_back: coordination upsert failed for #{task_id}: #{inspect(reason)}")
+
+        {:error, reason}
+    end
   end
 
   defp drop_worker_monitor(%{mref: mref}) when is_reference(mref) do

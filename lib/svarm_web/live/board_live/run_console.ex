@@ -19,6 +19,7 @@ defmodule SvarmWeb.BoardLive.RunConsole do
   attr :now_mono, :integer, default: 0
   attr :focused, :boolean, default: false
   attr :running?, :boolean, default: false
+  attr :tracker_kind, :atom, default: :github
 
   def run_console(assigns) do
     identity = panel_identity(assigns)
@@ -85,9 +86,12 @@ defmodule SvarmWeb.BoardLive.RunConsole do
 
           <.abort_control task_id={@task.id} running?={@running?} />
 
+          <.follow_up_panel :if={@task.status in ["review", "failed"]} task={@task} />
+
           <%= if @task.status == "review" do %>
             <% wait = Board.wait_reason(@task) %>
             <% changes_requested? = wait == :changes_requested %>
+            <% send_back = send_back_ui(@task, @tracker_kind) %>
             <% evidence = Board.review_evidence(@task, @meta, @cost) %>
             <div class={[
               "rounded-md px-3 py-2 text-sm border",
@@ -101,7 +105,7 @@ defmodule SvarmWeb.BoardLive.RunConsole do
               </p>
               <p class="mt-0.5 opacity-80">
                 <%= if changes_requested? do %>
-                  A reviewer asked for changes on the PR. A follow-up run starts when review-resume is enabled; circuit shared with CI resume.
+                  A reviewer asked for changes on the PR. Send back returns the ticket to Todo for another run with the same review summary — the human-gated alternative to enabling review-resume (which stays off by default). Circuit shared with CI resume.
                 <% else %>
                   <%= if evidence.pr_url do %>
                     Agent finished. Review the PR before merge, then mark done here.
@@ -124,6 +128,26 @@ defmodule SvarmWeb.BoardLive.RunConsole do
                   >
                     Open PR
                   </a>
+                <% end %>
+                <%= if send_back.show do %>
+                  <button
+                    type="button"
+                    phx-click="send_back"
+                    phx-value-id={@task.id}
+                    disabled={send_back.disabled}
+                    class="btn btn-sm btn-outline"
+                    aria-label="Send this card back to Todo for another run"
+                    title={
+                      if send_back.disabled,
+                        do: send_back.hint,
+                        else: "Move back to Todo with the review summary for another run"
+                    }
+                  >
+                    Send back
+                  </button>
+                  <p :if={send_back.hint && send_back.disabled} class="w-full text-[11px] opacity-70">
+                    {send_back.hint}
+                  </p>
                 <% end %>
                 <button
                   type="button"
@@ -490,6 +514,33 @@ defmodule SvarmWeb.BoardLive.RunConsole do
   end
 
   attr :task, :map, required: true
+
+  defp follow_up_panel(assigns) do
+    ~H"""
+    <div
+      id={"follow-up-#{@task.id}"}
+      class="rounded-md border border-base-300 px-3 py-2 text-sm"
+    >
+      <form phx-submit="follow_up_task" class="flex flex-wrap items-center gap-2">
+        <input type="hidden" name="task_id" value={@task.id} />
+        <input
+          type="text"
+          name="message"
+          required
+          placeholder="Also fix the tests…"
+          class="input input-sm input-bordered min-w-[12rem] flex-1"
+        />
+        <button type="submit" class="btn btn-sm btn-outline">Follow up</button>
+      </form>
+      <p class="mt-1 text-[11px] opacity-60">
+        Starts a new run with this note once; ticket returns to Todo. Same board auth as
+        Steer/Abort.
+      </p>
+    </div>
+    """
+  end
+
+  attr :task, :map, required: true
   attr :adapter, :string, default: nil
 
   defp steer_panel(assigns) do
@@ -562,5 +613,44 @@ defmodule SvarmWeb.BoardLive.RunConsole do
       <% end %>
     </span>
     """
+  end
+
+  # Send-back button state for the selected review panel.
+  #
+  # - GitHub + changes-requested + circuit closed → enabled (human-gated move)
+  # - GitHub + circuit open → disabled, copy matches the CI-retries-exhausted circuit
+  # - Local tracker (no GitHub reviews) → disabled with honest copy when a
+  #   changes-requested signal somehow exists; absent otherwise (local cards
+  #   never record one).
+  defp send_back_ui(task, kind) when kind != :github do
+    case Board.wait_reason(task) do
+      :changes_requested ->
+        %{
+          show: true,
+          disabled: true,
+          hint: "Local tracker has no GitHub reviews to send back with"
+        }
+
+      _ ->
+        %{show: false, disabled: true, hint: nil}
+    end
+  end
+
+  defp send_back_ui(task, :github) do
+    case Board.wait_reason(task) do
+      :changes_requested ->
+        %{show: true, disabled: false, hint: nil}
+
+      :ci_circuit ->
+        %{
+          show: true,
+          disabled: true,
+          hint:
+            "Resume retries exhausted — shared review/CI circuit is open, no more spawns from the board"
+        }
+
+      _ ->
+        %{show: false, disabled: true, hint: nil}
+    end
   end
 end

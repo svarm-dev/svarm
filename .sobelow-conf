@@ -3,6 +3,8 @@
 # Ignores (project design / self-host posture — not silent security debt of the
 # wrong sort):
 # - Config.HTTPS — TLS terminates at reverse proxy (see config/prod.exs)
+# - Config.CSWH — prod `runtime.exs` sets Endpoint `check_origin`; sobelow only
+#   sees the socket macros in endpoint.ex. Dev sets `check_origin: false` on purpose.
 # - Config.CSP — no app CSP yet; track separately if tightening browser headers
 # - Traversal.FileModule — intentional local FS for workspace / keys / agents.toml
 # - CI.System — intentional process kill tree in Runner.Cli / Runner.PiRPC
@@ -15,6 +17,6 @@
   format: "txt",
   out: "",
   threshold: "low",
-  ignore: ["Config.HTTPS", "Config.CSP", "Traversal.FileModule", "CI.System"],
+  ignore: ["Config.HTTPS", "Config.CSWH", "Config.CSP", "Traversal.FileModule", "CI.System"],
   ignore_files: []
 ]

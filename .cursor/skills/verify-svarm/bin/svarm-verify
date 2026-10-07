@@ -1,0 +1,340 @@
+#!/usr/bin/env bash
+# Launch, doctor, seed, capture, and tear down an isolated Mix Svärm instance.
+# Invocation (from repo root or with SVARM_REPO set):
+#   .cursor/skills/verify-svarm/bin/svarm-verify launch|doctor|seed|get|save-html|cleanup
+set -euo pipefail
+
+SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+REPO="${SVARM_REPO:-$(cd "$SKILL_DIR/../../.." && pwd)}"
+RUN_DIR="${SVARM_VERIFY_RUN_DIR:-$SKILL_DIR/.run}"
+STATE="$RUN_DIR/instance.env"
+DEFAULT_EVIDENCE="$SKILL_DIR/artifacts"
+
+usage() {
+  cat <<'EOF'
+Usage: svarm-verify <command>
+
+  launch     Start an isolated mix phx.server (refuses a shared operator board)
+  doctor     Read-only: is this instance worth driving?
+  seed       POST Seed demo (CSRF) against the launched instance
+  get PATH   GET a path; print status + body (PATH like /board or /health)
+  save-html PATH FILE
+             GET PATH and write the HTML body to FILE (FILE may be relative
+             to SVARM_VERIFY_EVIDENCE)
+  cleanup    Stop the process we started; keep evidence; remove scratch DB
+
+Environment:
+  SVARM_REPO              repo root (default: inferred from this script)
+  SVARM_VERIFY_PORT       preferred listen port (default 4100; scans upward)
+  SVARM_VERIFY_RUN_DIR    state dir (default .cursor/skills/verify-svarm/.run)
+  SVARM_VERIFY_EVIDENCE   proof dir (default .cursor/skills/verify-svarm/artifacts)
+EOF
+}
+
+need_repo() {
+  if [[ ! -f "$REPO/mix.exs" ]] || ! grep -q 'app: :svarm' "$REPO/mix.exs"; then
+    echo "svarm-verify: $REPO is not the Svärm Mix project" >&2
+    exit 1
+  fi
+}
+
+resolve_mix() {
+  local resolved=""
+  if command -v mise >/dev/null 2>&1; then
+    resolved="$(mise which mix 2>/dev/null || true)"
+  fi
+  if [[ -n "$resolved" && -x "$resolved" ]]; then
+    printf '%s\n' "$resolved"
+  else
+    command -v mix
+  fi
+}
+
+load_state() {
+  if [[ ! -f "$STATE" ]]; then
+    echo "svarm-verify: no instance state at $STATE (run launch first)" >&2
+    exit 1
+  fi
+  # shellcheck disable=SC1090
+  source "$STATE"
+  : "${PORT:?}" "${PID:?}" "${BASE_URL:?}" "${DB_PATH:?}" "${DATA_ROOT:?}"
+}
+
+port_listening() {
+  python3 - "$1" <<'PY'
+import socket, sys
+port = int(sys.argv[1])
+s = socket.socket()
+s.settimeout(0.4)
+try:
+    code = s.connect_ex(("127.0.0.1", port))
+finally:
+    s.close()
+sys.exit(0 if code == 0 else 1)
+PY
+}
+
+pick_port() {
+  local start="${SVARM_VERIFY_PORT:-4100}"
+  local p
+  for p in $(seq "$start" $((start + 40))); do
+    if [[ "$p" == "4000" ]]; then
+      continue
+    fi
+    if ! port_listening "$p"; then
+      echo "$p"
+      return 0
+    fi
+  done
+  echo "svarm-verify: no free port in ${start}..$((start + 40)) (skipping 4000)" >&2
+  exit 1
+}
+
+wait_health() {
+  local url="$1/health"
+  local i
+  for i in $(seq 1 60); do
+    if curl -fsS --max-time 2 "$url" 2>/dev/null | grep -qx 'ok'; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "svarm-verify: timed out waiting for $url" >&2
+  return 1
+}
+
+csrf_from_html() {
+  python3 -c 'import re, sys
+html = sys.stdin.read()
+m = re.search(r"name=\"csrf-token\"[^>]*content=\"([^\"]+)\"", html) or re.search(r"data-csrf=\"([^\"]+)\"", html)
+if not m:
+    sys.exit(1)
+print(m.group(1))
+'
+}
+
+cmd_launch() {
+  need_repo
+  mkdir -p "$RUN_DIR"
+  if [[ -f "$STATE" ]]; then
+    # shellcheck disable=SC1090
+    source "$STATE"
+    if [[ -n "${PID:-}" ]] && kill -0 "$PID" 2>/dev/null; then
+      echo "svarm-verify: instance already running pid=$PID url=${BASE_URL:-}" >&2
+      echo "svarm-verify: refuse to double-drive. cleanup first, or doctor this instance." >&2
+      exit 1
+    fi
+    rm -f "$STATE"
+  fi
+
+  local port data_root db_path workflow workspaces log pidfile
+  port="$(pick_port)"
+  data_root="$RUN_DIR/data"
+  rm -rf "$data_root"
+  mkdir -p "$data_root/workspaces"
+  db_path="$data_root/kanban.db"
+  workflow="$data_root/WORKFLOW.md"
+  workspaces="$data_root/workspaces"
+  log="$RUN_DIR/server.log"
+  pidfile="$RUN_DIR/server.pid"
+
+  python3 - "$REPO/priv/workflow_template.md" "$workflow" "$workspaces" <<'PY'
+import sys
+src, dest, root = sys.argv[1], sys.argv[2], sys.argv[3]
+text = open(src, encoding="utf-8").read()
+old = "  root: ~/svarm_workspaces"
+new = f"  root: {root}"
+if old not in text:
+    raise SystemExit("svarm-verify: workspace.root line missing from workflow template")
+open(dest, "w", encoding="utf-8").write(text.replace(old, new, 1))
+PY
+
+  # Isolate from operator .env / mise: never attach to ~/.svarm or GitHub overlay.
+  unset APPROVALS_USER APPROVALS_PASSWORD BOARD_READ_AUTH SVARM_SEED_DEMO
+  export PORT="$port"
+  export SVARM_DB_PATH="$db_path"
+  export SVARM_WORKFLOW_PATH="$workflow"
+  export SVARM_DEMO_ROUTES=1
+  export MIX_ENV=dev
+
+  # New session so cleanup can signal the BEAM tree by PGID, not by process name.
+  # Python's setsid works on macOS, where the setsid binary is missing.
+  # The resolved mix path skips the mise shim, which reloads .env and would
+  # put the unset operator values back.
+  local pid mixbin
+  mixbin="$(resolve_mix)"
+  (
+    cd "$REPO"
+    exec python3 -c 'import os, sys; os.setsid(); os.execv(sys.argv[1], sys.argv[1:])' "$mixbin" phx.server
+  ) >"$log" 2>&1 &
+  pid=$!
+  echo "$pid" >"$pidfile"
+
+  # Quote every value. `source` splits on whitespace, so a repo path with
+  # spaces would break doctor/seed/cleanup after a successful launch.
+  {
+    printf 'PID=%q\n' "$pid"
+    printf 'PORT=%q\n' "$port"
+    printf 'BASE_URL=%q\n' "http://127.0.0.1:$port"
+    printf 'DB_PATH=%q\n' "$db_path"
+    printf 'DATA_ROOT=%q\n' "$data_root"
+    printf 'WORKFLOW_PATH=%q\n' "$workflow"
+    printf 'LOG=%q\n' "$log"
+    printf 'REPO=%q\n' "$REPO"
+  } >"$STATE"
+
+  if ! wait_health "http://127.0.0.1:$port"; then
+    echo "svarm-verify: launch failed; last log lines:" >&2
+    tail -n 80 "$log" >&2 || true
+    cmd_cleanup || true
+    exit 1
+  fi
+
+  echo "svarm-verify: ready pid=$pid url=http://127.0.0.1:$port db=$db_path"
+}
+
+cmd_doctor() {
+  need_repo
+  load_state
+
+  if [[ "$DB_PATH" == *".svarm/kanban/kanban.db" ]]; then
+    echo "svarm-verify doctor: FAIL db path is the operator board ($DB_PATH)" >&2
+    exit 1
+  fi
+  if [[ "$PORT" == "4000" ]]; then
+    echo "svarm-verify doctor: FAIL port 4000 is reserved as the operator default" >&2
+    exit 1
+  fi
+  if ! kill -0 "$PID" 2>/dev/null; then
+    echo "svarm-verify doctor: FAIL pid $PID is not running" >&2
+    exit 1
+  fi
+  if ! port_listening "$PORT"; then
+    echo "svarm-verify doctor: FAIL nothing listens on $PORT" >&2
+    exit 1
+  fi
+
+  local health board home
+  health="$(curl -fsS --max-time 5 "$BASE_URL/health" || true)"
+  if [[ "$health" != "ok" ]]; then
+    echo "svarm-verify doctor: FAIL GET /health => ${health:-<empty>}" >&2
+    exit 1
+  fi
+  board="$(curl -fsS --max-time 8 "$BASE_URL/board" || true)"
+  if ! grep -q '<h1[^>]*>Board</h1>' <<<"$board"; then
+    echo "svarm-verify doctor: FAIL GET /board is missing the Board heading" >&2
+    exit 1
+  fi
+  if grep -q 'Cannot load the board' <<<"$board"; then
+    echo "svarm-verify doctor: FAIL board load error" >&2
+    exit 1
+  fi
+  home="$(curl -fsS --max-time 8 "$BASE_URL/" || true)"
+  if ! grep -q 'This instance' <<<"$home"; then
+    echo "svarm-verify doctor: FAIL GET / is missing This instance" >&2
+    exit 1
+  fi
+
+  cat <<EOF
+svarm-verify doctor: OK
+  url= $BASE_URL
+  pid= $PID
+  db=  $DB_PATH
+  wf=  $WORKFLOW_PATH
+EOF
+}
+
+cmd_get() {
+  load_state
+  local path="${1:?path required}"
+  [[ "$path" == /* ]] || path="/$path"
+  local tmp status
+  tmp="$(mktemp)"
+  status="$(curl -sS --max-time 15 -o "$tmp" -w '%{http_code}' "$BASE_URL$path")"
+  echo "HTTP $status $path"
+  cat "$tmp"
+  rm -f "$tmp"
+  [[ "$status" == 2* ]]
+}
+
+cmd_save_html() {
+  load_state
+  local path="${1:?path required}"
+  local dest="${2:?file required}"
+  [[ "$path" == /* ]] || path="/$path"
+  if [[ "$dest" != /* ]]; then
+    mkdir -p "${SVARM_VERIFY_EVIDENCE:-$DEFAULT_EVIDENCE}"
+    dest="${SVARM_VERIFY_EVIDENCE:-$DEFAULT_EVIDENCE}/$dest"
+  fi
+  mkdir -p "$(dirname "$dest")"
+  local status
+  status="$(curl -sS --max-time 15 -o "$dest" -w '%{http_code}' "$BASE_URL$path")"
+  echo "HTTP $status $path -> $dest"
+  [[ "$status" == 2* ]]
+}
+
+cmd_seed() {
+  load_state
+  local jar html csrf goal status loc
+  jar="$RUN_DIR/cookies.txt"
+  html="$(mktemp)"
+  goal="${1:-create a cool app}"
+  curl -fsS --max-time 15 -c "$jar" -b "$jar" -o "$html" "$BASE_URL/board"
+  csrf="$(csrf_from_html <"$html")" || {
+    echo "svarm-verify: no csrf-token on /board" >&2
+    rm -f "$html"
+    exit 1
+  }
+  rm -f "$html"
+  loc="$(mktemp)"
+  status="$(
+    curl -sS --max-time 30 -o /dev/null -D "$loc" -w '%{http_code}' \
+      -c "$jar" -b "$jar" \
+      -X POST \
+      -H "x-csrf-token: $csrf" \
+      --data-urlencode "_csrf_token=$csrf" \
+      --data-urlencode "goal=$goal" \
+      "$BASE_URL/dev/demo/seed"
+  )"
+  echo "HTTP $status POST /dev/demo/seed"
+  grep -i '^location:' "$loc" || true
+  rm -f "$loc"
+  if [[ "$status" != "302" ]]; then
+    echo "svarm-verify: seed expected 302, got $status" >&2
+    exit 1
+  fi
+}
+
+cmd_cleanup() {
+  if [[ ! -f "$STATE" ]]; then
+    echo "svarm-verify: nothing to clean (no $STATE)"
+    return 0
+  fi
+  # shellcheck disable=SC1090
+  source "$STATE"
+  if [[ -n "${PID:-}" ]] && kill -0 "$PID" 2>/dev/null; then
+    kill -TERM -- "-$PID" 2>/dev/null || kill -TERM "$PID" 2>/dev/null || true
+    local i
+    for i in $(seq 1 20); do
+      kill -0 "$PID" 2>/dev/null || break
+      sleep 0.25
+    done
+    if kill -0 "$PID" 2>/dev/null; then
+      kill -KILL -- "-$PID" 2>/dev/null || kill -KILL "$PID" 2>/dev/null || true
+    fi
+  fi
+  rm -rf "${DATA_ROOT:-}"
+  rm -f "$STATE" "$RUN_DIR/server.pid" "$RUN_DIR/cookies.txt" "$RUN_DIR/server.log"
+  echo "svarm-verify: cleaned instance (evidence kept under ${SVARM_VERIFY_EVIDENCE:-$DEFAULT_EVIDENCE})"
+}
+
+case "${1:-}" in
+  launch) cmd_launch ;;
+  doctor) cmd_doctor ;;
+  seed) shift; cmd_seed "${1:-}" ;;
+  get) shift; cmd_get "${1:-}" ;;
+  save-html) shift; cmd_save_html "${1:-}" "${2:-}" ;;
+  cleanup) cmd_cleanup ;;
+  -h|--help|help|"") usage; [[ -n "${1:-}" ]] ;;
+  *) echo "svarm-verify: unknown command ${1:-}" >&2; usage; exit 1 ;;
+esac

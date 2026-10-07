@@ -72,16 +72,17 @@ defmodule SvarmWeb.BoardLive do
 
     socket = load_board(socket)
 
+    status =
+      Board.instance_status(
+        agents: agents,
+        task_count: socket.assigns.task_count,
+        tracker_error: socket.assigns.board_error
+      )
+
     {:ok,
-     assign(
-       socket,
-       :checklist,
-       Board.instance_status(
-         agents: agents,
-         task_count: socket.assigns.task_count,
-         tracker_error: socket.assigns.board_error
-       )
-     )}
+     socket
+     |> assign(:checklist, status)
+     |> assign(:tracker_kind, status.tracker_kind)}
   end
 
   @impl true
@@ -238,6 +239,30 @@ defmodule SvarmWeb.BoardLive do
     end
   end
 
+  def handle_event("follow_up_task", params, socket) do
+    case authorize_board_mutation(socket) do
+      {:error, :unauthorized} ->
+        {:noreply, put_flash(socket, :error, unauthorized_mutation_flash("queue a follow-up"))}
+
+      :ok ->
+        id = params["id"] || params["task_id"]
+
+        case Board.follow_up(id, params["message"] || "") do
+          :ok ->
+            {:noreply,
+             socket
+             |> put_flash(:info, "Follow-up queued — #{id} returned to Todo")
+             |> load_board()
+             |> then(fn s ->
+               if s.assigns.selected_task_id == id, do: select_task(s, id), else: s
+             end)}
+
+          {:error, reason} ->
+            {:noreply, put_flash(socket, :error, Board.follow_up_flash_error(reason))}
+        end
+    end
+  end
+
   def handle_event("abort_run", %{"id" => id}, socket) do
     case authorize_board_mutation(socket) do
       {:error, :unauthorized} ->
@@ -284,6 +309,28 @@ defmodule SvarmWeb.BoardLive do
 
           {:error, reason} ->
             {:noreply, put_flash(socket, :error, "Could not mark done: #{inspect(reason)}")}
+        end
+    end
+  end
+
+  def handle_event("send_back", %{"id" => id}, socket) do
+    case authorize_board_mutation(socket) do
+      {:error, :unauthorized} ->
+        {:noreply, put_flash(socket, :error, unauthorized_mutation_flash("send back"))}
+
+      :ok ->
+        case Board.send_back(id) do
+          :ok ->
+            {:noreply,
+             socket
+             |> put_flash(:info, "Sent #{id} back to Todo")
+             |> load_board()
+             |> then(fn s ->
+               if s.assigns.selected_task_id == id, do: select_task(s, id), else: s
+             end)}
+
+          {:error, reason} ->
+            {:noreply, put_flash(socket, :error, Board.send_back_flash_error(reason))}
         end
     end
   end
@@ -387,6 +434,7 @@ defmodule SvarmWeb.BoardLive do
 
   @impl true
   def handle_info({:run_started, task_id, meta}, socket) do
+    before_review_ids = review_ids(socket)
     started_mono = meta[:started_mono_ms] || System.monotonic_time(:millisecond)
 
     socket =
@@ -410,7 +458,7 @@ defmodule SvarmWeb.BoardLive do
           socket
       end
 
-    {:noreply, socket}
+    {:noreply, maybe_reset_review_stream(socket, before_review_ids)}
   end
 
   @impl true
@@ -432,6 +480,7 @@ defmodule SvarmWeb.BoardLive do
     orchestrator = Map.put(socket.assigns.orchestrator, :session_cost, session_cost)
 
     running_started = Map.delete(socket.assigns.running_started, task_id)
+    before_review_ids = review_ids(socket)
 
     socket =
       socket
@@ -441,6 +490,7 @@ defmodule SvarmWeb.BoardLive do
       |> update_costs_for_task(task_id)
       # Stream items freeze card DOM; re-insert so cost badges pick up new @costs.
       |> restream_task(task_id)
+      |> maybe_reset_review_stream(before_review_ids)
 
     {:noreply, socket}
   end
@@ -544,6 +594,7 @@ defmodule SvarmWeb.BoardLive do
               now_mono={@now_mono}
               focused={@console_focused?}
               running?={@selected_task_id in Map.get(@orchestrator, :running_ids, [])}
+              tracker_kind={@tracker_kind}
             />
         <% end %>
       </div>
@@ -595,7 +646,10 @@ defmodule SvarmWeb.BoardLive do
   defp put_columns(socket, tasks, costs \\ nil) do
     costs = costs || compute_costs(tasks)
     column_ids = Board.column_ids()
-    grouped = Board.group_by_status(tasks)
+
+    grouped =
+      Board.group_by_status(tasks, costs: costs, run_meta: socket.assigns.run_meta)
+
     counts = Map.new(column_ids, fn col -> {col, length(Map.get(grouped, col, []))} end)
     tasks_by_id = Map.new(tasks, fn t -> {t.id, card_task(t)} end)
 
@@ -625,30 +679,38 @@ defmodule SvarmWeb.BoardLive do
     task = if old, do: Map.merge(old, incoming), else: incoming
     old_status = old && old.status
     new_status = task.status
+    touches_review? = old_status == "review" or new_status == "review"
+    before_review_ids = if touches_review?, do: review_ids(socket)
 
-    socket =
-      cond do
-        is_nil(old_status) ->
-          insert_into_column(socket, new_status, task)
-
-        old_status == new_status ->
-          insert_into_column(socket, new_status, task)
-
-        true ->
-          socket
-          |> delete_from_column(old_status, old || task)
-          |> insert_into_column(new_status, task)
-      end
+    socket = apply_column_stream_move(socket, old_status, new_status, old, task)
 
     tasks_by_id = Map.put(socket.assigns.tasks_by_id, task.id, task)
     counts = recompute_column_counts(tasks_by_id, socket.assigns.column_ids)
     workload = Board.counts_by_assignee(Map.values(tasks_by_id))
 
+    socket =
+      socket
+      |> assign(:tasks_by_id, tasks_by_id)
+      |> assign(:column_counts, counts)
+      |> assign(:task_count, map_size(tasks_by_id))
+      |> assign(:workload, workload)
+
+    if touches_review? do
+      maybe_reset_review_stream(socket, before_review_ids)
+    else
+      socket
+    end
+  end
+
+  defp apply_column_stream_move(socket, old_status, new_status, _old, task)
+       when is_nil(old_status) or old_status == new_status do
+    insert_into_column(socket, new_status, task)
+  end
+
+  defp apply_column_stream_move(socket, old_status, new_status, old, task) do
     socket
-    |> assign(:tasks_by_id, tasks_by_id)
-    |> assign(:column_counts, counts)
-    |> assign(:task_count, map_size(tasks_by_id))
-    |> assign(:workload, workload)
+    |> delete_from_column(old_status, old || task)
+    |> insert_into_column(new_status, task)
   end
 
   defp insert_into_column(socket, status, task) do
@@ -667,12 +729,51 @@ defmodule SvarmWeb.BoardLive do
 
   defp restream_task(socket, id) when is_binary(id) do
     case Map.get(socket.assigns.tasks_by_id, id) do
-      nil -> socket
-      task -> insert_into_column(socket, task.status, task)
+      %{status: "review"} ->
+        reset_review_stream(socket)
+
+      task when is_map(task) ->
+        insert_into_column(socket, task.status, task)
+
+      nil ->
+        socket
     end
   end
 
   defp restream_task(socket, _), do: socket
+
+  # stream_insert leaves an existing card in place.
+  defp maybe_reset_review_stream(socket, before_ids) do
+    if review_ids(socket) == before_ids do
+      socket
+    else
+      reset_review_stream(socket)
+    end
+  end
+
+  defp reset_review_stream(socket) do
+    case stream_name("review") do
+      nil -> socket
+      name -> stream(socket, name, review_tasks(socket), reset: true)
+    end
+  end
+
+  defp review_ids(socket) do
+    socket
+    |> review_tasks()
+    |> Enum.map(& &1.id)
+  end
+
+  defp review_tasks(socket) do
+    socket.assigns.tasks_by_id
+    |> Map.values()
+    |> Enum.filter(&(&1.status == "review"))
+    |> Board.sort_review_tasks(review_sort_opts(socket))
+  end
+
+  defp review_sort_opts(socket) do
+    [costs: socket.assigns.costs, run_meta: socket.assigns.run_meta]
+  end
 
   defp reset_column_streams(socket, column_ids) do
     Enum.reduce(column_ids, socket, fn col, s ->
@@ -857,7 +958,7 @@ defmodule SvarmWeb.BoardLive do
   defp handle_board_key(socket, _), do: socket
 
   defp select_relative(socket, delta) do
-    ids = task_ids_in_order(socket.assigns.tasks_by_id, socket.assigns.column_ids)
+    ids = task_ids_in_order(socket)
 
     case ids do
       [] ->
@@ -871,14 +972,21 @@ defmodule SvarmWeb.BoardLive do
     end
   end
 
-  defp task_ids_in_order(tasks_by_id, column_ids) do
-    by_status = Enum.group_by(Map.values(tasks_by_id), & &1.status)
+  defp task_ids_in_order(socket) do
+    grouped =
+      socket.assigns.tasks_by_id
+      |> Map.values()
+      |> Board.group_by_status(review_sort_opts(socket))
 
-    Enum.flat_map(column_ids, fn col ->
-      by_status
-      |> Map.get(col, [])
-      |> Enum.sort_by(&{&1.priority || 0, &1.created_at || 0, &1.id})
-      |> Enum.map(& &1.id)
+    Enum.flat_map(socket.assigns.column_ids, fn
+      "review" = col ->
+        grouped |> Map.get(col, []) |> Enum.map(& &1.id)
+
+      col ->
+        grouped
+        |> Map.get(col, [])
+        |> Enum.sort_by(&{&1.priority || 0, &1.created_at || 0, &1.id})
+        |> Enum.map(& &1.id)
     end)
   end
 

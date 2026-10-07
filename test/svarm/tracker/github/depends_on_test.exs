@@ -22,6 +22,14 @@ defmodule Svarm.Tracker.GitHub.DependsOnTest do
     :ok
   end
 
+  test "create_issue allocates a number when the seq counter was wiped" do
+    GitHubIssuesReq.ensure_table!()
+    :ets.delete(:svarm_github_issues_req, :seq)
+
+    assert {:ok, issue} = GitHub.create_issue(@config, %{title: "after wipe", body: "x"})
+    assert issue.title == "after wipe"
+  end
+
   test "create_issue posts to owner/repo from config and does not KeyError" do
     assert {:ok, issue} = GitHub.create_issue(@config, %{title: "from config", body: "hello"})
     assert issue.title == "from config"
