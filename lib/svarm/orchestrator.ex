@@ -114,7 +114,12 @@ defmodule Svarm.Orchestrator do
   re-entering `pending_approval`. Cleared after the first spawn attempt.
   """
   def mark_approved(task_id) when is_binary(task_id) do
-    GenServer.cast(__MODULE__, {:mark_approved, task_id})
+    GenServer.call(__MODULE__, {:mark_approved, task_id})
+  end
+
+  @doc "Drop a one-shot approve permit when the tracker move did not stick."
+  def clear_approved(task_id) when is_binary(task_id) do
+    GenServer.call(__MODULE__, {:clear_approved, task_id})
   end
 
   @doc """
@@ -413,8 +418,12 @@ defmodule Svarm.Orchestrator do
   end
 
   @impl true
-  def handle_cast({:mark_approved, task_id}, state) when is_binary(task_id) do
-    {:noreply, %{state | approved_once: MapSet.put(state.approved_once, task_id)}}
+  def handle_call({:mark_approved, task_id}, _from, state) when is_binary(task_id) do
+    {:reply, :ok, %{state | approved_once: MapSet.put(state.approved_once, task_id)}}
+  end
+
+  def handle_call({:clear_approved, task_id}, _from, state) when is_binary(task_id) do
+    {:reply, :ok, %{state | approved_once: MapSet.delete(state.approved_once, task_id)}}
   end
 
   defp send_back_one(state, task_id) do

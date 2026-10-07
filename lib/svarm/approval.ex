@@ -147,14 +147,17 @@ defmodule Svarm.Approval do
   end
 
   defp apply_approve_move(adapter, config, task_id) do
+    # Permit before the status move. mark_approved is a call, so it cannot sit
+    # behind a poll that already sees `todo` and re-holds the card.
+    :ok = Svarm.Orchestrator.mark_approved(task_id)
+
     case adapter.update_status(config, task_id, "todo") do
       :ok ->
-        # One-shot: next poll may dispatch without re-entering pending_approval
-        Svarm.Orchestrator.mark_approved(task_id)
         broadcast(:approved, task_id)
         :ok
 
       {:error, reason} ->
+        _ = Svarm.Orchestrator.clear_approved(task_id)
         Logger.warning("approval: update_status failed for #{task_id}: #{inspect(reason)}")
         {:error, reason}
     end

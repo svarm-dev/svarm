@@ -99,6 +99,7 @@ defmodule SvarmWeb.BoardLiveTest do
   end
 
   test "inline approve on pending card", %{conn: conn} do
+    pin_orchestrator_idle()
     KanbanBridge.delete_all_tasks()
 
     task =
@@ -631,6 +632,7 @@ defmodule SvarmWeb.BoardLiveTest do
         else: Application.put_env(:svarm, :approvals_auth, prev_auth)
     end)
 
+    pin_orchestrator_idle()
     KanbanBridge.delete_all_tasks()
 
     task =
@@ -663,6 +665,7 @@ defmodule SvarmWeb.BoardLiveTest do
         else: Application.put_env(:svarm, :approvals_auth, prev_auth)
     end)
 
+    pin_orchestrator_idle()
     KanbanBridge.delete_all_tasks()
 
     task =
@@ -766,6 +769,7 @@ defmodule SvarmWeb.BoardLiveTest do
         else: Application.put_env(:svarm, :approvals_auth, prev_auth)
     end)
 
+    pin_orchestrator_idle()
     KanbanBridge.delete_all_tasks()
 
     task =
@@ -2048,5 +2052,18 @@ defmodule SvarmWeb.BoardLiveTest do
 
   defp restore_orchestrator(original) do
     :sys.replace_state(Svarm.Orchestrator, fn _ -> original end)
+  end
+
+  # A live poll can re-hold a just-approved card, or dispatch it, before the
+  # assertion reads status. Pin the shared orchestrator idle for that window.
+  defp pin_orchestrator_idle do
+    Svarm.Test.OrchestratorEnv.restore_on_exit()
+    Application.put_env(:svarm, :orchestrator_poll_interval_ms, 60_000)
+    Application.put_env(:svarm, :orchestrator_max_concurrent, 0)
+
+    if Process.whereis(Svarm.Orchestrator) do
+      assert {:ok, _} = Svarm.Orchestrator.reload_config()
+      _ = :sys.get_state(Svarm.Orchestrator)
+    end
   end
 end
