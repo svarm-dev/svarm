@@ -7,9 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-10-07
+
+Kaneo tracker, Forgejo git remote, Review Station send-back and sort. No breaking env change (new optional keys only). GitHub installs are unchanged when the new keys are unset.
+
 ### Added
 
-- **Forgejo git remote for agent workspaces** ([#264](https://github.com/svarm-dev/svarm/issues/264), epic [#263](https://github.com/svarm-dev/svarm/issues/263)): optional WORKFLOW `workspace.git_remote` (`https://git.example.com/org/repo.git`) plus `workspace.git_token` (`$FORGEJO_TOKEN`). Setting `git_remote` selects `workspace.isolation: clone`; Svärm clones with plain `git` (no `gh`), resets `origin` to the clean URL, and injects the token to the agent as `GIT_TOKEN` — `GITHUB_TOKEN` / `GH_TOKEN` are not injected on this path. GitHub installs are unchanged when `git_remote` is unset.
+- **Kaneo tracker** ([#265](https://github.com/svarm-dev/svarm/issues/265), [#268](https://github.com/svarm-dev/svarm/pull/268), epic [#263](https://github.com/svarm-dev/svarm/issues/263)): `kind: kaneo` behind `Svarm.Tracker` (registered only in `Tracker.Resolve`). Board reads follow Kaneo pages. Orchestrator statuses map onto stock column slugs (`to-do`, `in-progress`, `in-review`, `done`). `pending_approval` targets `pending-approval` and fails closed when that column is missing. Settings and `/setup` round-trip the kind and keep `base_url`, `workspace`, and `project`; a leftover GitHub settings row does not rewrite `kind: kaneo`. `project` is the Kaneo project id, not the display name.
+- **Forgejo git remote for agent workspaces** ([#264](https://github.com/svarm-dev/svarm/issues/264), [#267](https://github.com/svarm-dev/svarm/pull/267), epic [#263](https://github.com/svarm-dev/svarm/issues/263)): optional WORKFLOW `workspace.git_remote` (`https://git.example.com/org/repo.git`) plus `workspace.git_token` (`$FORGEJO_TOKEN`). Setting `git_remote` selects `workspace.isolation: clone`; Svärm clones with plain `git` (no `gh`), resets `origin` to the clean URL, and injects the token to the agent as `GIT_TOKEN` — `GITHUB_TOKEN` / `GH_TOKEN` are not injected on this path. A failed origin reset deletes the clone so the token is not left in `.git/config`. Crash inspect redacts the token. GitHub installs are unchanged when `git_remote` is unset.
+- **Review Station send back** ([#256](https://github.com/svarm-dev/svarm/issues/256), [#258](https://github.com/svarm-dev/svarm/pull/258), epic [#152](https://github.com/svarm-dev/svarm/issues/152)): on a selected **Changes requested** card, **Send back** (same board auth as approve) moves the ticket to `todo` and the next spawn includes the stored review summary. Shares the CI/review resume circuit; the button is disabled when that circuit is open. Local and Kaneo do not pretend to have GitHub reviews. `review_resume` stays **off** by default.
+- **Review column sort by proof risk** ([#254](https://github.com/svarm-dev/svarm/issues/254), [#260](https://github.com/svarm-dev/svarm/pull/260)): Review is ordered CI fail, then pending, then no PR, then higher cost, then older age. Informational only.
+- **Follow-up after settle** ([#255](https://github.com/svarm-dev/svarm/issues/255), [#257](https://github.com/svarm-dev/svarm/pull/257)): on a `review` / `failed` card, a short note returns the ticket to Todo and is included once in the next run's prompt. Not a resurrected session.
 - **OpenCode MiniMax/Qwen `/messages`** ([#118](https://github.com/svarm-dev/svarm/issues/118)): in-app complete routes Go MiniMax/Qwen (and Zen Qwen except `qwen3.8-max`) through Anthropic Messages. Existing `openai_compat` defaults (`glm-5.3-flash`, `kimi-k2.6`) stay on `chat/completions`. `/setup` chips drop Responses / Gemini / Jev / Claude ids this adapter cannot finish. Prefer API `usage.cost`. Does not close #118.
 - **Review Station proof-of-work checklist** ([#239](https://github.com/svarm-dev/svarm/issues/239), epic [#152](https://github.com/svarm-dev/svarm/issues/152)): optional WORKFLOW `review.checklist` (`pr` / `ci` / `cost`, plus custom labels that stay `unknown`) on selected review Evidence. Informational only — does not gate merge. Agent prompt appends the labels when the list is set.
 - **OpenCode Go/Zen provider registry** ([#231](https://github.com/svarm-dev/svarm/issues/231), [#234](https://github.com/svarm-dev/svarm/pull/234)): `priv/providers.toml` advertises OpenRouter plus OpenCode Go (`opencode-go`) and Zen (`opencode`) with a shared OpenAI-compat adapter. Decompose resolves `provider.<id>`; unset stays OpenRouter; unknown ids fail closed. Settings secret `provider.<id>` then `auth_env`. Prefer API `usage.cost` as `provider_cost_usd`. Default agent stays OpenRouter.
@@ -22,19 +30,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Orchestrator module split** ([#221](https://github.com/svarm-dev/svarm/pull/221)): thin GenServer plus focused `Svarm.Orchestrator.*` modules (reconcile, dispatch, resume, run-exit). Callers still use `Svarm.Orchestrator`.
 - **BoardLive module split** ([#222](https://github.com/svarm-dev/svarm/pull/222)): LiveView shell plus `BoardLive.*` components (chrome, run console, helpers). Routes and assigns are unchanged.
+- README Status is **Current release: v0.1.7**
 
 ### Fixed
 
 - **Setup provider switch drops leftover API key**: changing the advertised provider always clears the shared password field (and remounts the input). Apply persists only a key already typed into the LiveView form, so a leftover still in the submit payload cannot be stored under `provider.<id>` or rewrite the default agent.
 - **GitHub list pagination** ([#177](https://github.com/svarm-dev/svarm/issues/177)): `list_eligible/1` and `list_issues/2` follow `Link: rel=next` (`per_page: 100`, same page size as Checks/Reviews). Cap is **10 pages (1000 issues)** so a huge repo cannot stall the tick; later pages wait for a later poll. Page-1 eligibility is unchanged. Extra list GETs use the same REST rate budget as other poll reads (`get_issues/2` already batches #69; this is not GraphQL). Off-origin or non-collection `Link` targets are ignored.
 - **GitHub skip human assignees** ([#185](https://github.com/svarm-dev/svarm/issues/185)): dispatch no longer claims issues assigned to people. Unassigned stays eligible; a login listed in WORKFLOW `tracker.agent_assignees` (case-insensitive GitHub login, not `agents.toml` / `trusted_assignees`) stays eligible. Human-owned labeled issues still show on the board.
+- **Run log records the PR this run opened** ([#269](https://github.com/svarm-dev/svarm/pull/269)): coordination no longer takes the first `pull/` URL in the transcript (often a changelog citation). A line counts when it is the URL alone or it names this ticket (`Closes #N` / branch `svarm/N`). Nothing qualifies → no link, rather than pointing CI resume at the wrong PR.
+- **Orchestrator ignores a DOWN with no monitor ref** ([#261](https://github.com/svarm-dev/svarm/pull/261)): a running row without `:mref` no longer crashes the GenServer when another worker exits.
 
 ### Dependencies
 
-- daisyUI v5.7.19 → v5.7.27 ([#217](https://github.com/svarm-dev/svarm/pull/217), [#227](https://github.com/svarm-dev/svarm/pull/227))
-- `req_llm` 1.20.0 → 1.21.1 ([#220](https://github.com/svarm-dev/svarm/pull/220))
-- `dns_cluster` 0.2.0 → 0.3.0 ([#218](https://github.com/svarm-dev/svarm/pull/218))
+- daisyUI v5.7.19 → v5.7.47 ([#217](https://github.com/svarm-dev/svarm/pull/217), [#227](https://github.com/svarm-dev/svarm/pull/227), [#251](https://github.com/svarm-dev/svarm/pull/251))
+- `req_llm` 1.20.0 → 1.26.0 ([#220](https://github.com/svarm-dev/svarm/pull/220), [#249](https://github.com/svarm-dev/svarm/pull/249))
+- `ecto_sqlite3` 0.24.1 → 0.25.0 ([#250](https://github.com/svarm-dev/svarm/pull/250))
+- `dns_cluster` 0.2.0 → 0.3.1 ([#218](https://github.com/svarm-dev/svarm/pull/218), [#248](https://github.com/svarm-dev/svarm/pull/248))
 - `telemetry_metrics` 1.1.0 → 1.2.0 ([#219](https://github.com/svarm-dev/svarm/pull/219))
+- `sobelow` 0.15.0 → 0.16.0 ([#252](https://github.com/svarm-dev/svarm/pull/252))
 - Hex patches: `bandit` 1.12.4 → 1.12.5, `phoenix` / `phoenix_live_view` ([#216](https://github.com/svarm-dev/svarm/pull/216)); `ex_doc` 0.40.3 → 0.40.4, `phoenix_live_dashboard` 0.9.0 → 0.9.1, `reach` 2.8.2 → 2.8.3 ([#226](https://github.com/svarm-dev/svarm/pull/226))
 
 ## [0.1.6] - 2026-08-29
@@ -293,7 +306,8 @@ Shipped surface in this cut: **local board + GitHub Issues + pi/CLI + OpenRouter
 
 - Agent credentials and API keys must come from the environment; never written into task metadata, PubSub events, or tracked config files
 
-[Unreleased]: https://github.com/svarm-dev/svarm/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/svarm-dev/svarm/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/svarm-dev/svarm/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/svarm-dev/svarm/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/svarm-dev/svarm/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/svarm-dev/svarm/compare/v0.1.3...v0.1.4
