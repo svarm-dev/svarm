@@ -113,6 +113,16 @@ defmodule Svarm.Workflow.Config do
 
   defp validate_kaneo_fields(_), do: :ok
 
+  defp column_slugs(tracker) when is_map(tracker) do
+    case Map.get(tracker, "column_slugs") do
+      map when is_map(map) ->
+        Map.new(map, fn {key, value} -> {to_string(key), to_string(value)} end)
+
+      _ ->
+        %{}
+    end
+  end
+
   defp validate_label_map_field({:error, reason}), do: {:error, reason}
   defp validate_label_map_field(_), do: :ok
 
@@ -330,7 +340,8 @@ defmodule Svarm.Workflow.Config do
           base_url: get_string(tracker, ["base_url"], nil),
           workspace: get_string(tracker, ["workspace"], nil),
           project: get_string(tracker, ["project"], nil),
-          api_key: resolve_env(api_key_env)
+          api_key: resolve_env(api_key_env),
+          column_slugs: column_slugs(tracker)
         })
 
       _ ->

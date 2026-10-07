@@ -9,11 +9,11 @@ defmodule Svarm.Tracker.Kaneo do
     * create task `POST /api/task/{projectId}`
     * move column `PUT  /api/task/status/{id}`
 
-  Authentication is the `x-api-key` header. A task's Svärm status is the
-  slug of the Kaneo column it sits in, so `tracker.active_states` and
-  `tracker.terminal_states` name board columns (for example `todo`,
-  `in_progress`, `done`). Eligible tasks are exactly the tasks in the
-  configured active columns.
+  Authentication is the `x-api-key` header. Orchestrator statuses are
+  mapped onto Kaneo column slugs (`Svarm.Tracker.Kaneo.Columns`). A stock
+  board uses `to-do`, `in-progress`, `in-review`, and `done`. Eligible
+  tasks are the ones whose mapped status is in `tracker.active_states`.
+  Board reads follow `page` / `limit` until `pagination.totalPages`.
 
   Kaneo has no CI/PR signals, so `capabilities/0` returns `[]`. Retry
   attempts stay tracker-durable in `Svarm.Coordination`; `depends_on`,
@@ -24,11 +24,13 @@ defmodule Svarm.Tracker.Kaneo do
   @behaviour Svarm.Tracker
 
   alias Svarm.Coordination
-  alias Svarm.Tracker.Kaneo.{Eligibility, Normalize}
+  alias Svarm.Tracker.Kaneo.{Columns, Eligibility, Normalize}
 
   require Logger
 
   @default_active_states ["todo", "in_progress"]
+  @max_pages 1_000
+  @max_page_size 100
 
   @impl true
   def capabilities, do: []
@@ -105,12 +107,11 @@ defmodule Svarm.Tracker.Kaneo do
 
   @impl true
   def update_status(config, id, status) when is_binary(id) and is_binary(status) do
-    case req(config).put(url(config, "/task/status/#{id}"),
-           json: %{status: status},
-           headers: headers(config)
-         ) do
-      {:ok, %{status: status_code}} when status_code in [200, 204] -> :ok
-      other -> {:error, http_error(other)}
+    slug = Columns.to_slug(status, config)
+
+    with {:ok, known} <- fetch_column_slugs(config),
+         :ok <- require_slug(slug, known) do
+      put_status(config, id, slug)
     end
   end
 
@@ -168,10 +169,112 @@ defmodule Svarm.Tracker.Kaneo do
   defp put_snapshot(map, _key, _issue), do: map
 
   defp fetch_board(config) do
+    fetch_pages(config, 1, page_size(config), [])
+  end
+
+  defp fetch_pages(_config, page, _page_size, _acc) when page > @max_pages do
+    {:error, error(:server_error, "Kaneo board exceeded #{@max_pages} pages")}
+  end
+
+  defp fetch_pages(config, page, page_size, acc) do
     project = Map.fetch!(config, :project)
 
-    case req(config).get(url(config, "/task/tasks/#{project}"), headers: headers(config)) do
-      {:ok, %{status: 200, body: board}} when is_map(board) -> {:ok, board}
+    case req(config).get(url(config, "/task/tasks/#{project}"),
+           headers: headers(config),
+           params: [page: page, limit: page_size]
+         ) do
+      {:ok, %{status: 200, body: board}} when is_map(board) ->
+        pages = [board | acc]
+
+        if page < total_pages(board) do
+          fetch_pages(config, page + 1, page_size, pages)
+        else
+          {:ok, merge_boards(Enum.reverse(pages))}
+        end
+
+      other ->
+        {:error, http_error(other)}
+    end
+  end
+
+  defp page_size(config) do
+    case Map.get(config, :page_size, @max_page_size) do
+      n when is_integer(n) and n > 0 -> min(n, @max_page_size)
+      _ -> @max_page_size
+    end
+  end
+
+  defp total_pages(board) do
+    case get_in(board, ["pagination", "totalPages"]) do
+      n when is_integer(n) and n > 0 -> n
+      n when is_binary(n) -> parse_total_pages(n)
+      _ -> 1
+    end
+  end
+
+  defp parse_total_pages(value) do
+    case Integer.parse(value) do
+      {n, ""} when n > 0 -> n
+      _ -> 1
+    end
+  end
+
+  defp merge_boards([board | _] = pages) do
+    tasks =
+      pages
+      |> Enum.flat_map(&Normalize.board_tasks/1)
+      |> Enum.uniq_by(& &1["id"])
+
+    columns =
+      tasks
+      |> Enum.group_by(& &1["status"])
+      |> Enum.map(fn {status, column_tasks} ->
+        %{"id" => status, "slug" => status, "tasks" => column_tasks}
+      end)
+
+    data =
+      board
+      |> Map.get("data", %{})
+      |> Map.put("columns", columns)
+      |> Map.put("archivedTasks", [])
+      |> Map.put("plannedTasks", [])
+
+    Map.put(board, "data", data)
+  end
+
+  defp fetch_column_slugs(config) do
+    project = Map.fetch!(config, :project)
+
+    case req(config).get(url(config, "/column/#{project}"), headers: headers(config)) do
+      {:ok, %{status: 200, body: columns}} when is_list(columns) ->
+        {:ok, column_slug_list(columns)}
+
+      other ->
+        {:error, http_error(other)}
+    end
+  end
+
+  defp column_slug_list(columns) do
+    Enum.flat_map(columns, fn
+      %{"slug" => slug} when is_binary(slug) and slug != "" -> [slug]
+      _ -> []
+    end)
+  end
+
+  defp require_slug(slug, known) do
+    if slug in known do
+      :ok
+    else
+      {:error, error(:unknown_column, "Kaneo column #{slug} is not on this project")}
+    end
+  end
+
+  defp put_status(config, id, slug) do
+    case req(config).put(url(config, "/task/status/#{id}"),
+           json: %{status: slug},
+           headers: headers(config)
+         ) do
+      {:ok, %{status: status_code}} when status_code in [200, 204] -> :ok
       other -> {:error, http_error(other)}
     end
   end
@@ -198,7 +301,7 @@ defmodule Svarm.Tracker.Kaneo do
       title: Map.get(attrs, :title) || "Untitled",
       description: Map.get(attrs, :body) || "",
       priority: Normalize.to_api_priority(Map.get(attrs, :priority)),
-      status: Map.get(attrs, :status) || first_active_state(config)
+      status: Columns.to_slug(Map.get(attrs, :status) || first_active_state(config), config)
     }
   end
 

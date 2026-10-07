@@ -499,6 +499,19 @@ defmodule Svarm.WorkflowTest do
 
       assert :ok = Config.validate_workflow(wf)
     end
+
+    test "self-hosted template is kaneo plus a git remote" do
+      path = Path.join(:code.priv_dir(:svarm), "workflow_template.self_hosted.md")
+      assert {:ok, wf} = Workflow.load(path)
+
+      cfg = Config.from(wf)
+      assert cfg.tracker_config.kind == :kaneo
+      assert cfg.tracker_config.project == "proj_abc123"
+      assert cfg.workspace_git_remote == "https://git.example.com/org/repo.git"
+      assert cfg.workspace_isolation == :clone
+      assert wf.prompt_template =~ "Forgejo"
+      refute wf.prompt_template =~ "gh pr create"
+    end
   end
 
   describe "Config.review_checklist/1" do

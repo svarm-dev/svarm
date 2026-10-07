@@ -10,8 +10,8 @@ defmodule Svarm.Tracker.KaneoTest do
     on_exit(fn -> KaneoStubServer.stop(server) end)
 
     KaneoStubServer.seed(server, [
-      task("t1", "todo", "Ship it"),
-      task("t2", "in_progress", "In flight"),
+      task("t1", "to-do", "Ship it"),
+      task("t2", "in-progress", "In flight"),
       task("t3", "done", "Already done")
     ])
 
@@ -59,7 +59,7 @@ defmodule Svarm.Tracker.KaneoTest do
   describe "list_issues/2" do
     test "lists every column and filters by status", %{config: config} do
       assert {:ok, all} = Kaneo.list_issues(config)
-      assert length(all) == 3
+      assert Enum.map(all, & &1.id) |> Enum.sort() == ["t1", "t2", "t3"]
 
       assert {:ok, done} = Kaneo.list_issues(config, status: "done")
       assert Enum.map(done, & &1.id) == ["t3"]
@@ -81,18 +81,64 @@ defmodule Svarm.Tracker.KaneoTest do
       assert request.path == "/api/task/proj_1"
       assert request.body["title"] == "New"
       assert request.body["description"] == "Do it"
-      assert request.body["status"] == "todo"
+      assert request.body["status"] == "to-do"
       assert request.body["priority"] == "medium"
     end
   end
 
   describe "update_status/3" do
-    test "moves a task to another column", %{config: config} do
+    test "moves a task onto the stock done slug", %{config: config, server: server} do
       assert :ok = Kaneo.update_status(config, "t1", "done")
       assert {:ok, %{status: "done"}} = Kaneo.get_issue(config, "t1")
 
       assert {:ok, eligible} = Kaneo.list_eligible(config)
       refute Enum.any?(eligible, &(&1.id == "t1"))
+
+      put =
+        Enum.find(KaneoStubServer.requests(server), &(&1.method == "PUT"))
+
+      assert put.body["status"] == "done"
+    end
+
+    test "maps in_progress onto the stock in-progress slug", %{config: config, server: server} do
+      assert :ok = Kaneo.update_status(config, "t1", "in_progress")
+
+      put =
+        Enum.find(KaneoStubServer.requests(server), &(&1.method == "PUT"))
+
+      assert put.body["status"] == "in-progress"
+    end
+
+    test "pending_approval fails closed when that column is missing", %{
+      config: config,
+      server: server
+    } do
+      assert {:error, %{type: :unknown_column}} =
+               Kaneo.update_status(config, "t1", "pending_approval")
+
+      refute Enum.any?(KaneoStubServer.requests(server), &(&1.method == "PUT"))
+      assert {:ok, %{status: "todo"}} = Kaneo.get_issue(config, "t1")
+    end
+  end
+
+  describe "paging" do
+    test "list_eligible follows a second page", %{server: server} do
+      config = config(server) |> Map.put(:page_size, 1)
+
+      assert {:ok, issues} = Kaneo.list_eligible(config)
+      assert issues |> Enum.map(& &1.id) |> Enum.sort() == ["t1", "t2"]
+
+      assert {:ok, listed} = Kaneo.list_issues(config)
+      assert listed |> Enum.map(& &1.id) |> Enum.sort() == ["t1", "t2", "t3"]
+
+      pages =
+        server
+        |> KaneoStubServer.requests()
+        |> Enum.filter(&(&1.path == "/api/task/tasks/proj_1"))
+        |> Enum.map(& &1.params["page"])
+
+      assert "1" in pages
+      assert "2" in pages
     end
   end
 

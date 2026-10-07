@@ -77,8 +77,12 @@ defmodule Svarm.Test.KaneoStubServer do
     end
   end
 
+  defp dispatch(%{method: "GET", request_path: "/api/column/" <> project_id} = conn, agent, _) do
+    send_json(conn, 200, columns(agent, project_id))
+  end
+
   defp dispatch(%{method: "GET", request_path: "/api/task/tasks/" <> project_id} = conn, agent, _) do
-    send_json(conn, 200, board(agent, project_id))
+    send_json(conn, 200, board(agent, project_id, URI.decode_query(conn.query_string)))
   end
 
   defp dispatch(%{method: "POST", request_path: "/api/task/" <> project_id} = conn, agent, body) do
@@ -100,15 +104,32 @@ defmodule Svarm.Test.KaneoStubServer do
     send_json(conn, 404, %{"message" => "Not found"})
   end
 
-  defp board(agent, project_id) do
+  # Stock Kaneo columns. `pending-approval` is intentionally absent so a
+  # default hold fails closed until the operator adds that column.
+  @stock_columns ["to-do", "in-progress", "in-review", "done"]
+
+  defp columns(_agent, _project_id) do
+    Enum.map(@stock_columns, fn slug ->
+      %{"id" => slug, "slug" => slug, "name" => slug, "isFinal" => slug == "done"}
+    end)
+  end
+
+  defp board(agent, project_id, params) do
     tasks =
       agent
       |> Agent.get(& &1.tasks)
       |> Map.values()
       |> Enum.filter(&(&1["projectId"] == project_id))
+      |> Enum.sort_by(& &1["id"])
+
+    page = positive_int(params["page"], 1)
+    limit = positive_int(params["limit"], 50)
+    total = length(tasks)
+    total_pages = max(1, div(total + limit - 1, limit))
+    page_tasks = Enum.slice(tasks, (page - 1) * limit, limit)
 
     columns =
-      tasks
+      page_tasks
       |> Enum.group_by(& &1["status"])
       |> Enum.sort_by(fn {status, _tasks} -> status end)
       |> Enum.map(fn {status, column_tasks} ->
@@ -129,9 +150,25 @@ defmodule Svarm.Test.KaneoStubServer do
         "archivedTasks" => [],
         "plannedTasks" => []
       },
-      "pagination" => %{}
+      "pagination" => %{
+        "total" => total,
+        "page" => page,
+        "pageSize" => limit,
+        "totalPages" => total_pages
+      }
     }
   end
+
+  defp positive_int(value, _default) when is_integer(value) and value > 0, do: value
+
+  defp positive_int(value, default) when is_binary(value) do
+    case Integer.parse(value) do
+      {n, ""} when n > 0 -> n
+      _ -> default
+    end
+  end
+
+  defp positive_int(_, default), do: default
 
   defp create(conn, agent, project_id, body) do
     id = "task_" <> Integer.to_string(:erlang.unique_integer([:positive]))

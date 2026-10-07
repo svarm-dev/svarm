@@ -111,6 +111,44 @@ defmodule Svarm.SettingsTest do
     assert over.api_key == "ghp_test"
   end
 
+  test "tracker_overlay keeps kaneo kind and project fields" do
+    assert {:ok, _} =
+             Settings.put_tracker(%{
+               "kind" => "github",
+               "owner" => "acme",
+               "repo" => "widgets"
+             })
+
+    base = %{
+      kind: :kaneo,
+      base_url: "https://kaneo.example.com",
+      workspace: "homelab",
+      project: "proj_1"
+    }
+
+    over = Resolve.tracker_overlay(base)
+    assert over.kind == :kaneo
+    assert over.base_url == "https://kaneo.example.com"
+    assert over.workspace == "homelab"
+    assert over.project == "proj_1"
+
+    assert {:ok, _} =
+             Settings.put_tracker(%{
+               "kind" => "kaneo",
+               "base_url" => "https://kaneo.example.com",
+               "workspace" => "homelab",
+               "project" => "proj_1",
+               "api_key" => "kaneo-secret"
+             })
+
+    saved = Resolve.tracker_overlay(%{kind: :local})
+    assert saved.kind == :kaneo
+    assert saved.base_url == "https://kaneo.example.com"
+    assert saved.workspace == "homelab"
+    assert saved.project == "proj_1"
+    assert saved.api_key == "kaneo-secret"
+  end
+
   test "merge_agents overrides known default only" do
     agents = %{
       "default" => %{command: "pi", model: "old", provider: "openrouter"},

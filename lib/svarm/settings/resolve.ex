@@ -83,18 +83,28 @@ defmodule Svarm.Settings.Resolve do
 
   defp merge_tracker(base, data) do
     base
-    |> Map.put(:kind, parse_kind(data["kind"], base[:kind]))
+    |> Map.put(:kind, merge_kind(base[:kind], data["kind"]))
     |> Map.put(:auth, parse_auth(data["auth"], base[:auth]))
     |> maybe_put(:owner, data["owner"])
     |> maybe_put(:repo, data["repo"])
+    |> maybe_put(:base_url, data["base_url"] || base[:base_url])
+    |> maybe_put(:workspace, data["workspace"] || base[:workspace])
+    |> maybe_put(:project, data["project"] || base[:project])
     |> maybe_put_labels(data["required_labels"], base[:required_labels])
     |> maybe_put(:api_key, tracker_api_key(base[:api_key]))
   end
 
+  # A leftover GitHub/local settings row must not undo WORKFLOW `kind: kaneo`.
+  # Switch away from Kaneo in WORKFLOW.md, not by an older settings kind.
+  defp merge_kind(:kaneo, _settings_kind), do: :kaneo
+  defp merge_kind(base_kind, settings_kind), do: parse_kind(settings_kind, base_kind)
+
   defp parse_kind("github", _), do: :github
   defp parse_kind("local", _), do: :local
+  defp parse_kind("kaneo", _), do: :kaneo
   defp parse_kind(:github, _), do: :github
   defp parse_kind(:local, _), do: :local
+  defp parse_kind(:kaneo, _), do: :kaneo
   defp parse_kind(_, fallback), do: fallback || :local
 
   defp parse_auth("app", _), do: :app

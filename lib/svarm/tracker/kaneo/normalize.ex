@@ -7,11 +7,12 @@ defmodule Svarm.Tracker.Kaneo.Normalize do
   durable store GitHub uses), so retries increment and exhaust across
   re-fetches without writing anything back to Kaneo.
 
-  A task's Svärm status is the slug of the Kaneo column it sits in. The
-  orchestrator's `active_states` / `terminal_states` therefore name board
-  columns (e.g. `todo`, `in_progress`). No label translation is involved.
+  A task's Svärm status is the orchestrator name for its Kaneo column
+  (`Svarm.Tracker.Kaneo.Columns`). Stock slugs `to-do` and `in-progress`
+  become `todo` and `in_progress`.
   """
   alias Svarm.{Coordination, Issue}
+  alias Svarm.Tracker.Kaneo.Columns
 
   @priority_to_int %{
     "urgent" => 4,
@@ -25,7 +26,7 @@ defmodule Svarm.Tracker.Kaneo.Normalize do
 
   @doc "Convert a single Kaneo task map to an Issue struct."
   @spec from_task(map(), map()) :: Issue.t()
-  def from_task(task, _config) when is_map(task) do
+  def from_task(task, config) when is_map(task) do
     labels = label_names(task)
 
     %Issue{
@@ -35,7 +36,7 @@ defmodule Svarm.Tracker.Kaneo.Normalize do
       body: task["description"],
       type: infer_type(labels),
       assignee: assignee(task),
-      status: task["status"],
+      status: Columns.to_status(task["status"], config),
       priority: priority(task["priority"]),
       attempts: 0,
       created_by: task["userId"] || "kaneo",

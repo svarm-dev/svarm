@@ -32,16 +32,20 @@ tracker:
 
   # ═══════════════════════════════════════════════════════════════════
   # UNCOMMENT FOR KANEO — set kind: kaneo above, fill the self-hosted
-  # base URL / workspace / project, and put KANEO_API_KEY in .env.
-  # active_states / terminal_states are Kaneo column slugs (the board's
-  # columns), not GitHub labels. Eligible tasks sit in the active columns.
+  # base URL / workspace / project id, and put KANEO_API_KEY in .env.
+  # `project` is the Kaneo project id, not the display name.
+  # Stock columns are to-do, in-progress, in-review, done. Svärm maps
+  # todo / in_progress / review / done onto those slugs. Add a
+  # pending-approval column (or set column_slugs) before approval holds.
   # ═══════════════════════════════════════════════════════════════════
   # base_url: https://kaneo.example.com
   # workspace: my-workspace
-  # project: my-project-id
+  # project: proj_abc123
   # api_key: $KANEO_API_KEY       # never a literal key
   # active_states: ["todo", "in_progress"]
   # terminal_states: ["done", "failed", "review"]
+  # column_slugs:
+  #   pending_approval: pending-approval
 
 polling:
   interval_ms: 30000
