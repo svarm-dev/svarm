@@ -120,14 +120,67 @@ defmodule Svarm.CoordinationTest do
            )
   end
 
-  test "extract_pr_url finds first GitHub PR link in text" do
-    text = """
-    Opened PR at https://github.com/o/r/pull/3
-    see also https://github.com/o/r/pull/4
+  test "extract_pr_url ignores changelog citations and keeps the PR this run opened" do
+    log = """
+    - **OpenCode** ([#231](https://github.com/svarm-dev/svarm/issues/231), [#234](https://github.com/svarm-dev/svarm/pull/234)):
+    https://github.com/svarm-dev/svarm/pull/267
+    **PR:** https://github.com/svarm-dev/svarm/pull/267 (branch `svarm/264`, base `main`, body includes `Closes #264`)
     """
 
-    assert Coordination.extract_pr_url(text) == "https://github.com/o/r/pull/3"
+    assert Coordination.extract_pr_url(log, source_id: "264", owner: "svarm-dev", repo: "svarm") ==
+             "https://github.com/svarm-dev/svarm/pull/267"
+  end
+
+  test "extract_pr_url returns nil when the log only quotes older PRs" do
+    log =
+      "see [#234](https://github.com/svarm-dev/svarm/pull/234) and https://github.com/o/r/pull/124 in a sentence"
+
+    assert Coordination.extract_pr_url(log, source_id: "264") == nil
     assert Coordination.extract_pr_url("no pr here") == nil
+    assert Coordination.extract_pr_url(nil) == nil
+  end
+
+  test "extract_pr_url prefers a line that names this ticket over a later bare URL" do
+    log = """
+    **PR:** https://github.com/o/r/pull/267 (Closes #264)
+    https://github.com/o/r/pull/234
+    """
+
+    assert Coordination.extract_pr_url(log, source_id: "264") ==
+             "https://github.com/o/r/pull/267"
+  end
+
+  test "extract_pr_url keeps the last bare URL when the ticket is not named" do
+    log = """
+    Opened PR at https://github.com/o/r/pull/3
+    https://github.com/o/r/pull/1
+    https://github.com/o/r/pull/2
+    """
+
+    assert Coordination.extract_pr_url(log) == "https://github.com/o/r/pull/2"
+  end
+
+  test "extract_pr_url accepts a branch token for this ticket" do
+    log = "pushed https://github.com/o/r/pull/8 on svarm/264"
+
+    assert Coordination.extract_pr_url(log, source_id: 264) ==
+             "https://github.com/o/r/pull/8"
+  end
+
+  test "extract_pr_url does not treat svarm/2640 as ticket 264" do
+    log = "see https://github.com/o/r/pull/9 on svarm/2640"
+
+    assert Coordination.extract_pr_url(log, source_id: "264") == nil
+  end
+
+  test "extract_pr_url drops URLs outside the tracker repo" do
+    log = """
+    https://github.com/evil/other/pull/9
+    https://github.com/acme/app/pull/3
+    """
+
+    assert Coordination.extract_pr_url(log, owner: "acme", repo: "app") ==
+             "https://github.com/acme/app/pull/3"
   end
 
   test "list_with_pr skips circuit-open by default" do

@@ -4,8 +4,9 @@ defmodule Svarm.Orchestrator.RunExit do
 
   Normal exit → completed (force `review` if the tracker is still active).
   Crash / error → backoff retry. Exhausted retries escalate to `failed` and
-  post a run summary. PR URLs are parsed from the run log into Coordination
-  when the tracker owner/repo is known.
+  post a run summary. A PR URL is recorded only when the run log shows the
+  pull request this ticket opened (bare `gh pr create` URL, or a line that
+  names the issue). Changelog citations are ignored.
   """
 
   require Logger
@@ -180,13 +181,16 @@ defmodule Svarm.Orchestrator.RunExit do
     :ok
   end
 
-  # Best-effort: parse PR URL from run log (agent stdout) into Coordination.
+  # Best-effort: the PR this run opened, not the first pull link in the log.
   # Bound to tracker owner/repo when known (confused-deputy guard).
   defp maybe_capture_pr(state, task_id) when is_binary(task_id) do
     log = Svarm.RunLog.get(task_id)
-    opts = tracker_repo_opts(state.tracker_config)
 
-    case Coordination.extract_pr_url(log) do
+    opts =
+      tracker_repo_opts(state.tracker_config) ++
+        [source_id: task_source_id(state, task_id)]
+
+    case Coordination.extract_pr_url(log, opts) do
       url when is_binary(url) ->
         case Coordination.record_pr(task_id, url, opts) do
           {:ok, _} ->
@@ -211,6 +215,14 @@ defmodule Svarm.Orchestrator.RunExit do
        do: [owner: owner, repo: repo]
 
   defp tracker_repo_opts(_), do: []
+
+  # Pattern-match the issue. `get_in/2` calls Access, and `Svarm.Issue` is a struct.
+  defp task_source_id(state, task_id) do
+    case state.last_run_entries do
+      %{^task_id => %{task: %{source_id: id}}} when is_binary(id) or is_integer(id) -> id
+      _ -> nil
+    end
+  end
 
   defp build_and_post(state, task_id, result, entry) do
     task = entry.task
