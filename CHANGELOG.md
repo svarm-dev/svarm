@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Approve cannot be undone by a concurrent poll**: the one-shot permit is recorded before the card moves to `todo`, and that id is claimed until the move finishes. A poll cannot re-hold it. A failed move rolls the permit back.
+
 ## [0.1.7] - 2026-10-07
 
 Kaneo tracker, Forgejo git remote, Review Station send-back and sort. No breaking env change (new optional keys only). GitHub installs are unchanged when the new keys are unset.

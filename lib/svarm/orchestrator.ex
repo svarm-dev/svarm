@@ -114,7 +114,24 @@ defmodule Svarm.Orchestrator do
   re-entering `pending_approval`. Cleared after the first spawn attempt.
   """
   def mark_approved(task_id) when is_binary(task_id) do
-    GenServer.cast(__MODULE__, {:mark_approved, task_id})
+    GenServer.call(__MODULE__, {:mark_approved, task_id})
+  end
+
+  @doc """
+  Hold a one-shot permit and a claim so a poll cannot re-gate or spawn
+  this id until `finish_approve/2`.
+  """
+  def begin_approve(task_id) when is_binary(task_id) do
+    GenServer.call(__MODULE__, {:begin_approve, task_id})
+  end
+
+  @doc """
+  End an approve attempt. `:ok` keeps the permit and drops a claim this
+  attempt added. `:error` rolls back only what this attempt added.
+  """
+  def finish_approve(task_id, result, owned)
+      when is_binary(task_id) and result in [:ok, :error] and is_map(owned) do
+    GenServer.call(__MODULE__, {:finish_approve, task_id, result, owned})
   end
 
   @doc """
@@ -413,8 +430,39 @@ defmodule Svarm.Orchestrator do
   end
 
   @impl true
-  def handle_cast({:mark_approved, task_id}, state) when is_binary(task_id) do
-    {:noreply, %{state | approved_once: MapSet.put(state.approved_once, task_id)}}
+  def handle_call({:mark_approved, task_id}, _from, state) when is_binary(task_id) do
+    {:reply, :ok, %{state | approved_once: MapSet.put(state.approved_once, task_id)}}
+  end
+
+  def handle_call({:begin_approve, task_id}, _from, state) when is_binary(task_id) do
+    owned = %{
+      permit: MapSet.member?(state.approved_once, task_id),
+      claim: MapSet.member?(state.claimed, task_id)
+    }
+
+    state = %{
+      state
+      | approved_once: MapSet.put(state.approved_once, task_id),
+        claimed: MapSet.put(state.claimed, task_id)
+    }
+
+    {:reply, {:ok, owned}, state}
+  end
+
+  def handle_call({:finish_approve, task_id, :ok, owned}, _from, state)
+      when is_binary(task_id) and is_map(owned) do
+    claimed = if owned.claim, do: state.claimed, else: MapSet.delete(state.claimed, task_id)
+    {:reply, :ok, %{state | claimed: claimed}}
+  end
+
+  def handle_call({:finish_approve, task_id, :error, owned}, _from, state)
+      when is_binary(task_id) and is_map(owned) do
+    approved =
+      if owned.permit, do: state.approved_once, else: MapSet.delete(state.approved_once, task_id)
+
+    claimed = if owned.claim, do: state.claimed, else: MapSet.delete(state.claimed, task_id)
+
+    {:reply, :ok, %{state | approved_once: approved, claimed: claimed}}
   end
 
   defp send_back_one(state, task_id) do
