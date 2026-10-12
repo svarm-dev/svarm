@@ -2,10 +2,12 @@ defmodule Svarm.AgentQuestion do
   @moduledoc """
   Mid-run human answers for PiRPC `extension_ui_request` dialogs.
 
-  Web and tests call this module only — not `AgentRunner` or `Workspace`.
+  Web and tests call this module only, not `AgentRunner` or `Workspace`.
   The PiRPC worker registers in `Svarm.AgentQuestion.Inbox` while a dialog
-  is pending; `answer/2` sends `{:agent_question_reply, payload}` and the
-  worker writes `extension_ui_response` on the port.
+  is pending. `answer/2` sends `{:agent_question_reply, payload}` when that
+  worker is registered. If the question is parked and no worker is
+  registered, a matching answer is held until `park/3` delivers it once.
+  The worker writes `extension_ui_response` on the port.
 
   Dialog methods: `select`, `confirm`, `input`, `editor`.
   Fire-and-forget UI methods are ignored by the runner (no wait).
@@ -15,6 +17,7 @@ defmodule Svarm.AgentQuestion do
   clears wait, and continues the run. CLI inject is not supported.
   """
 
+  alias Svarm.AgentQuestion.Courier
   alias Svarm.{Coordination, Events, KanbanBridge}
 
   @inbox Svarm.AgentQuestion.Inbox
@@ -22,7 +25,7 @@ defmodule Svarm.AgentQuestion do
   @dialog_methods ~w(select confirm input editor)
 
   @type answer_attrs :: map()
-  @type error :: :not_waiting | :no_runner | :invalid | :not_found
+  @type error :: :not_waiting | :no_runner | :invalid | :not_found | :already_answered
 
   @doc "Registry name for the waiting PiRPC worker (string task ids)."
   def inbox, do: @inbox
@@ -58,14 +61,16 @@ defmodule Svarm.AgentQuestion do
   """
   @spec wait_deadline_ms(map(), pos_integer()) :: integer()
   def wait_deadline_ms(event, cap_ms) when is_map(event) and is_integer(cap_ms) and cap_ms > 0 do
-    now = System.monotonic_time(:millisecond)
-    now + min(cap_ms, request_timeout_ms(event) || cap_ms)
+    System.monotonic_time(:millisecond) + wait_duration_ms(event, cap_ms)
   end
 
   @doc """
   Persist a parked question and register the calling process as the inbox.
 
-  Must be called from the PiRPC worker. Returns `{:ok, deadline_ms}`.
+  Must be called from the PiRPC worker. Returns `{:ok, deadline_ms}` where
+  `deadline_ms` is monotonic, using the same duration as `wait_deadline_ms/2`.
+  Stores `deadline_at` (unix milliseconds) on the question payload. Delivers
+  a held answer for the same request id when that deadline is still ahead.
   Requires a non-empty prompt and request id (`id` / `request_id`).
   """
   @spec park(String.t(), map(), keyword()) :: {:ok, integer()} | {:error, :invalid}
@@ -74,11 +79,18 @@ defmodule Svarm.AgentQuestion do
   def park(task_id, event, opts) when is_binary(task_id) and is_map(event) do
     cap = Keyword.get(opts, :question_timeout_ms, timeout_ms())
     event = flatten_ui_event(event)
+    duration = wait_duration_ms(event, cap)
 
-    case persist(task_id, attrs_from_event(event)) do
-      {:ok, _payload} ->
+    attrs =
+      event
+      |> attrs_from_event()
+      |> Map.put(:deadline_at, System.system_time(:millisecond) + duration)
+
+    case persist(task_id, attrs) do
+      {:ok, payload} ->
         register(task_id)
-        {:ok, wait_deadline_ms(event, cap)}
+        Courier.arrive(task_id, request_id(payload))
+        {:ok, System.monotonic_time(:millisecond) + duration}
 
       {:error, :invalid} = err ->
         err
@@ -86,41 +98,49 @@ defmodule Svarm.AgentQuestion do
   end
 
   @doc """
-  Inject a human answer into the waiting PiRPC worker.
+  Inject or hold a human answer for the parked question.
 
   `attrs` must include `value` (select/input/editor) or `confirmed` (confirm).
   Optional `request_id` must match the parked question when present.
-  Clears durable wait after inject so a second click cannot target this
-  dialog or a later one.
+
+  Returns `{:ok, :injected}` after the reply is sent, then clears the wait.
+  A second click is `:not_waiting`. Returns `{:ok, :queued}` when the
+  question is parked, the request id matches, the deadline is still ahead,
+  and no worker is registered. Does not clear the row in that case.
+
+  Returns `{:error, :not_waiting}` when nothing is parked,
+  `{:error, :invalid}` when the body or request id does not match,
+  `{:error, :already_answered}` when this request id already has a held or
+  delivered claim, and `{:error, :no_runner}` when no worker is registered
+  and the deadline is missing or already past.
   """
-  @spec answer(String.t(), answer_attrs()) :: {:ok, :injected} | {:error, error()}
+  @spec answer(String.t(), answer_attrs()) :: {:ok, :injected | :queued} | {:error, error()}
   def answer(task_id, attrs) when is_binary(task_id) and is_map(attrs) do
     with {:ok, waiting} <- current_wait(task_id),
          :ok <- match_request(waiting, attrs),
-         {:ok, pid} <- lookup_runner(task_id),
-         {:ok, body} <- build_response(waiting, attrs, cancelled: false) do
-      send(pid, {:agent_question_reply, body})
-      clear(task_id)
-      {:ok, :injected}
+         {:ok, body} <- build_response(waiting, attrs, cancelled: false),
+         {:ok, outcome} <-
+           Courier.submit(task_id, request_id(waiting), body, payload_deadline(waiting)) do
+      finish_answer(task_id, outcome)
     end
   end
 
-  @doc "Cancel a pending dialog (inject `cancelled: true` when a runner is live)."
+  @doc """
+  Cancel a pending dialog.
+
+  Drops any held answer first. If that answer was already delivered, clears
+  the wait and does not send `cancelled: true`. Otherwise injects
+  `cancelled: true` when a runner is live, or clears on `:no_runner`.
+  """
   @spec cancel(String.t()) :: {:ok, :injected | :cleared} | {:error, error()}
   def cancel(task_id) when is_binary(task_id) do
-    with {:ok, waiting} <- current_wait(task_id),
-         {:ok, pid} <- lookup_runner(task_id),
-         {:ok, body} <- build_response(waiting, %{}, cancelled: true) do
-      send(pid, {:agent_question_reply, body})
-      clear(task_id)
-      {:ok, :injected}
-    else
-      {:error, :no_runner} ->
+    case Courier.drop(task_id) do
+      :delivered ->
         clear(task_id)
         {:ok, :cleared}
 
-      {:error, _} = err ->
-        err
+      _other ->
+        cancel_pending(task_id)
     end
   end
 
@@ -130,16 +150,24 @@ defmodule Svarm.AgentQuestion do
   def flash_error(:no_runner), do: "The agent run is no longer waiting for an answer."
   def flash_error(:invalid), do: "That answer does not match the question."
   def flash_error(:not_found), do: "Task not found."
+  def flash_error(:already_answered), do: "An answer is already queued for this question."
   def flash_error(other), do: "Could not send answer (#{inspect(other)})."
 
   @doc """
-  Drop durable wait + inbox registration without injecting.
+  Drop the held answer, durable wait, and inbox registration without injecting.
 
   Called from the PiRPC worker on run end / abort so a dead session cannot
-  leave a stuck chip. Safe when nothing is waiting.
+  leave a stuck chip. Safe when nothing is waiting. A down courier is ignored
+  so an `after` block still finishes.
   """
   @spec clear(String.t()) :: :ok
   def clear(task_id) when is_binary(task_id) do
+    try do
+      Courier.drop(task_id)
+    catch
+      :exit, _reason -> :ok
+    end
+
     _ = KanbanBridge.clear_pending_question(task_id)
     _ = Coordination.upsert(task_id, %{wait_reason: nil, pending_question: nil})
     unregister()
@@ -238,7 +266,8 @@ defmodule Svarm.AgentQuestion do
           "request_id" => request_id,
           "method" => map_get(attrs, :method),
           "options" => map_get(attrs, :options),
-          "asked_at" => map_get(attrs, :asked_at) || System.system_time(:second)
+          "asked_at" => map_get(attrs, :asked_at) || System.system_time(:second),
+          "deadline_at" => integer_deadline(map_get(attrs, :deadline_at))
         }
         |> Map.reject(fn {_k, v} -> is_nil(v) or v == "" end)
 
@@ -315,6 +344,41 @@ defmodule Svarm.AgentQuestion do
   end
 
   defp flatten_ui_event(event), do: event
+
+  defp wait_duration_ms(event, cap_ms) do
+    min(cap_ms, request_timeout_ms(event) || cap_ms)
+  end
+
+  defp finish_answer(task_id, :injected) do
+    clear(task_id)
+    {:ok, :injected}
+  end
+
+  defp finish_answer(_task_id, :queued), do: {:ok, :queued}
+
+  defp cancel_pending(task_id) do
+    with {:ok, waiting} <- current_wait(task_id),
+         {:ok, pid} <- lookup_runner(task_id),
+         {:ok, body} <- build_response(waiting, %{}, cancelled: true) do
+      send(pid, {:agent_question_reply, body})
+      clear(task_id)
+      {:ok, :injected}
+    else
+      {:error, :no_runner} ->
+        clear(task_id)
+        {:ok, :cleared}
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  defp payload_deadline(waiting) do
+    integer_deadline(map_get(waiting, :deadline_at))
+  end
+
+  defp integer_deadline(value) when is_integer(value), do: value
+  defp integer_deadline(_value), do: nil
 
   defp request_timeout_ms(event) do
     case map_get(event, :timeout) do
