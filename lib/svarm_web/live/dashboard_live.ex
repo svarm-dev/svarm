@@ -381,6 +381,9 @@ defmodule SvarmWeb.DashboardLive do
                       <span class="opacity-50">
                         ({row.metrics.merged_tasks}/{row.metrics.tasks_with_spend})
                       </span>
+                      <span :if={row.metrics.coverage_note} class="block opacity-50">
+                        {row.metrics.coverage_note}
+                      </span>
                     </td>
                     <td class="text-right font-mono text-xs">
                       <%= if row.metrics.merged_tasks > 0 do %>
