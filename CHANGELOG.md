@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Approve cannot be undone by a concurrent poll**: the one-shot permit is recorded before the card moves to `todo`, and that id is claimed until the move finishes. A poll cannot re-hold it. A failed move rolls the permit back.
+- **Mid-run answer waits for the runner** ([#273](https://github.com/svarm-dev/svarm/issues/273)): `AgentQuestion.answer/2` holds a matching answer until the PiRPC worker parks the same `request_id`, instead of returning `:no_runner`. A second answer is `:already_answered`. The hold ends at the question `deadline_at`, on cancel, or on `clear/1`. The board says the answer was queued and does not say "Answer sent" until the reply is injected.
 
 ## [0.1.7] - 2026-10-07
 

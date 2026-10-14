@@ -311,7 +311,8 @@ defmodule Svarm.KanbanBridge do
           "request_id" => stringify_optional(map_get(attrs, :request_id)),
           "method" => stringify_optional(map_get(attrs, :method)),
           "options" => normalize_options(map_get(attrs, :options)),
-          "asked_at" => map_get(attrs, :asked_at) || System.system_time(:second)
+          "asked_at" => map_get(attrs, :asked_at) || System.system_time(:second),
+          "deadline_at" => integer_deadline(map_get(attrs, :deadline_at))
         }
         |> Map.reject(fn {_k, v} -> is_nil(v) or v == "" end)
 
@@ -324,6 +325,9 @@ defmodule Svarm.KanbanBridge do
   defp map_get(map, key) when is_map(map) do
     Map.get(map, key) || Map.get(map, Atom.to_string(key))
   end
+
+  defp integer_deadline(value) when is_integer(value), do: value
+  defp integer_deadline(_value), do: nil
 
   defp stringify_optional(nil), do: nil
   defp stringify_optional(value) when is_binary(value), do: value
