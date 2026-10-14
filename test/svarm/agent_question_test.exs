@@ -78,35 +78,21 @@ defmodule Svarm.AgentQuestionTest do
     assert {:error, :not_waiting} = AgentQuestion.answer("sva_none", %{confirmed: true})
   end
 
-  test "park persists wait; answer without a live runner is :no_runner" do
+  test "park persists wait; answer without a live runner is queued until cancel" do
     task = KanbanBridge.create_task(%{title: "ask", status: "in_progress", assignee: "demo"})
+    pid = park_in_spawn(task.id, confirm_event("q-park"))
 
-    parent = self()
-
-    pid =
-      spawn(fn ->
-        {:ok, _} =
-          AgentQuestion.park(task.id, %{
-            "id" => "q-park",
-            "method" => "confirm",
-            "message" => "Ship it?"
-          })
-
-        send(parent, :parked)
-        Process.sleep(5_000)
-      end)
-
-    assert_receive :parked, 1_000
     assert KanbanBridge.get_task(task.id).pending_question["prompt"] == "Ship it?"
     assert Coordination.get(task.id).wait_reason == "agent_question"
 
-    Process.exit(pid, :kill)
-    wait_until(fn -> Registry.lookup(AgentQuestion.inbox(), task.id) == [] end)
+    kill_runner(pid, task.id)
 
-    assert {:error, :no_runner} = AgentQuestion.answer(task.id, %{confirmed: true})
+    assert {:ok, :queued} = AgentQuestion.answer(task.id, %{confirmed: true})
+    assert KanbanBridge.get_task(task.id).pending_question["prompt"] == "Ship it?"
     assert {:ok, :cleared} = AgentQuestion.cancel(task.id)
     assert KanbanBridge.get_task(task.id).pending_question == nil
     assert Coordination.get(task.id).pending_question == nil
+    assert [] = repark_replies(task.id, confirm_event("q-park"))
   end
 
   test "answer/2 injects into the registered inbox process" do
@@ -199,6 +185,158 @@ defmodule Svarm.AgentQuestionTest do
     assert {:error, :invalid} = AgentQuestion.cancel(task.id)
   end
 
+  test "queued answer is delivered once when the same request parks" do
+    task = KanbanBridge.create_task(%{title: "race", status: "in_progress", assignee: "demo"})
+    pid = park_in_spawn(task.id, input_event("q-race"))
+    kill_runner(pid, task.id)
+
+    assert {:ok, :queued} = AgentQuestion.answer(task.id, %{value: "Ada"})
+
+    assert [%{"type" => "extension_ui_response", "id" => "q-race", "value" => "Ada"}] =
+             repark_replies(task.id, input_event("q-race"))
+  end
+
+  test "a second answer while queued is rejected and is not sent" do
+    task = KanbanBridge.create_task(%{title: "twice", status: "in_progress", assignee: "demo"})
+    pid = park_in_spawn(task.id, input_event("q-twice"))
+    kill_runner(pid, task.id)
+
+    assert {:ok, :queued} = AgentQuestion.answer(task.id, %{value: "Ada"})
+    assert {:error, :already_answered} = AgentQuestion.answer(task.id, %{value: "Bob"})
+
+    assert [%{"id" => "q-twice", "value" => "Ada"}] =
+             repark_replies(task.id, input_event("q-twice"))
+  end
+
+  test "after inject, a second click is :not_waiting" do
+    task =
+      KanbanBridge.create_task(%{title: "second click", status: "in_progress", assignee: "demo"})
+
+    park_in_spawn(task.id, input_event("q-second"))
+    assert {:ok, :injected} = AgentQuestion.answer(task.id, %{value: "Ada"})
+    assert {:error, :not_waiting} = AgentQuestion.answer(task.id, %{value: "Bob"})
+  end
+
+  test "a past deadline does not queue and is not delivered by a later park" do
+    task = KanbanBridge.create_task(%{title: "past", status: "in_progress", assignee: "demo"})
+    past = System.system_time(:millisecond) - 1_000
+
+    assert {:ok, _} =
+             KanbanBridge.put_pending_question(task.id, %{
+               prompt: "Ship it?",
+               method: "confirm",
+               request_id: "q-past",
+               deadline_at: past
+             })
+
+    assert {:error, :no_runner} =
+             AgentQuestion.answer(task.id, %{confirmed: true, request_id: "q-past"})
+
+    assert [] = repark_replies(task.id, confirm_event("q-past"))
+  end
+
+  test "a queued answer past its deadline is not delivered" do
+    task =
+      KanbanBridge.create_task(%{title: "expire", status: "in_progress", assignee: "demo"})
+
+    deadline_at = System.system_time(:millisecond) + 400
+
+    assert {:ok, _} =
+             KanbanBridge.put_pending_question(task.id, %{
+               prompt: "Ship it?",
+               method: "confirm",
+               request_id: "q-exp",
+               deadline_at: deadline_at
+             })
+
+    Events.subscribe()
+    flush_task_updated()
+
+    assert {:ok, :queued} = AgentQuestion.answer(task.id, %{confirmed: true, request_id: "q-exp"})
+
+    assert_receive {:task_updated, %{id: id, reason: :agent_question_answer_expired} = payload},
+                   2_000
+
+    assert id == task.id
+    refute Map.has_key?(payload, :status)
+    assert KanbanBridge.get_task(task.id).pending_question["prompt"] == "Ship it?"
+
+    assert {:error, :no_runner} =
+             AgentQuestion.answer(task.id, %{confirmed: true, request_id: "q-exp"})
+
+    assert [] = repark_replies(task.id, confirm_event("q-exp"))
+  end
+
+  test "cancel drops a queued answer so a later park receives nothing" do
+    task =
+      KanbanBridge.create_task(%{title: "cancel queue", status: "in_progress", assignee: "demo"})
+
+    pid = park_in_spawn(task.id, confirm_event("q-cancel"))
+    kill_runner(pid, task.id)
+
+    assert {:ok, :queued} = AgentQuestion.answer(task.id, %{confirmed: true})
+    assert {:ok, :cleared} = AgentQuestion.cancel(task.id)
+    assert KanbanBridge.get_task(task.id).pending_question == nil
+    assert [] = repark_replies(task.id, confirm_event("q-cancel"))
+  end
+
+  test "a queued answer is not sent when a different request id parks" do
+    task =
+      KanbanBridge.create_task(%{title: "other id", status: "in_progress", assignee: "demo"})
+
+    pid = park_in_spawn(task.id, confirm_event("q-a"))
+    kill_runner(pid, task.id)
+    assert {:ok, :queued} = AgentQuestion.answer(task.id, %{confirmed: true, request_id: "q-a"})
+
+    assert [] = repark_replies(task.id, confirm_event("q-b"))
+    assert [] = repark_replies(task.id, confirm_event("q-a"))
+  end
+
+  test "deadline_at survives park on the task row and coordination" do
+    task =
+      KanbanBridge.create_task(%{title: "deadline", status: "in_progress", assignee: "demo"})
+
+    before = System.monotonic_time(:millisecond)
+    assert {:ok, deadline_ms} = AgentQuestion.park(task.id, confirm_event("q-dead"))
+    after_mono = System.monotonic_time(:millisecond)
+
+    assert deadline_ms >= before + AgentQuestion.timeout_ms() - 50
+    assert deadline_ms <= after_mono + AgentQuestion.timeout_ms() + 50
+
+    row = KanbanBridge.get_task(task.id).pending_question
+    coord = Coordination.get(task.id).pending_question
+    assert is_integer(row["deadline_at"])
+    assert row["deadline_at"] == coord["deadline_at"]
+
+    assert_in_delta row["deadline_at"] - System.system_time(:millisecond),
+                    AgentQuestion.timeout_ms(),
+                    1_000
+
+    refute Map.has_key?(row, "timeout")
+
+    assert {:ok, _} =
+             KanbanBridge.put_pending_question(task.id, %{
+               prompt: "Ship it?",
+               request_id: "q-str",
+               deadline_at: "100"
+             })
+
+    refute Map.has_key?(KanbanBridge.get_task(task.id).pending_question, "deadline_at")
+  end
+
+  test "clear/1 drops a queued answer so a later park receives nothing" do
+    task =
+      KanbanBridge.create_task(%{title: "clear queue", status: "in_progress", assignee: "demo"})
+
+    pid = park_in_spawn(task.id, confirm_event("q-clear-q"))
+    kill_runner(pid, task.id)
+    assert {:ok, :queued} = AgentQuestion.answer(task.id, %{confirmed: true})
+
+    assert :ok = AgentQuestion.clear(task.id)
+    assert KanbanBridge.get_task(task.id).pending_question == nil
+    assert [] = repark_replies(task.id, confirm_event("q-clear-q"))
+  end
+
   test "clear/1 does not PubSub in_progress or log a status line after review" do
     Events.subscribe()
 
@@ -250,6 +388,56 @@ defmodule Svarm.AgentQuestionTest do
     refute Map.has_key?(payload, :status)
     assert Coordination.get(id).wait_reason == nil
     refute RunLog.get(id) =~ "status →"
+  end
+
+  defp confirm_event(id) do
+    %{"id" => id, "method" => "confirm", "message" => "Ship it?"}
+  end
+
+  defp input_event(id) do
+    %{"id" => id, "method" => "input", "message" => "Name?"}
+  end
+
+  defp park_in_spawn(task_id, event) do
+    parent = self()
+
+    pid =
+      spawn(fn ->
+        {:ok, _} = AgentQuestion.park(task_id, event)
+        send(parent, {:parked, self()})
+        Process.sleep(30_000)
+      end)
+
+    assert_receive {:parked, ^pid}, 1_000
+    pid
+  end
+
+  defp kill_runner(pid, task_id) do
+    Process.exit(pid, :kill)
+    wait_until(fn -> Registry.lookup(AgentQuestion.inbox(), task_id) == [] end)
+  end
+
+  defp repark_replies(task_id, event, wait_ms \\ 300) do
+    parent = self()
+
+    spawn(fn ->
+      {:ok, _} = AgentQuestion.park(task_id, event)
+      send(parent, :reparked)
+
+      collect = fn collect, acc ->
+        receive do
+          {:agent_question_reply, payload} -> collect.(collect, [payload | acc])
+        after
+          wait_ms -> send(parent, {:replies, Enum.reverse(acc)})
+        end
+      end
+
+      collect.(collect, [])
+    end)
+
+    assert_receive :reparked, 1_000
+    assert_receive {:replies, replies}, wait_ms + 1_000
+    replies
   end
 
   defp flush_task_updated do

@@ -195,6 +195,94 @@ defmodule SvarmWeb.BoardLiveTest do
     refute_received {:agent_question_reply, _}
   end
 
+  test "answer with no registered runner flashes queued and keeps the form", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Queue me",
+        status: "in_progress",
+        assignee: "demo"
+      })
+
+    parent = self()
+
+    pid =
+      spawn(fn ->
+        {:ok, _} =
+          AgentQuestion.park(task.id, %{
+            "id" => "q-queue",
+            "method" => "confirm",
+            "message" => "Ship it?"
+          })
+
+        send(parent, :parked)
+        Process.sleep(30_000)
+      end)
+
+    assert_receive :parked, 1_000
+    Process.exit(pid, :kill)
+
+    deadline = System.monotonic_time(:millisecond) + 1_000
+
+    Stream.repeatedly(fn -> Registry.lookup(AgentQuestion.inbox(), task.id) == [] end)
+    |> Enum.reduce_while(:waiting, fn empty?, _ ->
+      cond do
+        empty? ->
+          {:halt, :ok}
+
+        System.monotonic_time(:millisecond) > deadline ->
+          flunk("runner still registered")
+
+        true ->
+          Process.sleep(20)
+          {:cont, :waiting}
+      end
+    end)
+
+    {:ok, view, html} = live(conn, ~p"/board?task=#{task.id}")
+    assert html =~ "Agent asked a question"
+    assert html =~ "Ship it?"
+
+    view
+    |> element("#agent-question-#{task.id} button[phx-value-confirmed=true]")
+    |> render_click()
+
+    html = render(view)
+    assert html =~ "Answer queued. It will be sent when the agent is ready."
+    refute html =~ "Answer sent"
+    assert html =~ "Agent asked a question"
+    assert html =~ "Ship it?"
+    assert has_element?(view, "#agent-question-#{task.id} button[phx-value-confirmed=true]")
+
+    view
+    |> element("#agent-question-#{task.id} button[phx-value-confirmed=false]")
+    |> render_click()
+
+    html = render(view)
+    assert html =~ "An answer is already queued for this question."
+    refute html =~ "Answer sent"
+    assert html =~ "Agent asked a question"
+  end
+
+  test "expired queued answer flashes on the selected task", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Expire me",
+        status: "in_progress",
+        assignee: "demo"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/board?task=#{task.id}")
+
+    Events.broadcast_task_updated(%{id: task.id, reason: :agent_question_answer_expired})
+    :sys.get_state(view.pid)
+
+    assert render(view) =~ "Queued answer expired before the agent was ready."
+  end
+
   test "unauthorized answer mutation flashes like approve/reject", %{conn: conn} do
     prev_auth = Application.get_env(:svarm, :approvals_auth)
     Application.put_env(:svarm, :approvals_auth, %{username: "op", password: "secret"})

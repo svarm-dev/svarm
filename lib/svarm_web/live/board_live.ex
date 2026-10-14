@@ -193,6 +193,14 @@ defmodule SvarmWeb.BoardLive do
                if s.assigns.selected_task_id == id, do: select_task(s, id), else: s
              end)}
 
+          {:ok, :queued} ->
+            {:noreply,
+             put_flash(
+               socket,
+               :info,
+               "Answer queued. It will be sent when the agent is ready."
+             )}
+
           {:error, reason} ->
             {:noreply, put_flash(socket, :error, AgentQuestion.flash_error(reason))}
         end
@@ -375,12 +383,11 @@ defmodule SvarmWeb.BoardLive do
 
   @impl true
   def handle_info({:task_updated, task}, socket) do
-    task = card_task(task)
-
     socket =
       socket
       |> update_task_in_streams(task)
       |> maybe_append_status_marker(task)
+      |> maybe_flash_expired_answer(task)
 
     {:noreply, socket}
   end
@@ -812,6 +819,16 @@ defmodule SvarmWeb.BoardLive do
   end
 
   defp maybe_append_status_marker(socket, _), do: socket
+
+  defp maybe_flash_expired_answer(socket, %{id: id, reason: :agent_question_answer_expired}) do
+    if socket.assigns.selected_task_id == id do
+      put_flash(socket, :error, "Queued answer expired before the agent was ready.")
+    else
+      socket
+    end
+  end
+
+  defp maybe_flash_expired_answer(socket, _task), do: socket
 
   defp append_stream_event(socket, task_id, %{kind: :tool_end, payload: payload} = event) do
     case StreamEvent.to_text(event) do
