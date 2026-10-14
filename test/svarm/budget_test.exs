@@ -24,6 +24,54 @@ defmodule Svarm.BudgetTest do
   defp restore_env(key, nil), do: System.delete_env(key)
   defp restore_env(key, val), do: System.put_env(key, val)
 
+  test "unpriced and missing rows do not count, a rate-table row still does" do
+    task_id = "budget_unmeasured"
+
+    Usage.append(%{
+      run_id: "run_gap",
+      task_id: task_id,
+      source: "attempt",
+      provider: nil,
+      model_id: nil,
+      prompt_tokens: nil,
+      completion_tokens: nil,
+      provider_cost_usd: nil,
+      estimated: true
+    })
+
+    Usage.append(%{
+      run_id: "run_unpriced",
+      task_id: task_id,
+      source: "worker",
+      provider: "openrouter",
+      model_id: "no-such-model",
+      prompt_tokens: 80_000,
+      completion_tokens: 4_000,
+      provider_cost_usd: nil,
+      estimated: true
+    })
+
+    summary = Usage.task_cost_summary(task_id)
+    assert summary.total_cost_usd == 0.0
+    assert summary.unmetered_rows == 1
+    assert summary.unpriced_rows == 1
+    assert Budget.check(task_id, %{max_usd_per_ticket: 0.01}) == :ok
+
+    Usage.append(%{
+      run_id: "run_rated",
+      task_id: task_id,
+      source: "worker",
+      provider: "openrouter",
+      model_id: "claude-sonnet-4-20250514",
+      prompt_tokens: 1_000_000,
+      completion_tokens: 0,
+      estimated: true
+    })
+
+    assert {:error, :budget_exceeded, %{scope: :ticket, spent: 3.0, cap: 3.0}} =
+             Budget.check(task_id, %{max_usd_per_ticket: 3.0})
+  end
+
   test "unset caps always ok" do
     System.delete_env("SVARM_BUDGET_MAX_USD_PER_TICKET")
     System.delete_env("SVARM_BUDGET_MAX_USD_PER_DAY")

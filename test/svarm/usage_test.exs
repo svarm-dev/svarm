@@ -3,6 +3,7 @@ defmodule Svarm.UsageTest do
 
   alias Svarm.Repo
   alias Svarm.Usage
+  alias Svarm.Usage.Receipt
 
   setup do
     # Clean the usage_records table before each test
@@ -349,6 +350,9 @@ defmodule Svarm.UsageTest do
       assert summary.prompt_tokens == 0
       assert summary.completion_tokens == 0
       assert summary.estimated == false
+      assert summary.unmetered_rows == 0
+      assert summary.unpriced_rows == 0
+      assert Receipt.label(summary, :settled, :detail).text == "no usage recorded"
     end
 
     test "all provider-billed rows are not estimated" do
@@ -367,6 +371,146 @@ defmodule Svarm.UsageTest do
       summary = Usage.session_cost_summary()
       assert summary.total_cost_usd == 1.23
       assert summary.estimated == false
+    end
+  end
+
+  describe "coverage counters" do
+    test "missing line, unknown model, rate table, provider zero, and free model" do
+      missing = "task_missing_line"
+
+      Usage.append(%{
+        run_id: "run_missing",
+        task_id: missing,
+        source: "worker",
+        provider: "cli",
+        model_id: "claude-sonnet-4-20250514",
+        prompt_tokens: nil,
+        completion_tokens: nil,
+        provider_cost_usd: nil,
+        estimated: true
+      })
+
+      assert Usage.task_cost_summary(missing).unmetered_rows == 1
+      assert Usage.task_cost_summary(missing).unpriced_rows == 0
+
+      unknown = "task_unknown_model"
+
+      Usage.append(%{
+        run_id: "run_unknown",
+        task_id: unknown,
+        source: "worker",
+        provider: "openrouter",
+        model_id: "no-such-model",
+        prompt_tokens: 1200,
+        completion_tokens: 30,
+        provider_cost_usd: nil,
+        estimated: true
+      })
+
+      assert Usage.task_cost_summary(unknown).unpriced_rows == 1
+      assert Usage.task_cost_summary(unknown).unmetered_rows == 0
+      assert Usage.task_cost_summary(unknown).total_cost_usd == 0.0
+
+      rated = "task_rate_table"
+
+      Usage.append(%{
+        run_id: "run_rated",
+        task_id: rated,
+        source: "worker",
+        provider: "openrouter",
+        model_id: "gpt-5.1",
+        prompt_tokens: 1_000,
+        completion_tokens: 0,
+        provider_cost_usd: nil,
+        estimated: true
+      })
+
+      rated_summary = Usage.task_cost_summary(rated)
+      assert rated_summary.unmetered_rows == 0
+      assert rated_summary.unpriced_rows == 0
+      assert rated_summary.estimated == true
+
+      billed_zero = "task_billed_zero"
+
+      Usage.append(%{
+        run_id: "run_billed_zero",
+        task_id: billed_zero,
+        source: "worker",
+        provider: "openrouter",
+        model_id: "no-such-model",
+        prompt_tokens: 10,
+        completion_tokens: 10,
+        provider_cost_usd: 0.0,
+        estimated: false
+      })
+
+      zero = Usage.task_cost_summary(billed_zero)
+      assert zero.estimated == false
+      assert zero.unmetered_rows == 0
+      assert zero.unpriced_rows == 0
+      assert Receipt.label(zero, :settled, :badge).text == "$0.00"
+
+      free = "task_free"
+
+      Usage.append(%{
+        run_id: "run_free",
+        task_id: free,
+        source: "worker",
+        provider: "openrouter",
+        model_id: "openrouter/free",
+        prompt_tokens: 400,
+        completion_tokens: 20,
+        provider_cost_usd: nil,
+        estimated: true
+      })
+
+      free_summary = Usage.task_cost_summary(free)
+      assert free_summary.estimated == true
+      assert free_summary.unmetered_rows == 0
+      assert free_summary.unpriced_rows == 0
+      assert Receipt.label(free_summary, :settled, :badge).text == "est. $0.00"
+    end
+  end
+
+  describe "ensure_attempt_row/1" do
+    test "inserts one gap row and a later real row does not delete it" do
+      entry = %{
+        run_id: "run_gap",
+        task: %{id: "task_gap"},
+        source: "worker",
+        provider: "openrouter",
+        model_id: "claude-sonnet-4-20250514"
+      }
+
+      assert Usage.ensure_attempt_row(entry) == :ok
+      assert Usage.ensure_attempt_row(entry) == :ok
+      assert [gap] = Usage.for_task("task_gap")
+      assert gap.run_id == "run_gap"
+      assert gap.prompt_tokens == nil
+      assert gap.completion_tokens == nil
+      assert gap.provider_cost_usd == nil
+      assert gap.estimated == true
+
+      Usage.append(%{
+        run_id: "run_real",
+        task_id: "task_gap",
+        source: "worker",
+        provider: "openrouter",
+        model_id: "claude-sonnet-4-20250514",
+        prompt_tokens: 100,
+        completion_tokens: 20,
+        provider_cost_usd: 0.2,
+        estimated: false
+      })
+
+      rows = Usage.for_task("task_gap")
+      assert Enum.count(rows) == 2
+      assert Enum.any?(rows, &(&1.run_id == "run_gap" and is_nil(&1.provider_cost_usd)))
+
+      summary = Usage.task_cost_summary("task_gap")
+      assert summary.unmetered_rows == 1
+      assert Receipt.label(summary, :settled, :detail).text =~ "adapter does not report usage"
+      assert Receipt.classify(summary, :settled).state == :partial
     end
   end
 end

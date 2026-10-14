@@ -17,6 +17,41 @@ defmodule Svarm.Usage do
     Ledger.append(normalize_attrs(attrs))
   end
 
+  @doc """
+  Append one gap row when `run_id` has no ledger rows.
+
+  Tokens and `provider_cost_usd` are nil. A second call inserts nothing.
+  Not a forecast: budget still sees `0.0`.
+  """
+  def ensure_attempt_row(entry) when is_map(entry) do
+    run_id = entry[:run_id]
+    task_id = entry_task_id(entry)
+
+    if is_binary(run_id) and is_binary(task_id) and Ledger.count_for_run(run_id) == 0 do
+      append(
+        run_id: run_id,
+        task_id: task_id,
+        tenant: entry[:tenant],
+        source: entry_source(entry),
+        provider: entry[:provider],
+        model_id: entry[:model_id] || entry[:model],
+        prompt_tokens: nil,
+        completion_tokens: nil,
+        provider_cost_usd: nil,
+        estimated: true
+      )
+    end
+
+    :ok
+  end
+
+  defp entry_task_id(%{task_id: id}) when is_binary(id), do: id
+  defp entry_task_id(%{task: %{id: id}}) when is_binary(id), do: id
+  defp entry_task_id(_), do: nil
+
+  defp entry_source(%{source: source}) when is_binary(source) and source != "", do: source
+  defp entry_source(_), do: "attempt"
+
   defdelegate for_task(task_id), to: Ledger
   defdelegate list_all(), to: Ledger
   defdelegate task_cost(task_id), to: Query
