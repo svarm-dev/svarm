@@ -22,6 +22,8 @@ defmodule Svarm.Orchestrator.RunExit do
 
   @doc false
   def handle(state, entry, task_id, result) do
+    Usage.ensure_attempt_row(entry)
+
     state =
       state
       |> Map.update!(:claimed, &MapSet.delete(&1, task_id))

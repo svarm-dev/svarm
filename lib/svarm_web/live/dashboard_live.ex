@@ -6,6 +6,7 @@ defmodule SvarmWeb.DashboardLive do
   use SvarmWeb, :live_view
 
   alias Svarm.{Board, Dashboard, Events}
+  alias Svarm.Usage.Receipt
 
   # Full snapshot reloads are expensive; coalesce PubSub storms (status ticks,
   # multi-agent task_updated) into one reload.
@@ -29,7 +30,8 @@ defmodule SvarmWeb.DashboardLive do
   def handle_event("set_window", %{"window" => window}, socket) do
     cost = Dashboard.cost_for_window(window)
     tasks = get_in(socket.assigns, [:snapshot, :tasks]) || []
-    roi = Dashboard.roi_for_window(window, tasks)
+    orchestrator = get_in(socket.assigns, [:snapshot, :orchestrator]) || %{}
+    roi = roi_for(window, tasks, orchestrator)
 
     {:noreply,
      socket
@@ -128,7 +130,11 @@ defmodule SvarmWeb.DashboardLive do
 
           <.human_wait_strip summary={@snapshot.human_wait} />
 
-          <.spend_card cost={@window_cost} window={@time_window} />
+          <.spend_card
+            cost={@window_cost}
+            window={@time_window}
+            orchestrator={@snapshot.orchestrator}
+          />
 
           <.roi_card roi={@roi} window={@time_window} />
 
@@ -251,18 +257,17 @@ defmodule SvarmWeb.DashboardLive do
 
   attr :cost, :map, required: true
   attr :window, :string, required: true
+  attr :orchestrator, :map, default: %{}
 
   defp spend_card(assigns) do
-    cost = assigns.cost || empty_window_cost()
+    cost = assigns.cost || Receipt.empty_summary()
+    live = if Map.get(assigns.orchestrator, :running, 0) > 0, do: :running, else: :settled
     tokens = (cost[:prompt_tokens] || 0) + (cost[:completion_tokens] || 0)
-    usd = cost[:total_cost_usd] || 0.0
-    estimated? = cost[:estimated] == true
 
     assigns =
       assign(assigns,
-        usd: usd,
+        label: Receipt.label(cost, live, :detail),
         tokens: tokens,
-        estimated?: estimated?,
         records: cost[:record_count] || 0
       )
 
@@ -278,11 +283,12 @@ defmodule SvarmWeb.DashboardLive do
       <div class="flex flex-wrap items-baseline gap-x-6 gap-y-2">
         <div>
           <p class="text-xs opacity-60">Cost</p>
-          <p class="text-xl font-semibold font-mono mt-0.5">
-            ${Float.round(@usd, 2)}
-            <%= if @estimated? do %>
-              <span class="text-xs font-sans font-medium opacity-60 ml-1">est.</span>
-            <% end %>
+          <p
+            class="text-xl font-semibold font-mono mt-0.5"
+            data-testid="spend-cost"
+            title={@label.title}
+          >
+            {@label.text}
           </p>
         </div>
         <div>
@@ -338,12 +344,17 @@ defmodule SvarmWeb.DashboardLive do
             <p class="text-[11px] opacity-50">
               {@overall.merged_tasks}/{@overall.tasks_with_spend} tasks with spend
             </p>
+            <p :if={@overall.coverage_note} class="text-[11px] opacity-50">
+              {@overall.coverage_note}
+            </p>
           </div>
           <div>
             <p class="text-xs opacity-60">$/merged</p>
             <p class="text-xl font-semibold font-mono mt-0.5">
-              <%= if @overall.cost_per_merged_usd do %>
-                {if @overall.estimated, do: "est. ", else: ""}${@overall.cost_per_merged_usd}
+              <%= if @overall.merged_tasks > 0 do %>
+                {Receipt.label(@overall.merged_cost, @overall.merged_liveness, :badge,
+                  per: @overall.merged_tasks
+                ).text}
               <% else %>
                 <span class="opacity-50">—</span>
               <% end %>
@@ -372,8 +383,10 @@ defmodule SvarmWeb.DashboardLive do
                       </span>
                     </td>
                     <td class="text-right font-mono text-xs">
-                      <%= if row.metrics.cost_per_merged_usd do %>
-                        {if row.metrics.estimated, do: "est. ", else: ""}${row.metrics.cost_per_merged_usd}
+                      <%= if row.metrics.merged_tasks > 0 do %>
+                        {Receipt.label(row.metrics.merged_cost, row.metrics.merged_liveness, :badge,
+                          per: row.metrics.merged_tasks
+                        ).text}
                       <% else %>
                         <span class="opacity-40">—</span>
                       <% end %>
@@ -512,11 +525,14 @@ defmodule SvarmWeb.DashboardLive do
                   </a>
                 <% end %>
                 <p class="text-[11px] font-mono opacity-60">
-                  <%= if Map.get(agent, :window_record_count, 0) > 0 do %>
-                    <span>
-                      {if Map.get(agent, :window_cost_estimated), do: "est. ", else: ""}${agent.window_cost_usd}
-                    </span>
-                    / 24h
+                  <% roster_label =
+                    Receipt.label(
+                      agent.window_cost,
+                      if(agent.busy?, do: :running, else: :settled),
+                      :badge
+                    ) %>
+                  <%= if roster_label.show? do %>
+                    <span title={roster_label.title}>{roster_label.text}</span> / 24h
                     ·
                   <% end %>
                   retry {reliability_label(Map.get(agent, :reliability))}
@@ -624,11 +640,7 @@ defmodule SvarmWeb.DashboardLive do
                     </span>
                   </td>
                   <td class="text-right font-mono text-xs">
-                    <%= if run.cost_usd do %>
-                      ${run.cost_usd}{if run.estimated, do: " est.", else: ""}
-                    <% else %>
-                      <span class="opacity-40">—</span>
-                    <% end %>
+                    {Receipt.label(run.cost, :settled, :detail).text}
                   </td>
                 </tr>
               <% end %>
@@ -648,7 +660,7 @@ defmodule SvarmWeb.DashboardLive do
     case Dashboard.snapshot() do
       {:ok, snapshot} ->
         cost = Dashboard.cost_for_window(window)
-        roi = Dashboard.roi_for_window(window, snapshot.tasks)
+        roi = roi_for(window, snapshot.tasks, snapshot.orchestrator)
 
         assign(socket,
           snapshot: snapshot,
@@ -701,8 +713,18 @@ defmodule SvarmWeb.DashboardLive do
       in_review_tasks: 0,
       other_tasks: 0,
       tasks_with_spend: 0,
-      estimated: false
+      estimated: false,
+      merged_cost: Receipt.empty_summary(),
+      merged_liveness: :settled,
+      partial_tasks: 0,
+      unmeasured_runs: 0,
+      coverage_note: nil
     }
+  end
+
+  defp roi_for(window, tasks, orchestrator) do
+    running_ids = Map.get(orchestrator || %{}, :running_ids, [])
+    Dashboard.roi_for_window(window, tasks, running_ids: running_ids)
   end
 
   defp empty_snapshot do
@@ -719,15 +741,7 @@ defmodule SvarmWeb.DashboardLive do
     }
   end
 
-  defp empty_window_cost do
-    %{
-      total_cost_usd: 0.0,
-      record_count: 0,
-      prompt_tokens: 0,
-      completion_tokens: 0,
-      estimated: false
-    }
-  end
+  defp empty_window_cost, do: Receipt.empty_summary()
 
   defp format_tokens(n) when n >= 1_000_000, do: "#{Float.round(n / 1_000_000, 1)}M"
   defp format_tokens(n) when n >= 1_000, do: "#{Float.round(n / 1_000, 1)}K"

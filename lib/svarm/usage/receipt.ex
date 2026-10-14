@@ -160,35 +160,31 @@ defmodule Svarm.Usage.Receipt do
   defp divide(receipt, _per), do: receipt
 
   defp format(%__MODULE__{state: :empty}, :badge) do
-    %{text: "", title: "No usage recorded.", tone: :empty, show?: false}
+    receipt_label("", "No usage recorded.", :empty, false)
   end
 
   defp format(%__MODULE__{state: :empty}, variant) when variant in [:detail, :markdown] do
-    %{text: "no usage recorded", title: "No usage recorded.", tone: :empty, show?: true}
+    receipt_label("no usage recorded", "No usage recorded.", :empty, true)
   end
 
   defp format(%__MODULE__{state: :measured} = receipt, _variant) do
     money = format_usd(receipt.lower_bound_usd)
-    %{text: money, title: "Measured spend is #{money}.", tone: :measured, show?: true}
+    receipt_label(money, "Measured spend is #{money}.", :measured, true)
   end
 
   defp format(%__MODULE__{state: :estimated} = receipt, _variant) do
     money = format_usd(receipt.lower_bound_usd)
-    text = "est. #{money}"
-    %{text: text, title: "Estimated spend is #{money}.", tone: :estimated, show?: true}
+    receipt_label("est. #{money}", "Estimated spend is #{money}.", :estimated, true)
   end
 
   defp format(%__MODULE__{state: :partial} = receipt, _variant) do
     money = partial_money(receipt)
     reason = reason_text(receipt.reasons)
-    text = "≥ #{money} · #{reason}"
+    receipt_label("≥ #{money} · #{reason}", "Lower bound is #{money}. #{reason}.", :partial, true)
+  end
 
-    %{
-      text: text,
-      title: "Lower bound is #{money}. #{reason}.",
-      tone: :partial,
-      show?: true
-    }
+  defp receipt_label(text, title, tone, show?) do
+    %{text: text, title: title, tone: tone, show?: show?}
   end
 
   defp partial_money(%__MODULE__{basis: :estimated, lower_bound_usd: usd}) when usd > 0 do
@@ -205,7 +201,7 @@ defmodule Svarm.Usage.Receipt do
   defp phrase(n, _singular, plural), do: "#{n} #{plural}"
 
   defp format_usd(amount) when is_number(amount) do
-    amount = amount * 1.0
+    amount = to_float(amount)
     rounded = Float.round(amount, 4)
 
     shown = if(rounded == 0.0 and amount > 0.0, do: first_nonzero(amount), else: rounded)
@@ -222,8 +218,9 @@ defmodule Svarm.Usage.Receipt do
 
   defp trim_decimals(amount) do
     negative? = amount < 0
-    places = decimal_places(abs(amount))
-    text = :erlang.float_to_binary(abs(amount) * 1.0, decimals: places)
+    abs_amount = abs(to_float(amount))
+    places = decimal_places(abs_amount)
+    text = :erlang.float_to_binary(abs_amount, decimals: places)
     [whole, frac] = String.split(text, ".")
     frac = frac |> String.trim_trailing("0") |> pad_frac()
     sign = if negative?, do: "-", else: ""
@@ -253,8 +250,11 @@ defmodule Svarm.Usage.Receipt do
 
   defp float(map, key) do
     case Map.get(map, key) do
-      n when is_number(n) -> n * 1.0
+      n when is_number(n) -> to_float(n)
       _ -> 0.0
     end
   end
+
+  defp to_float(n) when is_float(n), do: n
+  defp to_float(n) when is_integer(n), do: n / 1
 end

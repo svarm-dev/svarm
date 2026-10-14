@@ -24,6 +24,69 @@ defmodule SvarmWeb.DashboardLiveTest do
     assert html =~ "Approvals 1"
   end
 
+  test "empty Spend says no usage recorded", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/dashboard")
+
+    send(
+      view.pid,
+      {:orchestrator_status, %{running: 0, running_ids: [], claimed: 0, retrying: 0}}
+    )
+
+    :sys.get_state(view.pid)
+    html = render(view)
+
+    assert html =~ "no usage recorded"
+    [_, spend] = String.split(html, ~s(data-testid="spend-cost"), parts: 2)
+    [spend_cost | _] = String.split(spend, "</p>", parts: 2)
+    assert spend_cost =~ "no usage recorded"
+    refute spend_cost =~ "$"
+  end
+
+  test "ROI note appears when a merged task has an unpriced row", %{conn: conn} do
+    merged =
+      KanbanBridge.create_task(%{
+        title: "Merged unpriced",
+        status: "done",
+        assignee: "demo"
+      })
+
+    other =
+      KanbanBridge.create_task(%{
+        title: "Other billed",
+        status: "todo",
+        assignee: "demo"
+      })
+
+    Usage.append(%{
+      run_id: "run_unpriced_merged",
+      task_id: merged.id,
+      source: "worker",
+      provider: "openrouter",
+      model_id: "no-such-model",
+      prompt_tokens: 200,
+      completion_tokens: 40,
+      provider_cost_usd: nil,
+      estimated: true
+    })
+
+    Usage.append(%{
+      run_id: "run_other_billed",
+      task_id: other.id,
+      source: "worker",
+      provider: "openrouter",
+      model_id: "gpt-5.1",
+      prompt_tokens: 1_000,
+      completion_tokens: 0,
+      provider_cost_usd: 1.0,
+      estimated: false
+    })
+
+    {:ok, _view, html} = live(conn, ~p"/dashboard")
+
+    assert html =~ "denominator includes 1 task with 1 unmeasured run"
+    assert html =~ "unpriced model"
+  end
+
   test "shows waiting on humans strip with counts", %{conn: conn} do
     KanbanBridge.create_task(%{
       title: "Need gate",
@@ -291,7 +354,7 @@ defmodule SvarmWeb.DashboardLiveTest do
     {:ok, _view, html} = live(conn, ~p"/dashboard")
 
     assert html =~ "24h wall-clock cost"
-    assert html =~ "est."
+    assert html =~ "adapter does not report usage"
     assert html =~ "/ 24h"
     assert html =~ "retry n/a"
   end

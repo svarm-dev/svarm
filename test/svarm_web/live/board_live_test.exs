@@ -1725,7 +1725,7 @@ defmodule SvarmWeb.BoardLiveTest do
     assert html =~ ~s(id="run-console")
     assert html =~ ~s(data-focused="true")
     assert html =~ ~s(id="run-log")
-    assert html =~ "no usage yet"
+    assert html =~ "≥ $0.00 · running"
   end
 
   test "attach deep link selects task and focuses console", %{conn: conn} do
@@ -2017,8 +2017,8 @@ defmodule SvarmWeb.BoardLiveTest do
         assignee: "demo"
       })
 
-    {:ok, view, html} = live(conn, ~p"/board")
-    refute html =~ ~r/\$\d/
+    {:ok, view, _html} = live(conn, ~p"/board")
+    refute render(element(view, "#task-#{task.id}")) =~ ~r/\$\d/
 
     Svarm.Usage.append(%{
       run_id: "run_board_cost_1",
@@ -2040,6 +2040,61 @@ defmodule SvarmWeb.BoardLiveTest do
     # task_cost_summary renders total_cost_usd for known models
     assert html =~ "$"
     assert has_element?(view, "#task-#{task.id}")
+  end
+
+  test "running receipt becomes measured after a billed row lands", %{conn: conn} do
+    KanbanBridge.delete_all_tasks()
+    Svarm.Repo.delete_all("usage_records")
+
+    task =
+      KanbanBridge.create_task(%{
+        title: "Running receipt",
+        status: "in_progress",
+        assignee: "demo"
+      })
+
+    Svarm.Usage.append(%{
+      run_id: "run_prior",
+      task_id: task.id,
+      source: "worker",
+      provider: "openrouter",
+      model_id: "deepseek/deepseek-v4-flash",
+      prompt_tokens: 10,
+      completion_tokens: 2,
+      provider_cost_usd: 1.23,
+      estimated: false
+    })
+
+    {:ok, view, _html} = live(conn, ~p"/board")
+
+    send(
+      view.pid,
+      {:run_started, task.id, %{started_mono_ms: System.monotonic_time(:millisecond)}}
+    )
+
+    :sys.get_state(view.pid)
+
+    assert render(element(view, "#task-#{task.id}")) =~ "≥ $1.23 · running"
+
+    Svarm.Usage.append(%{
+      run_id: "run_billed",
+      task_id: task.id,
+      source: "worker",
+      provider: "openrouter",
+      model_id: "deepseek/deepseek-v4-flash",
+      prompt_tokens: 4,
+      completion_tokens: 1,
+      provider_cost_usd: 0.32,
+      estimated: false
+    })
+
+    send(view.pid, {:run_finished, task.id, 0})
+    :sys.get_state(view.pid)
+
+    assert render(element(view, "#task-#{task.id}")) =~ "$1.55"
+    refute render(element(view, "#task-#{task.id}")) =~ "· running"
+    assert render(element(view, "#run-console")) =~ "$1.55"
+    refute render(element(view, "#run-console")) =~ "· running"
   end
 
   defp review_column_task_ids(html) do

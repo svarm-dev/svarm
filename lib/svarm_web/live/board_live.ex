@@ -480,8 +480,8 @@ defmodule SvarmWeb.BoardLive do
 
   @impl true
   def handle_info({:run_finished, task_id, _exit_code}, socket) do
-    # Fetch detailed cost + update card summary + session total
-    costs = fetch_task_cost(task_id, socket.assigns.task_costs)
+    # Always replace the console total. The select_task guard must not keep a stale run.
+    costs = refresh_task_cost(task_id, socket.assigns.task_costs)
 
     session_cost = Usage.session_cost_summary()
     orchestrator = Map.put(socket.assigns.orchestrator, :session_cost, session_cost)
@@ -872,6 +872,10 @@ defmodule SvarmWeb.BoardLive do
     else
       text
     end
+  end
+
+  defp refresh_task_cost(task_id, existing_costs) do
+    Map.put(existing_costs, task_id, Usage.task_cost(task_id))
   end
 
   defp fetch_task_cost(task_id, existing_costs) do

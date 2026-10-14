@@ -5,6 +5,7 @@ defmodule SvarmWeb.BoardLive.Column do
   use SvarmWeb, :html
 
   alias Svarm.{AgentRegistry, Board}
+  alias Svarm.Usage.Receipt
 
   import SvarmWeb.BoardLive.Helpers
   import SvarmWeb.BoardLive.Shared
@@ -54,6 +55,8 @@ defmodule SvarmWeb.BoardLive.Column do
       <ul id={"col-#{@status_id}-tasks"} phx-update="stream" class="flex flex-col gap-2 min-h-[3rem]">
         <li :for={{dom_id, task} <- @tasks_stream} id={dom_id}>
           <% cost = Map.get(@costs, task.id) %>
+          <% cost_live = if(Map.has_key?(@running_started, task.id), do: :running, else: :settled) %>
+          <% cost_label = Receipt.label(cost, cost_live, :badge) %>
           <% card = card_activity(task, @running_ids, @retry_ids) %>
           <div class={[
             "rounded-md p-2 text-sm border transition relative",
@@ -122,16 +125,14 @@ defmodule SvarmWeb.BoardLive.Column do
                 </div>
               </div>
 
-              <%= if cost && cost.record_count > 0 do %>
-                <div class="mt-1">
-                  <span class={[
-                    "inline-block text-[10px] font-mono px-1.5 py-0.5 rounded badge-ghost",
-                    cost.estimated && "opacity-70"
-                  ]}>
-                    {if cost.estimated, do: "est. ", else: ""}${cost.total_cost_usd}
-                  </span>
-                </div>
-              <% end %>
+              <div :if={cost_label.show?} class="mt-1">
+                <span
+                  class="inline-block text-[10px] font-mono px-1.5 py-0.5 rounded badge-ghost"
+                  title={cost_label.title}
+                >
+                  {cost_label.text}
+                </span>
+              </div>
             </button>
 
             <%= if card.wait_reason == :budget_overage do %>

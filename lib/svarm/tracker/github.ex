@@ -65,6 +65,7 @@ defmodule Svarm.Tracker.GitHub do
   alias Svarm.Coordination
   alias Svarm.GitHub.AppAuth
   alias Svarm.Tracker.GitHub.{Eligibility, HTTP, Normalize}
+  alias Svarm.Usage.Receipt
 
   require Logger
 
@@ -812,11 +813,8 @@ defmodule Svarm.Tracker.GitHub do
   end
 
   defp maybe_append_cost(parts, cost, summary) do
-    if cost && cost.record_count > 0 do
-      parts ++ [" — $", format_cost(cost), " · ", format_tokens(summary)]
-    else
-      parts
-    end
+    label = Receipt.label(cost, :settled, :markdown)
+    parts ++ [" — ", label.text, " · ", format_tokens(summary)]
   end
 
   defp maybe_append_duration(parts, summary) do
@@ -824,16 +822,6 @@ defmodule Svarm.Tracker.GitHub do
       parts ++ [" · ", format_duration(summary.duration_ms)]
     else
       parts
-    end
-  end
-
-  defp format_cost(cost) do
-    amount = to_string(Float.round(cost.total_cost_usd, 2))
-
-    if Map.get(cost, :estimated) == true do
-      amount <> " est."
-    else
-      amount
     end
   end
 

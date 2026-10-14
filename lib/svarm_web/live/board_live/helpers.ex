@@ -7,6 +7,7 @@ defmodule SvarmWeb.BoardLive.Helpers do
   """
 
   alias Svarm.{AgentRegistry, Board}
+  alias Svarm.Usage.Receipt
 
   def panel_identity(%{meta: meta, task: task, agents: agents}) when is_map(task) do
     if map_size(meta) > 0 do
@@ -192,15 +193,11 @@ defmodule SvarmWeb.BoardLive.Helpers do
   def orchestrator_idle?(_), do: true
 
   def session_cost_line(o) when is_map(o) do
-    case Map.get(o, :session_cost) do
-      %{record_count: n, total_cost_usd: usd, estimated: true} when is_integer(n) and n > 0 ->
-        "$#{usd} est."
+    live = if Map.get(o, :running, 0) > 0, do: :running, else: :settled
 
-      %{record_count: n, total_cost_usd: usd} when is_integer(n) and n > 0 ->
-        "$#{usd}"
-
-      _ ->
-        nil
+    case Receipt.label(Map.get(o, :session_cost), live, :badge) do
+      %{show?: true, text: text} -> text
+      _ -> nil
     end
   end
 

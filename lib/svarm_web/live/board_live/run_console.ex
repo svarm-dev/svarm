@@ -5,6 +5,7 @@ defmodule SvarmWeb.BoardLive.RunConsole do
   use SvarmWeb, :html
 
   alias Svarm.{Approval, Board}
+  alias Svarm.Usage.Receipt
 
   import SvarmWeb.BoardLive.Helpers
   import SvarmWeb.BoardLive.Shared
@@ -51,7 +52,7 @@ defmodule SvarmWeb.BoardLive.RunConsole do
               </span>
             </div>
             <div class="flex items-center gap-1.5 shrink-0">
-              <.console_cost cost={@cost} />
+              <.console_cost cost={@cost} running?={@running?} />
               <.run_status_badge
                 task={@task}
                 running_started={@running_started}
@@ -270,6 +271,9 @@ defmodule SvarmWeb.BoardLive.RunConsole do
   attr :evidence, :map, required: true
 
   defp review_evidence_pack(assigns) do
+    assigns =
+      assign(assigns, :cost_label, Receipt.label(assigns.evidence.cost, :settled, :detail))
+
     ~H"""
     <div
       class="mt-2 rounded border border-base-300/70 bg-base-100/50 px-2.5 py-2"
@@ -324,12 +328,8 @@ defmodule SvarmWeb.BoardLive.RunConsole do
         </dd>
 
         <dt class="opacity-60">Cost</dt>
-        <dd class="font-mono">
-          <%= if @evidence.cost do %>
-            {if @evidence.cost.estimated, do: "est. ", else: ""}${@evidence.cost.total_cost_usd}
-          <% else %>
-            <span class="opacity-50">no usage yet</span>
-          <% end %>
+        <dd class="font-mono" title={@cost_label.title}>
+          {@cost_label.text}
         </dd>
 
         <dt class="opacity-60">CI</dt>
@@ -372,19 +372,16 @@ defmodule SvarmWeb.BoardLive.RunConsole do
   end
 
   attr :cost, :map, default: nil
+  attr :running?, :boolean, default: false
 
   defp console_cost(assigns) do
+    live = if assigns.running?, do: :running, else: :settled
+    assigns = assign(assigns, :label, Receipt.label(assigns.cost, live, :detail))
+
     ~H"""
-    <%= if @cost && @cost.record_count > 0 do %>
-      <span class="inline-flex items-center gap-1 text-[11px] font-mono">
-        <span class="badge badge-ghost badge-sm font-mono gap-0.5">
-          ${@cost.total_cost_usd}
-        </span>
-        <span :if={@cost.estimated} class="text-[10px] opacity-60">est.</span>
-      </span>
-    <% else %>
-      <span class="text-[11px] opacity-50">no usage yet</span>
-    <% end %>
+    <span class="inline-flex items-center gap-1 text-[11px] font-mono" title={@label.title}>
+      <span class="badge badge-ghost badge-sm font-mono gap-0.5">{@label.text}</span>
+    </span>
     """
   end
 
