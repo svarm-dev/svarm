@@ -7,6 +7,7 @@ defmodule Svarm.Dashboard do
   differently: per-agent stats, task distribution, and rolling-window cost.
   """
   alias Svarm.{AgentRegistry, AgentRunner, Board, Orchestrator, Usage}
+  alias Svarm.Usage.Receipt
 
   @doc """
   Full dashboard snapshot. One call gets everything the LiveView needs.
@@ -91,12 +92,13 @@ defmodule Svarm.Dashboard do
       |> Usage.by_outcome()
 
     by_task = Map.get(outcome, :by_task, %{})
+    running_ids = Keyword.get(opts, :running_ids, [])
 
     %{
       window: window,
       since: since,
-      overall: metrics_from_task_summaries(Map.values(by_task)),
-      by_agent: agent_roi_rows(tasks, agents, by_task)
+      overall: metrics_from_task_summaries(by_task, running_ids),
+      by_agent: agent_roi_rows(tasks, agents, by_task, running_ids)
     }
   end
 
@@ -109,7 +111,7 @@ defmodule Svarm.Dashboard do
 
   defp window_since(_), do: nil
 
-  defp agent_roi_rows(tasks, agents, by_task) do
+  defp agent_roi_rows(tasks, agents, by_task, running_ids) do
     tasks
     |> Enum.group_by(&AgentRegistry.normalize_assignee(&1.assignee))
     |> Enum.map(fn {agent, agent_tasks} ->
@@ -119,43 +121,98 @@ defmodule Svarm.Dashboard do
       %{
         assignee: agent,
         display_name: identity.display_name,
-        metrics: by_task |> Map.take(ids) |> Map.values() |> metrics_from_task_summaries()
+        metrics: metrics_from_task_summaries(Map.take(by_task, ids), running_ids)
       }
     end)
     |> Enum.reject(&(&1.metrics.tasks_with_spend == 0))
     |> Enum.sort_by(& &1.display_name)
   end
 
-  defp metrics_from_task_summaries(summaries) do
-    n = length(summaries)
+  defp metrics_from_task_summaries(by_task, running_ids) when is_map(by_task) do
+    running = MapSet.new(running_ids)
+    n = map_size(by_task)
 
-    {merged_n, in_review_n, other_n, merged_cost, estimated} =
-      Enum.reduce(summaries, {0, 0, 0, 0.0, false}, fn summary,
-                                                       {merged, review, other, cost, est} ->
-        est = est or Map.get(summary, :estimated) == true
-        usd = summary_usd(summary)
+    acc = %{
+      merged: 0,
+      review: 0,
+      other: 0,
+      merged_rows: [],
+      partial: 0,
+      runs: 0,
+      estimated: false
+    }
 
-        case Map.get(summary, :outcome, :other) do
-          :merged -> {merged + 1, review, other, cost + usd, est}
-          :in_review -> {merged, review + 1, other, cost, est}
-          _ -> {merged, review, other + 1, cost, est}
-        end
+    tallies =
+      Enum.reduce(by_task, acc, fn {task_id, summary}, acc ->
+        tally_task_summary(acc, task_id, summary, MapSet.member?(running, task_id))
       end)
 
+    merged_cost = Receipt.combine(Enum.map(tallies.merged_rows, &elem(&1, 1)))
+
+    merged_liveness =
+      if Enum.any?(tallies.merged_rows, fn {id, _} -> MapSet.member?(running, id) end),
+        do: :running,
+        else: :settled
+
     %{
-      merge_rate: if(n > 0, do: Float.round(merged_n / n, 4), else: nil),
+      merge_rate: if(n > 0, do: Float.round(tallies.merged / n, 4), else: nil),
       cost_per_merged_usd:
-        if(merged_n > 0, do: Float.round(merged_cost / merged_n, 4), else: nil),
-      merged_tasks: merged_n,
-      in_review_tasks: in_review_n,
-      other_tasks: other_n,
+        if(tallies.merged > 0,
+          do: Float.round(merged_cost.total_cost_usd / tallies.merged, 4),
+          else: nil
+        ),
+      merged_tasks: tallies.merged,
+      in_review_tasks: tallies.review,
+      other_tasks: tallies.other,
       tasks_with_spend: n,
-      estimated: estimated
+      estimated: tallies.estimated,
+      merged_cost: merged_cost,
+      merged_liveness: merged_liveness,
+      partial_tasks: tallies.partial,
+      unmeasured_runs: tallies.runs,
+      coverage_note: Receipt.coverage_note(tallies.partial, n, tallies.runs)
     }
   end
 
-  defp summary_usd(%{total_cost_usd: n}) when is_number(n), do: n
-  defp summary_usd(_), do: 0.0
+  defp tally_task_summary(acc, task_id, summary, running?) do
+    liveness = if running?, do: :running, else: :settled
+    partial? = Receipt.classify(summary, liveness).state == :partial
+
+    acc = %{
+      acc
+      | partial: acc.partial + if(partial?, do: 1, else: 0),
+        runs: acc.runs + unmeasured_run_count(summary, running?),
+        estimated: acc.estimated or Map.get(summary, :estimated) == true
+    }
+
+    case Map.get(summary, :outcome, :other) do
+      :merged ->
+        %{acc | merged: acc.merged + 1, merged_rows: [{task_id, summary} | acc.merged_rows]}
+
+      :in_review ->
+        %{acc | review: acc.review + 1}
+
+      _ ->
+        %{acc | other: acc.other + 1}
+    end
+  end
+
+  defp unmeasured_run_count(summary, running?) do
+    rows = count(summary, :unmetered_rows) + count(summary, :unpriced_rows)
+
+    cond do
+      rows > 0 -> rows
+      running? -> 1
+      true -> 0
+    end
+  end
+
+  defp count(map, key) do
+    case Map.get(map, key) do
+      n when is_integer(n) and n >= 0 -> n
+      _ -> 0
+    end
+  end
 
   @window_seconds 86_400
 
@@ -189,7 +246,7 @@ defmodule Svarm.Dashboard do
         Enum.filter(tasks, &(AgentRegistry.normalize_assignee(&1.assignee) == key))
 
       tallies = tally_assigned(assigned_tasks, running_map)
-      {window_usd, window_estimated, window_records} = window_cost(assigned_tasks, cost_by_task)
+      window = window_cost(assigned_tasks, cost_by_task)
 
       %{
         key: key,
@@ -206,9 +263,10 @@ defmodule Svarm.Dashboard do
         running_task_id: tallies.running_task && tallies.running_task.id,
         running_task_title: tallies.running_task && tallies.running_task.title,
         running_started_ms: tallies.running_started_ms,
-        window_cost_usd: window_usd,
-        window_cost_estimated: window_estimated,
-        window_record_count: window_records,
+        window_cost: window,
+        window_cost_usd: Float.round(window.total_cost_usd, 2),
+        window_cost_estimated: window.estimated,
+        window_record_count: window.record_count,
         reliability: reliability_rate(assigned_tasks)
       }
     end)
@@ -246,16 +304,14 @@ defmodule Svarm.Dashboard do
   defp maybe_set_running(acc, _task, _running_map), do: acc
 
   defp window_cost(assigned_tasks, cost_by_task) do
-    Enum.reduce(assigned_tasks, {0.0, false, 0}, fn task, {usd, estimated, count} ->
+    assigned_tasks
+    |> Enum.flat_map(fn task ->
       case Map.get(cost_by_task, task.id) do
-        %{total_cost_usd: cost, estimated: est, record_count: n} ->
-          {usd + cost, estimated or est == true, count + (n || 0)}
-
-        _ ->
-          {usd, estimated, count}
+        %{} = summary -> [summary]
+        _ -> []
       end
     end)
-    |> then(fn {usd, estimated, count} -> {Float.round(usd, 2), estimated, count} end)
+    |> Receipt.combine()
   end
 
   # attempts is a retry counter (0 until the first retry). All zeros → n/a.
@@ -296,6 +352,7 @@ defmodule Svarm.Dashboard do
         status: task.status,
         assignee: task.assignee,
         display_name: identity.display_name,
+        cost: cost,
         cost_usd: cost && cost.total_cost_usd,
         estimated: cost && cost.estimated,
         created_at: task.created_at

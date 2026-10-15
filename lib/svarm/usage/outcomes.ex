@@ -21,7 +21,7 @@ defmodule Svarm.Usage.Outcomes do
 
   alias Svarm.{Coordination, Settings, Workflow}
   alias Svarm.Tracker.GitHub.HTTP
-  alias Svarm.Usage.{Ledger, Rates}
+  alias Svarm.Usage.{Ledger, Query, Receipt}
   alias Svarm.Workflow.Config, as: WorkflowConfig
 
   @outcomes [:merged, :in_review, :other]
@@ -224,25 +224,13 @@ defmodule Svarm.Usage.Outcomes do
   end
 
   defp empty_summary do
-    %{
-      total_cost_usd: 0.0,
-      estimated: false,
-      record_count: 0,
-      task_count: 0,
-      prompt_tokens: 0,
-      completion_tokens: 0
-    }
+    Map.put(Receipt.empty_summary(), :task_count, 0)
   end
 
   defp merge_summaries(a, b) do
-    %{
-      total_cost_usd: Float.round(num(a, :total_cost_usd) + num(b, :total_cost_usd), 4),
-      estimated: Enum.any?([a, b], &(&1[:estimated] == true)),
-      record_count: num(a, :record_count) + num(b, :record_count),
-      task_count: num(a, :task_count) + 1,
-      prompt_tokens: num(a, :prompt_tokens) + num(b, :prompt_tokens),
-      completion_tokens: num(a, :completion_tokens) + num(b, :completion_tokens)
-    }
+    a
+    |> then(&Receipt.combine([&1, b]))
+    |> Map.put(:task_count, num(a, :task_count) + 1)
   end
 
   defp num(map, key) do
@@ -252,43 +240,5 @@ defmodule Svarm.Usage.Outcomes do
     end
   end
 
-  defp summarize_task_groups(groups) do
-    {total, count, estimated, prompt, completion} =
-      Enum.reduce(groups, {0.0, 0, false, 0, 0}, fn group,
-                                                    {total_acc, count_acc, est_acc, p_acc, c_acc} ->
-        cost = group_cost_usd(group)
-
-        {
-          total_acc + cost,
-          count_acc + (group.record_count || 0),
-          est_acc or unbilled?(group),
-          p_acc + (group.prompt_tokens || 0),
-          c_acc + (group.completion_tokens || 0)
-        }
-      end)
-
-    %{
-      total_cost_usd: Float.round(total, 4),
-      estimated: estimated,
-      record_count: count,
-      prompt_tokens: prompt,
-      completion_tokens: completion
-    }
-  end
-
-  defp group_cost_usd(group) do
-    billed = (group.billed_usd || 0) * 1.0
-
-    case Rates.cost_usd(
-           group.provider,
-           group.model_id,
-           group.rate_prompt || 0,
-           group.rate_completion || 0
-         ) do
-      {:ok, rate} -> billed + rate
-      _ -> billed
-    end
-  end
-
-  defp unbilled?(group), do: (group.unbilled_count || 0) > 0
+  defp summarize_task_groups(groups), do: Query.summarize_groups(groups)
 end

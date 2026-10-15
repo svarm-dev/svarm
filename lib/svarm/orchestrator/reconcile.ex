@@ -12,6 +12,7 @@ defmodule Svarm.Orchestrator.Reconcile do
 
   alias Svarm.AgentRunner
   alias Svarm.Orchestrator.{Issues, RunExit}
+  alias Svarm.Usage
 
   @doc false
   def run(state) do
@@ -51,6 +52,7 @@ defmodule Svarm.Orchestrator.Reconcile do
       if now - e.started_mono_ms > state.stall_timeout_ms do
         Logger.warning("stall: killing worker for #{task_id}")
         kill_worker(e.pid, :stall)
+        Usage.ensure_attempt_row(e)
 
         acc = %{
           acc
@@ -115,6 +117,8 @@ defmodule Svarm.Orchestrator.Reconcile do
         state
 
       {entry, running} ->
+        # :kill skips the runner after-block, and DOWN will not see this entry.
+        Usage.ensure_attempt_row(entry)
         kill_worker(entry.pid, reason)
         %{state | running: running}
     end

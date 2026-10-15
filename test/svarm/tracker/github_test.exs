@@ -66,7 +66,7 @@ defmodule Svarm.Tracker.GitHubTest do
       }
 
       comment = GitHub.build_comment(summary)
-      assert comment =~ "$0.05 est."
+      assert comment =~ "est. $0.05"
     end
 
     test "renders failure comment with exit code" do
@@ -148,7 +148,7 @@ defmodule Svarm.Tracker.GitHubTest do
       refute header =~ ~r/· \d+[ms]/
     end
 
-    test "omits cost line when no cost records" do
+    test "empty cost says no usage recorded" do
       summary = %{
         run_id: "run_nc",
         task_id: "sva_nc",
@@ -166,7 +166,36 @@ defmodule Svarm.Tracker.GitHubTest do
       }
 
       comment = GitHub.build_comment(summary)
+      assert comment =~ "no usage recorded"
       refute comment =~ "$"
+    end
+
+    test "gap row prints a lower bound and not a bare zero" do
+      summary = %{
+        run_id: "run_gap",
+        task_id: "sva_gap",
+        task: %{title: "Stall", source_id: "9"},
+        result: {:error, :stall},
+        duration_ms: 1_000,
+        agent_name: "Pi",
+        agent_role: nil,
+        harness: "Pi",
+        model: "gpt-4o",
+        total_tokens: 0,
+        cost: %{
+          total_cost_usd: 0.0,
+          record_count: 1,
+          estimated: true,
+          unmetered_rows: 1,
+          unpriced_rows: 0
+        },
+        branch: nil,
+        exit_code: 1
+      }
+
+      comment = GitHub.build_comment(summary)
+      assert comment =~ "≥ $0.00 · adapter does not report usage"
+      refute comment =~ " — $0"
     end
 
     test "omits board/run-log URL by default even when console_base_url is set" do

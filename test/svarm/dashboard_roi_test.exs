@@ -140,6 +140,14 @@ defmodule Svarm.DashboardRoiTest do
 
     assert mixed.overall.estimated == true
     assert mixed.overall.tasks_with_spend == 2
+
+    running = Dashboard.roi_for_window("session", [billed, unbilled], running_ids: [unbilled.id])
+    assert running.overall.partial_tasks == 1
+    assert running.overall.unmeasured_runs == 1
+
+    assert running.overall.coverage_note ==
+             "1/2 tasks with ledger activity; denominator includes 1 task with 1 unmeasured run"
+
     by_agent = Map.new(mixed.by_agent, &{&1.assignee, &1})
     assert by_agent["demo"].metrics.estimated == false
     assert by_agent["demo_code"].metrics.estimated == true

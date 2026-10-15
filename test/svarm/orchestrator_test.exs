@@ -1,7 +1,7 @@
 defmodule Svarm.OrchestratorTest do
   use ExUnit.Case, async: false
 
-  alias Svarm.{Approval, Events, Issue, KanbanBridge, Orchestrator, Workspace}
+  alias Svarm.{Approval, Events, Issue, KanbanBridge, Orchestrator, Usage, Workspace}
   alias Svarm.Runner.Cli
   alias Svarm.Test.{OsPid, Wait}
 
@@ -1831,6 +1831,7 @@ defmodule Svarm.OrchestratorTest do
             task: task,
             pid: worker,
             mref: make_ref(),
+            run_id: "run_gone_#{task.id}",
             started_mono_ms: System.monotonic_time(:millisecond),
             started_at: System.system_time(:second)
           })
@@ -1852,6 +1853,7 @@ defmodule Svarm.OrchestratorTest do
         refute Map.has_key?(state.running, task.id)
         refute MapSet.member?(state.claimed, task.id)
         assert wait_until(fn -> not Process.alive?(worker) end)
+        assert [%{prompt_tokens: nil, provider_cost_usd: nil}] = Usage.for_task(task.id)
       after
         if Process.alive?(worker), do: Process.exit(worker, :kill)
         :sys.replace_state(Orchestrator, fn _ -> original end)

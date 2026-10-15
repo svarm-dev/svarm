@@ -3,6 +3,7 @@ defmodule Svarm.Board do
   Read API for the kanban dashboard. LiveViews call here — not the tracker directly.
   """
   alias Svarm.{Orchestrator, Settings, Tracker, Workflow}
+  alias Svarm.Usage.Receipt
   alias Svarm.Workflow.Config, as: WorkflowConfig
 
   @default_columns [
@@ -581,7 +582,7 @@ defmodule Svarm.Board do
   - `:pr_url` — string or nil
   - `:attempts` — non-neg integer or nil
   - `:agent` / `:model` — strings or nil
-  - `:cost` — `%{total_cost_usd, estimated, record_count}` or nil
+  - `:cost` — usage summary, including coverage counters, or nil
   - `:age` — `%{seconds, label, at}` or nil (`label` is `"since last usage"` or
     `"since created"`)
   - `:ci` — `%{state, summary, checked_at}` where `state` is
@@ -631,9 +632,13 @@ defmodule Svarm.Board do
 
   defp checklist_item_state("ci", _), do: :na
 
-  defp checklist_item_state("cost", %{cost: %{record_count: n}})
-       when is_integer(n) and n > 0,
-       do: :pass
+  defp checklist_item_state("cost", %{cost: cost}) when is_map(cost) do
+    case Receipt.classify(cost, :settled).state do
+      state when state in [:measured, :estimated] -> :pass
+      :empty -> :na
+      :partial -> :unknown
+    end
+  end
 
   defp checklist_item_state("cost", _), do: :na
 
@@ -776,12 +781,8 @@ defmodule Svarm.Board do
   end
 
   defp evidence_cost(%{record_count: n, total_cost_usd: usd} = cost)
-       when is_integer(n) and n > 0 and is_number(usd) do
-    %{
-      total_cost_usd: usd,
-      estimated: Map.get(cost, :estimated, true),
-      record_count: n
-    }
+       when is_integer(n) and is_number(usd) do
+    cost
   end
 
   defp evidence_cost(_), do: nil

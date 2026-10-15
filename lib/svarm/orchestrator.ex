@@ -47,6 +47,7 @@ defmodule Svarm.Orchestrator do
     ReviewResume,
     Settings,
     Tracker,
+    Usage,
     Workflow,
     Workspace
   }
@@ -302,6 +303,7 @@ defmodule Svarm.Orchestrator do
           |> Map.update!(:last_run_entries, &Map.put(&1, task_id, entry))
 
         Logger.warning("worker crashed for #{task_id}: #{inspect(reason)}")
+        Usage.ensure_attempt_row(entry)
         state = RunExit.schedule_retry(state, entry.task, {:crash, reason})
         {:noreply, state}
       end
@@ -406,6 +408,7 @@ defmodule Svarm.Orchestrator do
         # checking after kill_os_tree would treat a live Abort as a late finish.
         late? = already_terminal?(state, task_id)
         await_worker_exit(entry.pid)
+        Usage.ensure_attempt_row(entry)
 
         if late? do
           state = finish_late_abort(state, entry, task_id)

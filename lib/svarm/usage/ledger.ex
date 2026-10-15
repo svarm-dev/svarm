@@ -174,39 +174,19 @@ defmodule Svarm.Usage.Ledger do
       select: %{
         source: r.source,
         provider: r.provider,
-        model_id: r.model_id,
-        billed_usd:
-          sum(
-            fragment(
-              "CASE WHEN ? IS NOT NULL THEN ? ELSE 0.0 END",
-              r.provider_cost_usd,
-              r.provider_cost_usd
-            )
-          ),
-        rate_prompt:
-          sum(
-            fragment(
-              "CASE WHEN ? IS NULL THEN COALESCE(?, 0) ELSE 0 END",
-              r.provider_cost_usd,
-              r.prompt_tokens
-            )
-          ),
-        rate_completion:
-          sum(
-            fragment(
-              "CASE WHEN ? IS NULL THEN COALESCE(?, 0) ELSE 0 END",
-              r.provider_cost_usd,
-              r.completion_tokens
-            )
-          ),
-        prompt_tokens: sum(fragment("COALESCE(?, 0)", r.prompt_tokens)),
-        completion_tokens: sum(fragment("COALESCE(?, 0)", r.completion_tokens)),
-        record_count: count(r.id),
-        unbilled_count:
-          sum(fragment("CASE WHEN ? IS NULL THEN 1 ELSE 0 END", r.provider_cost_usd))
+        model_id: r.model_id
       }
     )
+    |> with_cost_aggregates()
     |> Repo.all()
+  end
+
+  @doc """
+  How many ledger rows share `run_id`. Zero means the attempt left no usage row.
+  """
+  def count_for_run(run_id) when is_binary(run_id) do
+    from(r in Record, where: r.run_id == ^run_id, select: count(r.id))
+    |> Repo.one()
   end
 
   @doc """
@@ -233,49 +213,22 @@ defmodule Svarm.Usage.Ledger do
   defp cost_groups_query(queryable) do
     from(r in queryable,
       group_by: [r.provider, r.model_id],
-      select: %{
-        provider: r.provider,
-        model_id: r.model_id,
-        billed_usd:
-          sum(
-            fragment(
-              "CASE WHEN ? IS NOT NULL THEN ? ELSE 0.0 END",
-              r.provider_cost_usd,
-              r.provider_cost_usd
-            )
-          ),
-        rate_prompt:
-          sum(
-            fragment(
-              "CASE WHEN ? IS NULL THEN COALESCE(?, 0) ELSE 0 END",
-              r.provider_cost_usd,
-              r.prompt_tokens
-            )
-          ),
-        rate_completion:
-          sum(
-            fragment(
-              "CASE WHEN ? IS NULL THEN COALESCE(?, 0) ELSE 0 END",
-              r.provider_cost_usd,
-              r.completion_tokens
-            )
-          ),
-        prompt_tokens: sum(fragment("COALESCE(?, 0)", r.prompt_tokens)),
-        completion_tokens: sum(fragment("COALESCE(?, 0)", r.completion_tokens)),
-        record_count: count(r.id),
-        unbilled_count:
-          sum(fragment("CASE WHEN ? IS NULL THEN 1 ELSE 0 END", r.provider_cost_usd))
-      }
+      select: %{provider: r.provider, model_id: r.model_id}
     )
+    |> with_cost_aggregates()
   end
 
   defp task_cost_groups_query(queryable) do
     from(r in queryable,
       group_by: [r.task_id, r.provider, r.model_id],
-      select: %{
-        task_id: r.task_id,
-        provider: r.provider,
-        model_id: r.model_id,
+      select: %{task_id: r.task_id, provider: r.provider, model_id: r.model_id}
+    )
+    |> with_cost_aggregates()
+  end
+
+  defp with_cost_aggregates(query) do
+    from(r in query,
+      select_merge: %{
         billed_usd:
           sum(
             fragment(
@@ -304,7 +257,16 @@ defmodule Svarm.Usage.Ledger do
         completion_tokens: sum(fragment("COALESCE(?, 0)", r.completion_tokens)),
         record_count: count(r.id),
         unbilled_count:
-          sum(fragment("CASE WHEN ? IS NULL THEN 1 ELSE 0 END", r.provider_cost_usd))
+          sum(fragment("CASE WHEN ? IS NULL THEN 1 ELSE 0 END", r.provider_cost_usd)),
+        unmetered_count:
+          sum(
+            fragment(
+              "CASE WHEN ? IS NULL AND COALESCE(?, 0) + COALESCE(?, 0) = 0 THEN 1 ELSE 0 END",
+              r.provider_cost_usd,
+              r.prompt_tokens,
+              r.completion_tokens
+            )
+          )
       }
     )
   end

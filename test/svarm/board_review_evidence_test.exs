@@ -186,6 +186,19 @@ defmodule Svarm.BoardReviewEvidenceTest do
       })
 
     assert Enum.map(filled, & &1.state) == [:pass, :fail, :pass, :unknown]
+
+    partial =
+      Board.checklist_states(items, %{
+        cost: %{
+          record_count: 1,
+          total_cost_usd: 0.0,
+          estimated: true,
+          unmetered_rows: 1,
+          unpriced_rows: 0
+        }
+      })
+
+    assert Enum.find(partial, &(&1.id == "cost")).state == :unknown
   end
 
   test "review_evidence checklist follows WORKFLOW store" do

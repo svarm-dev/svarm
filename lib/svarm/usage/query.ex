@@ -11,6 +11,9 @@ defmodule Svarm.Usage.Query do
   common path does not materialize every ledger row in Elixir. Run-detail
   `{source, provider, model_id}` breakdown is a separate grouped query, not a
   full row load.
+
+  Summaries also carry `unmetered_rows` and `unpriced_rows`. Those counters
+  do not change `total_cost_usd`.
   """
   alias Svarm.Usage.{Ledger, Rates}
 
@@ -24,22 +27,12 @@ defmodule Svarm.Usage.Query do
   """
   def task_cost(task_id) do
     groups = Ledger.cost_groups_for_tasks([task_id])
-    totals = summarize_task_groups(groups)
+    totals = summarize_groups(groups)
 
-    {prompt, completion} =
-      Enum.reduce(groups, {0, 0}, fn group, {p_acc, c_acc} ->
-        {p_acc + (group.prompt_tokens || 0), c_acc + (group.completion_tokens || 0)}
-      end)
-
-    %{
+    Map.merge(totals, %{
       task_id: task_id,
-      total_cost_usd: totals.total_cost_usd,
-      estimated: totals.estimated,
-      record_count: totals.record_count,
-      prompt_tokens: prompt,
-      completion_tokens: completion,
       breakdown: breakdown_for_task(task_id, totals.record_count)
-    }
+    })
   end
 
   @doc """
@@ -68,7 +61,7 @@ defmodule Svarm.Usage.Query do
     |> Ledger.cost_groups_for_tasks()
     |> Enum.group_by(& &1.task_id)
     |> Map.new(fn {task_id, groups} ->
-      {task_id, summarize_task_groups(groups)}
+      {task_id, summarize_groups(groups)}
     end)
   end
 
@@ -105,9 +98,10 @@ defmodule Svarm.Usage.Query do
   Useful for the orchestrator status bar and dashboard cost card.
 
   Uses SQL aggregates (group by provider/model), not a full-table load.
+  An empty ledger returns a zero summary, including the coverage counters.
   """
   def session_cost_summary do
-    Ledger.session_cost_groups() |> summarize_session_groups()
+    Ledger.session_cost_groups() |> summarize_groups()
   end
 
   @doc """
@@ -115,7 +109,7 @@ defmodule Svarm.Usage.Query do
   given UTC calendar day. Rows with nil `inserted_at` are excluded.
   """
   def utc_day_cost_summary(%Date{} = day) do
-    Ledger.cost_groups_for_utc_day(day) |> summarize_session_groups()
+    Ledger.cost_groups_for_utc_day(day) |> summarize_groups()
   end
 
   @doc """
@@ -123,7 +117,7 @@ defmodule Svarm.Usage.Query do
   Rows with nil `inserted_at` are excluded.
   """
   def cost_since_inserted_at(%DateTime{} = since) do
-    Ledger.cost_groups_since_inserted_at(since) |> summarize_session_groups()
+    Ledger.cost_groups_since_inserted_at(since) |> summarize_groups()
   end
 
   @doc """
@@ -137,7 +131,7 @@ defmodule Svarm.Usage.Query do
     Ledger.task_cost_groups_since_inserted_at(since)
     |> Enum.group_by(& &1.task_id)
     |> Map.new(fn {task_id, groups} ->
-      {task_id, summarize_task_groups(groups)}
+      {task_id, summarize_groups(groups)}
     end)
   end
 
@@ -186,21 +180,39 @@ defmodule Svarm.Usage.Query do
     }
   end
 
-  # --- private: SQL group → summary maps ---
+  @doc """
+  Fold SQL cost groups into one summary.
 
-  defp summarize_task_groups(groups) do
-    {total, count, estimated} =
-      Enum.reduce(groups, {0.0, 0, false}, fn group, {total_acc, count_acc, est_acc} ->
-        cost = group_cost_usd(group)
-        count = count_acc + (group.record_count || 0)
-        estimated = est_acc or unbilled?(group)
-        {total_acc + cost, count, estimated}
-      end)
+  `total_cost_usd` is billed dollars plus the rate table. Unknown models add
+  `0.0`. `unmetered_rows` counts null-bill rows with zero tokens.
+  `unpriced_rows` counts unbilled token rows whose `Rates.cost_usd/4` returns
+  `{:error, :unknown_model}`.
+  """
+  def summarize_groups(groups) when is_list(groups) do
+    groups
+    |> Enum.reduce(empty_summary(), fn group, acc ->
+      %{
+        total_cost_usd: acc.total_cost_usd + group_cost_usd(group),
+        estimated: acc.estimated or unbilled?(group),
+        record_count: acc.record_count + (group.record_count || 0),
+        unmetered_rows: acc.unmetered_rows + (group.unmetered_count || 0),
+        unpriced_rows: acc.unpriced_rows + unpriced_count(group),
+        prompt_tokens: acc.prompt_tokens + (group.prompt_tokens || 0),
+        completion_tokens: acc.completion_tokens + (group.completion_tokens || 0)
+      }
+    end)
+    |> Map.update!(:total_cost_usd, &Float.round(&1, 4))
+  end
 
+  defp empty_summary do
     %{
-      total_cost_usd: Float.round(total, 4),
-      estimated: estimated,
-      record_count: count
+      total_cost_usd: 0.0,
+      estimated: false,
+      record_count: 0,
+      unmetered_rows: 0,
+      unpriced_rows: 0,
+      prompt_tokens: 0,
+      completion_tokens: 0
     }
   end
 
@@ -212,30 +224,6 @@ defmodule Svarm.Usage.Query do
     |> Map.new(fn group ->
       {{group.source, group.provider, group.model_id}, group_cost_usd(group)}
     end)
-  end
-
-  defp summarize_session_groups(groups) do
-    {total, prompt, completion, count, estimated} =
-      Enum.reduce(groups, {0.0, 0, 0, 0, false}, fn group,
-                                                    {total_acc, p_acc, c_acc, n_acc, est_acc} ->
-        cost = group_cost_usd(group)
-
-        {
-          total_acc + cost,
-          p_acc + (group.prompt_tokens || 0),
-          c_acc + (group.completion_tokens || 0),
-          n_acc + (group.record_count || 0),
-          est_acc or unbilled?(group)
-        }
-      end)
-
-    %{
-      total_cost_usd: Float.round(total, 4),
-      record_count: count,
-      prompt_tokens: prompt,
-      completion_tokens: completion,
-      estimated: estimated
-    }
   end
 
   defp group_cost_usd(group) do
@@ -261,4 +249,28 @@ defmodule Svarm.Usage.Query do
 
   # Any row without provider-reported USD is estimated (rate table or unknown).
   defp unbilled?(group), do: (group.unbilled_count || 0) > 0
+
+  # A known model, including a zero rate, is not unpriced. Zero unbilled tokens
+  # are unmetered, not an unknown price.
+  defp unpriced_count(group) do
+    tokens = (group.rate_prompt || 0) + (group.rate_completion || 0)
+
+    if tokens > 0 and unknown_model?(group) do
+      max((group.unbilled_count || 0) - (group.unmetered_count || 0), 0)
+    else
+      0
+    end
+  end
+
+  defp unknown_model?(group) do
+    match?(
+      {:error, :unknown_model},
+      Rates.cost_usd(
+        group.provider,
+        group.model_id,
+        group.rate_prompt || 0,
+        group.rate_completion || 0
+      )
+    )
+  end
 end
