@@ -125,9 +125,9 @@ defmodule Svarm.Usage.Receipt do
   @doc """
   ROI denominator note. Nil when `partial_tasks` is 0.
 
-  `coverage_note(2, 3, 1)` is
-  `2/3 tasks with ledger activity; denominator includes 1 task with 1 unmeasured run`.
-  The includes-clause counts are `unmeasured_runs`.
+  `coverage_note(1, 3, 2)` is
+  `1/3 tasks with ledger activity; denominator includes 1 task with 2 unmeasured runs`.
+  The task count is `partial_tasks`. The run count is `unmeasured_runs`.
   """
   @spec coverage_note(non_neg_integer(), non_neg_integer(), non_neg_integer()) ::
           String.t() | nil
@@ -136,7 +136,7 @@ defmodule Svarm.Usage.Receipt do
              is_integer(tasks_with_activity) and tasks_with_activity >= 0 and
              is_integer(unmeasured_runs) and unmeasured_runs >= 0 do
     fraction = "#{partial_tasks}/#{tasks_with_activity} tasks with ledger activity"
-    included = phrase(unmeasured_runs, "task", "tasks")
+    included = phrase(partial_tasks, "task", "tasks")
     runs = phrase(unmeasured_runs, "unmeasured run", "unmeasured runs")
     fraction <> "; denominator includes " <> included <> " with " <> runs
   end

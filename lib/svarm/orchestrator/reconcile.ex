@@ -117,6 +117,8 @@ defmodule Svarm.Orchestrator.Reconcile do
         state
 
       {entry, running} ->
+        # :kill skips the runner after-block, and DOWN will not see this entry.
+        Usage.ensure_attempt_row(entry)
         kill_worker(entry.pid, reason)
         %{state | running: running}
     end

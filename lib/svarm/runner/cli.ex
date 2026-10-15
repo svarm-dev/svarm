@@ -103,13 +103,13 @@ defmodule Svarm.Runner.Cli do
       end
 
     Svarm.Runner.write_run_log(log_path, out)
+    # The board snapshots cost on run_finished and does not refetch a cached key.
+    record_usage(task, assignee, agent_config, opts, out)
     Events.broadcast_run_finished(task.id, exit_code)
 
     # Success → review (human PR gate). Agents never mark done/merge.
     status = if exit_code == 0, do: "review", else: "failed"
     tracker.update_status(tracker_config, task.id, status)
-
-    record_usage(task, assignee, agent_config, opts, out)
 
     if exit_code == 0 do
       :ok

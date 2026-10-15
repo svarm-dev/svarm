@@ -141,11 +141,11 @@ defmodule Svarm.Usage.ReceiptTest do
   test "coverage note names unmeasured runs in the denominator" do
     assert Receipt.coverage_note(0, 3, 1) == nil
 
-    assert Receipt.coverage_note(2, 3, 1) ==
-             "2/3 tasks with ledger activity; denominator includes 1 task with 1 unmeasured run"
+    assert Receipt.coverage_note(1, 3, 2) ==
+             "1/3 tasks with ledger activity; denominator includes 1 task with 2 unmeasured runs"
 
-    assert Receipt.coverage_note(2, 3, 2) ==
-             "2/3 tasks with ledger activity; denominator includes 2 tasks with 2 unmeasured runs"
+    assert Receipt.coverage_note(2, 3, 1) ==
+             "2/3 tasks with ledger activity; denominator includes 2 tasks with 1 unmeasured run"
   end
 
   defp summary(usd, opts) do

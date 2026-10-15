@@ -199,7 +199,12 @@ defmodule Svarm.Dashboard do
 
   defp unmeasured_run_count(summary, running?) do
     rows = count(summary, :unmetered_rows) + count(summary, :unpriced_rows)
-    if running?, do: rows + 1, else: rows
+
+    cond do
+      rows > 0 -> rows
+      running? -> 1
+      true -> 0
+    end
   end
 
   defp count(map, key) do

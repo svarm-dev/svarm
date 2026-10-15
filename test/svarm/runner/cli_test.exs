@@ -311,6 +311,7 @@ defmodule Svarm.Runner.CliTest do
     assert last_status(statuses, id) == "review"
     assert_agent_line(id, "grok-build: headless ok")
 
+    assert_receive {:run_finished, ^id, 0}, 2_000
     [rec] = Usage.for_task(id)
     assert rec.provider == "xai"
     assert rec.model_id == "grok-build"
