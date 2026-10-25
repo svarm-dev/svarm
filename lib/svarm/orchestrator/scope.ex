@@ -28,12 +28,17 @@ defmodule Svarm.Orchestrator.Scope do
 
   @doc false
   def run_key(state, task) do
-    if catalog?(state) do
-      {board_id(task), external_id(task)}
-    else
-      id(task)
+    case legacy_running_key(state, task) do
+      key when is_binary(key) -> key
+      _ -> scoped_run_key(state, task)
     end
   end
+
+  defp scoped_run_key(%{tracker_config: %{board_id: board}}, task) when is_binary(board) do
+    if Map.get(task, :board_id) == board, do: {board, external_id(task)}, else: id(task)
+  end
+
+  defp scoped_run_key(_state, task), do: id(task)
 
   @doc false
   def external_id(task) when is_map(task) do
@@ -51,10 +56,9 @@ defmodule Svarm.Orchestrator.Scope do
   stays the task id.
   """
   def key_for_id(state, task_id) when is_binary(task_id) do
-    cond do
-      key = running_key(state, task_id) -> key
-      catalog?(state) -> task_key(task_id)
-      true -> task_id
+    case running_key(state, task_id) do
+      nil -> if catalog?(state), do: task_key(task_id), else: task_id
+      key -> key
     end
   end
 
@@ -64,6 +68,13 @@ defmodule Svarm.Orchestrator.Scope do
   defp running_key(state, task_id) do
     Enum.find_value(state.running || %{}, fn
       {key, %{task: %{id: ^task_id}}} -> key
+      _ -> nil
+    end)
+  end
+
+  defp legacy_running_key(state, task) do
+    Enum.find_value(state.running || %{}, fn
+      {key, %{task: %{id: id}}} when is_binary(key) and id == task.id -> key
       _ -> nil
     end)
   end
@@ -96,16 +107,19 @@ defmodule Svarm.Orchestrator.Scope do
   def instance_cap(_), do: 3
 
   @doc false
-  def board_cap(_state, board_id) when is_binary(board_id) do
-    boards =
-      case load_catalog() do
-        %{boards: list} when is_list(list) -> list
-        _ -> []
-      end
+  def board_cap(%{tracker_config: %{board_id: board_id, board_concurrency_cap: cap}}, board_id),
+    do: cap
 
-    case Enum.find(boards, &(&1.id == board_id)) do
-      %{max_concurrent: n} when is_integer(n) -> n
-      _ -> nil
+  def board_cap(_state, board_id) when is_binary(board_id) do
+    case load_catalog() do
+      %{boards: boards} when is_list(boards) ->
+        case Enum.find(boards, &(&1.id == board_id)) do
+          %{max_concurrent: n} when is_integer(n) -> n
+          _ -> nil
+        end
+
+      _ ->
+        nil
     end
   end
 

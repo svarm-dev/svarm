@@ -48,34 +48,46 @@ defmodule Svarm.Orchestrator.RunExit do
   end
 
   defp finish_scoped(state, _entry, key, id, tracker, config, :ok) do
-    maybe_force_review(tracker, config, id, state.terminal_states)
-    %{state | completed: MapSet.put(state.completed, key)}
+    case tracker.get_issue(config, id) do
+      {:ok, task} ->
+        cond do
+          queued_follow_up?(task) ->
+            state
+
+          task.status in state.terminal_states ->
+            post_run_summary(state, id, :ok)
+            %{state | completed: MapSet.put(state.completed, key)}
+
+          true ->
+            tracker.update_status(config, id, "review")
+            post_run_summary(state, id, :ok)
+            %{state | completed: MapSet.put(state.completed, key)}
+        end
+
+      _ ->
+        post_run_summary(state, id, :ok)
+        %{state | completed: MapSet.put(state.completed, key)}
+    end
   end
 
   defp finish_scoped(state, entry, _key, _id, _tracker, _config, {:error, reason}) do
     schedule_retry(state, entry.task, reason)
   end
 
-  defp maybe_force_review(tracker, config, id, terminal_states) do
-    case tracker.get_issue(config, id) do
-      {:ok, %{status: status}} ->
-        if status not in terminal_states, do: tracker.update_status(config, id, "review")
-
-      _ ->
-        :ok
-    end
-  end
-
   @doc false
   def do_retry(state, entry, task_id) do
     id = retry_issue_id(entry, task_id)
+    tracker = entry_tracker(state, entry)
+    config = entry_config(state, entry)
 
-    case state.tracker.get_issue(state.tracker_config, id) do
+    case tracker.get_issue(config, id) do
       {:ok, task} ->
+        task = preserve_scope(task, entry)
+
         if task.status in state.terminal_states do
           %{state | claimed: MapSet.delete(state.claimed, task_id)}
         else
-          retry_or_spawn(state, task, task_id, entry)
+          retry_or_spawn(state, task, task_id, entry, tracker, config)
         end
 
       {:error, _} ->
@@ -99,10 +111,20 @@ defmodule Svarm.Orchestrator.RunExit do
 
   @doc false
   def post_run_summary(state, task_id, result) do
-    maybe_capture_pr(state, task_id)
+    entry = find_run_entry(state, task_id)
 
-    entry = state.last_run_entries[task_id]
-    if entry, do: build_and_post(state, task_id, result, entry)
+    if entry do
+      summary_state = %{
+        state
+        | tracker: entry_tracker(state, entry),
+          tracker_config: entry_config(state, entry),
+          last_run_entries: Map.put(state.last_run_entries, task_id, entry)
+      }
+
+      maybe_capture_pr(summary_state, task_id)
+      build_and_post(summary_state, task_id, result, entry)
+    end
+
     :ok
   end
 
@@ -112,7 +134,11 @@ defmodule Svarm.Orchestrator.RunExit do
   def schedule_retry(state, %{id: task_id} = task, reason) do
     key = Scope.run_key(state, task)
 
-    case state.tracker.get_issue(state.tracker_config, task_id) do
+    entry = find_run_entry(state, task_id)
+    tracker = entry_tracker(state, entry || %{})
+    config = entry_config(state, entry || %{})
+
+    case tracker.get_issue(config, task_id) do
       {:ok, fresh} ->
         cond do
           queued_follow_up?(fresh) ->
@@ -123,22 +149,30 @@ defmodule Svarm.Orchestrator.RunExit do
             %{state | claimed: MapSet.delete(state.claimed, key)}
 
           true ->
-            do_schedule_retry(state, task, key, reason)
+            do_schedule_retry(
+              state,
+              preserve_scope(fresh, entry || %{}),
+              key,
+              reason,
+              entry,
+              tracker,
+              config
+            )
         end
 
       _ ->
-        do_schedule_retry(state, task, key, reason)
+        do_schedule_retry(state, task, key, reason, entry, tracker, config)
     end
   end
 
-  defp do_schedule_retry(state, task, key, reason) do
+  defp do_schedule_retry(state, task, key, reason, run_entry, tracker, config) do
     task_id = task.id
     next = (task.attempts || 0) + 1
-    state.tracker.update_attempts(state.tracker_config, task_id, next)
+    tracker.update_attempts(config, task_id, next)
 
     if next > state.max_retries do
       Logger.error("task #{label(key)} exhausted #{state.max_retries} retries → human escalation")
-      state.tracker.update_status(state.tracker_config, task_id, "failed")
+      tracker.update_status(config, task_id, "failed")
       post_run_summary(state, task_id, {:error, reason})
       %{state | claimed: MapSet.delete(state.claimed, key)}
     else
@@ -151,6 +185,10 @@ defmodule Svarm.Orchestrator.RunExit do
         identifier: key,
         issue_id: task_id,
         board_id: Map.get(task, :board_id),
+        task: task,
+        tracker: tracker,
+        tracker_config: config,
+        run_id: run_entry && run_entry[:run_id],
         due_at_mono: System.monotonic_time(:millisecond) + delay,
         timer: timer
       }
@@ -176,21 +214,42 @@ defmodule Svarm.Orchestrator.RunExit do
   defp label(id) when is_binary(id), do: id
   defp label(id), do: inspect(id)
 
-  defp retry_or_spawn(state, task, task_id, entry) do
-    cond do
-      not Dispatch.valid_preflight?(state) ->
-        # Same as no-slot: keep the retry so a later valid reload can resume.
-        # Tick dispatch is already gated; retries used to skip that check.
-        Logger.debug("retry: #{task_id} deferred; workflow preflight failed")
-        defer_retry(state, task_id, entry)
+  defp retry_or_spawn(state, task, task_id, entry, tracker, config) do
+    run_state = %{state | tracker: tracker, tracker_config: config}
 
-      Scope.admit?(state, task) ->
-        # Same hard caps as first dispatch — retries are still new agent processes
-        Dispatch.maybe_budget_or_spawn(state, task)
+    result =
+      cond do
+        not Dispatch.valid_preflight?(run_state) ->
+          Logger.debug("retry: #{label(task_id)} deferred; workflow preflight failed")
+          defer_retry(run_state, task_id, entry)
 
-      true ->
-        defer_retry(state, task_id, entry)
-    end
+        Scope.admit?(run_state, task) ->
+          Dispatch.maybe_budget_or_spawn(run_state, task)
+
+        true ->
+          defer_retry(run_state, task_id, entry)
+      end
+
+    %{result | tracker: state.tracker, tracker_config: state.tracker_config}
+  end
+
+  defp preserve_scope(task, %{task: original}) when is_map(original) do
+    Enum.reduce([:board_id, :external_task_id, :workspace_locator], task, fn key, acc ->
+      case Map.get(original, key) do
+        nil -> acc
+        value -> Map.put(acc, key, value)
+      end
+    end)
+  end
+
+  defp preserve_scope(task, _entry), do: task
+
+  defp find_run_entry(state, task_id) do
+    Map.get(state.last_run_entries, task_id) ||
+      Enum.find_value(state.last_run_entries, fn
+        {_key, %{task: %{id: ^task_id}} = entry} -> entry
+        _ -> nil
+      end)
   end
 
   defp defer_retry(state, task_id, entry) do

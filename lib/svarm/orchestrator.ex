@@ -416,16 +416,21 @@ defmodule Svarm.Orchestrator do
 
         # Snapshot before kill. CLI/PiRPC write failed/review on port death;
         # checking after kill_os_tree would treat a live Abort as a late finish.
-        late? = already_terminal?(state, task_id)
+        late? = already_terminal?(entry, task_id)
         await_worker_exit(entry.pid)
         Usage.ensure_attempt_row(entry)
 
         if late? do
-          state = finish_late_abort(state, entry, task_id)
+          state = finish_late_abort(state, entry, key, task_id)
           Status.broadcast(state)
           {:reply, {:error, :not_running}, state}
         else
-          apply_abort_todo(state, task_id)
+          apply_abort_todo(
+            state,
+            task_id,
+            entry[:tracker] || state.tracker,
+            entry[:tracker_config] || state.tracker_config
+          )
         end
     end
   end
@@ -456,6 +461,7 @@ defmodule Svarm.Orchestrator do
     key = Scope.key_for_id(state, task_id)
 
     owned = %{
+      key: key,
       permit: MapSet.member?(state.approved_once, key),
       claim: MapSet.member?(state.claimed, key)
     }
@@ -472,7 +478,7 @@ defmodule Svarm.Orchestrator do
   def handle_call({:finish_approve, task_id, :ok, owned}, _from, state)
       when is_binary(task_id) and is_map(owned) do
     state = Scope.refresh(state)
-    key = Scope.key_for_id(state, task_id)
+    key = Map.get(owned, :key, Scope.key_for_id(state, task_id))
     claimed = if owned.claim, do: state.claimed, else: MapSet.delete(state.claimed, key)
     {:reply, :ok, %{state | claimed: claimed}}
   end
@@ -480,7 +486,7 @@ defmodule Svarm.Orchestrator do
   def handle_call({:finish_approve, task_id, :error, owned}, _from, state)
       when is_binary(task_id) and is_map(owned) do
     state = Scope.refresh(state)
-    key = Scope.key_for_id(state, task_id)
+    key = Map.get(owned, :key, Scope.key_for_id(state, task_id))
 
     approved =
       if owned.permit, do: state.approved_once, else: MapSet.delete(state.approved_once, key)
@@ -554,10 +560,12 @@ defmodule Svarm.Orchestrator do
 
         Events.broadcast_task_updated(%{id: task_id, status: "todo", reason: :send_back})
 
+        key = Scope.key_for_id(state, task_id)
+
         state = %{
           state
-          | completed: MapSet.delete(state.completed, task_id),
-            approved_once: MapSet.delete(state.approved_once, task_id)
+          | completed: state.completed |> MapSet.delete(task_id) |> MapSet.delete(key),
+            approved_once: state.approved_once |> MapSet.delete(task_id) |> MapSet.delete(key)
         }
 
         Status.broadcast(state)
@@ -594,8 +602,8 @@ defmodule Svarm.Orchestrator do
     end
   end
 
-  defp apply_abort_todo(state, task_id) do
-    case state.tracker.update_status(state.tracker_config, task_id, "todo") do
+  defp apply_abort_todo(state, task_id, tracker, tracker_config) do
+    case tracker.update_status(tracker_config, task_id, "todo") do
       :ok ->
         Events.broadcast_agent_line(task_id, "\n[board] aborted\n")
         AgentQuestion.clear(task_id)
@@ -613,17 +621,26 @@ defmodule Svarm.Orchestrator do
     end
   end
 
-  defp already_terminal?(state, task_id) do
-    case Issues.get(state.tracker, state.tracker_config, task_id) do
-      {:ok, issue} -> issue.status in state.terminal_states
-      _ -> false
+  defp already_terminal?(entry, task_id) do
+    tracker = entry[:tracker] || Svarm.Tracker.Local
+    config = entry[:tracker_config] || %{}
+
+    case Issues.get(tracker, config, task_id) do
+      {:ok, issue} ->
+        issue.status in Map.get(config, :terminal_states, ["done", "failed", "review"])
+
+      _ ->
+        false
     end
   end
 
-  defp finish_late_abort(state, entry, task_id) do
-    state = Map.update!(state, :last_run_entries, &Map.put(&1, task_id, entry))
+  defp finish_late_abort(state, entry, key, task_id) do
+    state = Map.update!(state, :last_run_entries, &Map.put(&1, key, entry))
 
-    case Issues.get(state.tracker, state.tracker_config, task_id) do
+    tracker = entry[:tracker] || state.tracker
+    config = entry[:tracker_config] || state.tracker_config
+
+    case Issues.get(tracker, config, task_id) do
       {:ok, %{status: "failed"}} ->
         # Same as handle_result error: do not session-skip via completed and
         # do not post a run-summary (that is retry-exhaustion only).
@@ -631,7 +648,7 @@ defmodule Svarm.Orchestrator do
 
       _ ->
         RunExit.post_run_summary(state, task_id, :ok)
-        %{state | completed: MapSet.put(state.completed, task_id)}
+        %{state | completed: MapSet.put(state.completed, key)}
     end
   end
 

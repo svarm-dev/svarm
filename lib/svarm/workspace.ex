@@ -24,6 +24,24 @@ defmodule Svarm.Workspace do
 
   def default_root, do: @default_root
 
+  @doc "Return the legacy workspace locator when its root-bounded directory exists."
+  def existing_legacy_locator(issue, root) when is_map(issue) and is_binary(root) do
+    identifier = Map.get(issue, :source_id) || Map.get(issue, :id)
+
+    with identifier when is_binary(identifier) <- to_string_if_binary(identifier),
+         {:ok, abs, _root_abs, key} <- resolve_path(identifier, root),
+         true <- File.dir?(abs) do
+      {:ok, key}
+    else
+      _ -> :error
+    end
+  end
+
+  def existing_legacy_locator(_issue, _root), do: :error
+
+  defp to_string_if_binary(value) when is_binary(value), do: value
+  defp to_string_if_binary(_), do: nil
+
   @doc """
   Ensure a workspace for `identifier` under `root`.
 

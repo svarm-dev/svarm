@@ -2,8 +2,26 @@ defmodule Svarm.OrchestratorAdmissionTest do
   use ExUnit.Case, async: false
 
   alias Svarm.{Events, KanbanBridge, Orchestrator, Workspace}
+  alias Svarm.Orchestrator.{RunExit, Scope}
   alias Svarm.Settings.Catalog.Store
   alias Svarm.Test.Wait
+
+  defmodule SummaryTracker do
+    def get_issue(config, id) do
+      send(config.owner, {:lookup, id})
+      {:ok, config.issue}
+    end
+
+    def update_status(config, id, status) do
+      send(config.owner, {:status, id, status})
+      :ok
+    end
+
+    def post_run_summary(config, id, summary) do
+      send(config.owner, {:summary, id, summary})
+      :ok
+    end
+  end
 
   setup do
     KanbanBridge.delete_all_tasks()
@@ -161,6 +179,162 @@ defmodule Svarm.OrchestratorAdmissionTest do
       assert state.running[{"alpha", "EXT-A"}].pid == worker
     after
       restore(original)
+    end
+  end
+
+  test "an in-flight legacy run keeps its key when import adds board scope" do
+    task_id = "legacy-ticket-7"
+    running = %{task: %{id: task_id}, pid: self()}
+
+    state = %{
+      running: %{task_id => running},
+      max_concurrent: 3,
+      tracker_config: %{board_id: "default"}
+    }
+
+    task = %{id: task_id, board_id: "default", external_task_id: "7"}
+
+    assert Scope.run_key(state, task) == task_id
+    refute Scope.admit?(state, task)
+  end
+
+  test "default board reuses an existing legacy workspace for an untracked issue" do
+    root = workspace_root()
+    File.mkdir_p!(Path.join(root, "EXT-LEGACY"))
+    insert_boards([board("default")])
+    task = task("default", "EXT-LEGACY", "existing workspace")
+
+    original = :sys.get_state(Orchestrator)
+    :sys.replace_state(Orchestrator, fn state -> dispatch_state(state, root, 2) end)
+
+    try do
+      send(Orchestrator, :tick)
+      flush()
+
+      assert wait_until(fn ->
+               Map.has_key?(:sys.get_state(Orchestrator).running, {"default", "EXT-LEGACY"})
+             end)
+
+      assert KanbanBridge.get_task(task.id).workspace_locator == "EXT-LEGACY"
+      assert File.dir?(Path.join(root, "EXT-LEGACY"))
+      refute File.dir?(Path.join([root, "default", task.id]))
+    after
+      restore(original)
+    end
+  end
+
+  test "successful scoped exit leaves a queued follow-up in todo" do
+    task =
+      KanbanBridge.create_task(%{
+        title: "follow-up",
+        status: "todo",
+        follow_up: "Use the updated feedback",
+        board_id: "alpha",
+        external_task_id: "EXT-FOLLOW"
+      })
+
+    config = %{
+      kind: :local,
+      active_states: ["todo", "in_progress"],
+      terminal_states: ["done", "failed", "review"]
+    }
+
+    entry = %{
+      run_id: "run_scoped_followup",
+      task: task,
+      tracker: Svarm.Tracker.Local,
+      tracker_config: config,
+      started_mono_ms: System.monotonic_time(:millisecond),
+      started_at: System.system_time(:second)
+    }
+
+    key = {"alpha", "EXT-FOLLOW"}
+    state = :sys.get_state(Orchestrator)
+
+    state = %{
+      state
+      | tracker: Svarm.Tracker.Local,
+        tracker_config: config,
+        terminal_states: config.terminal_states,
+        claimed: MapSet.new([key]),
+        completed: MapSet.new(),
+        last_run_entries: %{}
+    }
+
+    result = RunExit.handle(state, entry, key, :ok)
+
+    assert KanbanBridge.get_task(task.id).status == "todo"
+    refute MapSet.member?(result.completed, key)
+  end
+
+  test "scoped success posts the run summary through the run tracker" do
+    task = %Svarm.Issue{
+      id: "node-scoped-summary",
+      source_id: "7",
+      title: "summary ticket",
+      assignee: "demo",
+      board_id: "alpha",
+      external_task_id: "7",
+      status: "todo"
+    }
+
+    config = %{owner: self(), issue: task}
+
+    entry = %{
+      run_id: "run_scoped_summary",
+      task: task,
+      tracker: SummaryTracker,
+      tracker_config: config,
+      started_mono_ms: System.monotonic_time(:millisecond),
+      started_at: System.system_time(:second)
+    }
+
+    key = {"alpha", "7"}
+    state = :sys.get_state(Orchestrator)
+
+    state = %{
+      state
+      | tracker: Svarm.Tracker.Local,
+        tracker_config: %{board_id: "beta"},
+        agents: %{"demo" => %{}},
+        terminal_states: ["done", "failed", "review"],
+        claimed: MapSet.new([key]),
+        completed: MapSet.new(),
+        last_run_entries: %{}
+    }
+
+    result = RunExit.handle(state, entry, key, :ok)
+
+    assert MapSet.member?(result.completed, key)
+    assert_receive {:status, "node-scoped-summary", "review"}
+    assert_receive {:summary, "node-scoped-summary", %{run_id: "run_scoped_summary"}}
+  end
+
+  test "retry refetch keeps the board key and uses the run tracker config" do
+    task = task("alpha", "EXT-RETRY", "retry ticket")
+
+    entry = %{
+      task: task,
+      issue_id: task.id,
+      board_id: "alpha",
+      tracker: Svarm.Tracker.Local,
+      tracker_config: %{kind: :local, board_id: "alpha", board_concurrency_cap: 1}
+    }
+
+    state = :sys.get_state(Orchestrator)
+    state = %{state | agents: %{}, tracker_config: %{kind: :wrong, board_id: "beta"}}
+    key = {"alpha", "EXT-RETRY"}
+    result = RunExit.do_retry(state, entry, key)
+
+    try do
+      retry = Map.fetch!(result.retry_attempts, key)
+      assert retry.task.board_id == "alpha"
+      assert retry.task.external_task_id == "EXT-RETRY"
+      assert retry.tracker_config.board_id == "alpha"
+    after
+      Enum.each(result.retry_attempts, fn {_key, retry} ->
+        if is_reference(retry[:timer]), do: Process.cancel_timer(retry.timer)
+      end)
     end
   end
 

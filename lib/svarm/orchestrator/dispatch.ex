@@ -17,7 +17,8 @@ defmodule Svarm.Orchestrator.Dispatch do
     Coordination,
     Events,
     KanbanBridge,
-    Toolchain
+    Toolchain,
+    Workspace
   }
 
   alias Svarm.Orchestrator.{Issues, Scope, Status}
@@ -64,7 +65,12 @@ defmodule Svarm.Orchestrator.Dispatch do
         terminal_states: state.terminal_states
       )
 
-    %{state | tracker: adapter, tracker_config: Map.put(config, :board_id, board.id)}
+    config =
+      config
+      |> Map.put(:board_id, board.id)
+      |> Map.put(:board_concurrency_cap, board.max_concurrent)
+
+    %{state | tracker: adapter, tracker_config: config}
   end
 
   defp dispatch_tracker(state) do
@@ -88,19 +94,17 @@ defmodule Svarm.Orchestrator.Dispatch do
     end
   end
 
-  defp prepare_task(state, task) do
-    if Scope.catalog?(state) do
-      board_id = state.tracker_config[:board_id]
-      external = Scope.external_id(task)
-      task = %{task | board_id: board_id, external_task_id: external}
-      sync_task_row(task)
-    else
-      task
-    end
+  defp prepare_task(%{tracker_config: %{board_id: board_id}} = state, task)
+       when is_binary(board_id) do
+    external = Scope.external_id(task)
+    task = %{task | board_id: board_id, external_task_id: external}
+    sync_task_row(state, task)
   end
 
-  defp sync_task_row(task) do
-    locator = workspace_locator(task)
+  defp prepare_task(_state, task), do: task
+
+  defp sync_task_row(state, task) do
+    locator = workspace_locator(state, task)
 
     KanbanBridge.upsert_external(task.board_id, task.external_task_id, %{
       id: task.id,
@@ -115,8 +119,17 @@ defmodule Svarm.Orchestrator.Dispatch do
     %{task | workspace_locator: locator}
   end
 
-  defp workspace_locator(%{workspace_locator: loc}) when is_binary(loc) and loc != "", do: loc
-  defp workspace_locator(%{board_id: board_id, id: id}), do: "#{board_id}/#{id}"
+  defp workspace_locator(_state, %{workspace_locator: loc}) when is_binary(loc) and loc != "",
+    do: loc
+
+  defp workspace_locator(state, %{board_id: "default"} = task) do
+    case Workspace.existing_legacy_locator(task, state.workspace_root) do
+      {:ok, locator} -> locator
+      :error -> "default/#{task.id}"
+    end
+  end
+
+  defp workspace_locator(_state, %{board_id: board_id, id: id}), do: "#{board_id}/#{id}"
 
   # Eligibility is checked in two layers:
   # 1. Adapter level (Eligibility.eligible?): tracker-specific rules

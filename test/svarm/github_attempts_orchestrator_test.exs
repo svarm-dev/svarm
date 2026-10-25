@@ -161,6 +161,7 @@ defmodule Svarm.GitHubAttemptsOrchestratorTest do
   end
 
   test "two GitHub failures increment attempts to 2 via re-fetch", %{config: config} do
+    :sys.replace_state(Orchestrator, fn state -> %{state | max_retries: 1} end)
     put_running(fetched_issue(config))
     send(Orchestrator, {:run_exit, @node_id, {:error, :agent_exit}})
     flush()
