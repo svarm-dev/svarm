@@ -63,18 +63,20 @@ ENV SVARM_CONFIG_DIR=/app/config
 ENV SVARM_TEMPLATES_DIR=/app/templates
 
 # Agent toolchain, separate from the release at /app.
-# The release `erl` has no compiler. Mixing ROOTDIR with /app makes it try
-# to boot the release and crash. PATH only; agents unset MIX_ENV themselves
-# when they need `mix test`.
-# The elixir script expects -pa /usr/local/lib/elixir/ebin. The hex.pm
-# tree is /usr/local/lib/elixir/lib/elixir/ebin, so flatten that one level.
+# The release `erl` has no compiler. `erl` on PATH is the full OTP, so
+# agents must not point ROOTDIR at /app.
+# elixir's script only adds elixir/ebin. mix and iex live beside it.
+# +fnu: the slim image has no UTF-8 locale, and Elixir warns without it.
 COPY --from=builder /usr/local/lib/elixir/lib/elixir /usr/local/lib/elixir
+COPY --from=builder /usr/local/lib/elixir/lib/mix /usr/local/lib/mix
+COPY --from=builder /usr/local/lib/elixir/lib/iex /usr/local/lib/iex
 COPY --from=builder /usr/local/bin/elixir /usr/local/bin/elixirc /usr/local/bin/mix /usr/local/bin/iex /usr/local/bin/
 COPY --from=builder /usr/local/lib/erlang /usr/local/lib/erlang
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/local/lib/erlang/bin/erl /usr/local/lib/erlang/bin/erlc /usr/local/lib/erlang/bin/escript /usr/local/bin/
-ENV PATH="/usr/local/bin:${PATH}"
+ENV PATH="/usr/local/bin:${PATH}" \
+    ELIXIR_ERL_OPTIONS="+fnu -pa /usr/local/lib/mix/ebin -pa /usr/local/lib/iex/ebin"
 
 # Install pi so agents can be spawned inside the container
 RUN curl -fsSL https://pi.dev/install.sh | sh
