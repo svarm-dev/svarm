@@ -66,14 +66,14 @@ ENV SVARM_TEMPLATES_DIR=/app/templates
 # The release `erl` has no compiler. Mixing ROOTDIR with /app makes it try
 # to boot the release and crash. PATH only; agents unset MIX_ENV themselves
 # when they need `mix test`.
-COPY --from=builder /usr/local/lib/elixir /usr/local/lib/elixir
+# The elixir script expects -pa /usr/local/lib/elixir/ebin. The hex.pm
+# tree is /usr/local/lib/elixir/lib/elixir/ebin, so flatten that one level.
+COPY --from=builder /usr/local/lib/elixir/lib/elixir /usr/local/lib/elixir
 COPY --from=builder /usr/local/bin/elixir /usr/local/bin/elixirc /usr/local/bin/mix /usr/local/bin/iex /usr/local/bin/
 COPY --from=builder /usr/local/lib/erlang /usr/local/lib/erlang
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/* \
-    && ln -sf /usr/local/lib/erlang/bin/erl /usr/local/lib/erlang/bin/erlc /usr/local/lib/erlang/bin/escript /usr/local/bin/ \
-    && printf '%s\n' '#!/bin/sh' 'exec /usr/local/lib/erlang/bin/erl -pa /usr/local/lib/elixir/lib/elixir/ebin "$@"' > /usr/local/bin/elixir-erl \
-    && chmod 755 /usr/local/bin/elixir-erl
+    && ln -sf /usr/local/lib/erlang/bin/erl /usr/local/lib/erlang/bin/erlc /usr/local/lib/erlang/bin/escript /usr/local/bin/
 ENV PATH="/usr/local/bin:${PATH}"
 
 # Install pi so agents can be spawned inside the container
