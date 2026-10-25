@@ -84,7 +84,7 @@ defmodule Svarm.Orchestrator.RunExit do
       {:ok, task} ->
         task = preserve_scope(task, entry)
 
-        if task.status in state.terminal_states and task.status != "failed" do
+        if task.status in state.terminal_states do
           %{state | claimed: MapSet.delete(state.claimed, task_id)}
         else
           retry_or_spawn(state, task, task_id, entry, tracker, config)
@@ -176,25 +176,36 @@ defmodule Svarm.Orchestrator.RunExit do
       post_run_summary(state, task_id, {:error, reason})
       %{state | claimed: MapSet.delete(state.claimed, key)}
     else
-      delay = backoff(state, next)
-      Logger.info("task #{label(key)} retry #{next} in #{delay}ms (#{inspect(reason)})")
-      timer = Process.send_after(self(), {:retry, key}, delay)
+      case tracker.update_status(config, task_id, "todo") do
+        :ok ->
+          schedule_retry_timer(state, task, key, reason, run_entry, tracker, config, next)
 
-      entry = %{
-        attempt: next,
-        identifier: key,
-        issue_id: task_id,
-        board_id: Map.get(task, :board_id),
-        task: task,
-        tracker: tracker,
-        tracker_config: config,
-        run_id: run_entry && run_entry[:run_id],
-        due_at_mono: System.monotonic_time(:millisecond) + delay,
-        timer: timer
-      }
-
-      %{state | retry_attempts: Map.put(state.retry_attempts, key, entry)}
+        {:error, reason} ->
+          Logger.warning("retry: could not reopen #{label(key)}: #{inspect(reason)}")
+          %{state | claimed: MapSet.delete(state.claimed, key)}
+      end
     end
+  end
+
+  defp schedule_retry_timer(state, task, key, reason, run_entry, tracker, config, next) do
+    delay = backoff(state, next)
+    Logger.info("task #{label(key)} retry #{next} in #{delay}ms (#{inspect(reason)})")
+    timer = Process.send_after(self(), {:retry, key}, delay)
+
+    entry = %{
+      attempt: next,
+      identifier: key,
+      issue_id: task.id,
+      board_id: Map.get(task, :board_id),
+      task: task,
+      tracker: tracker,
+      tracker_config: config,
+      run_id: run_entry && run_entry[:run_id],
+      due_at_mono: System.monotonic_time(:millisecond) + delay,
+      timer: timer
+    }
+
+    %{state | retry_attempts: Map.put(state.retry_attempts, key, entry)}
   end
 
   defp retry_issue_id(%{issue_id: id}, _key) when is_binary(id), do: id
