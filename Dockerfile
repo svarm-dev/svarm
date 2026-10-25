@@ -72,7 +72,7 @@ COPY --from=builder /usr/local/lib/erlang /usr/local/lib/erlang
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/local/lib/erlang/bin/erl /usr/local/lib/erlang/bin/erlc /usr/local/lib/erlang/bin/escript /usr/local/bin/ \
-    && printf '%s\n' '#!/bin/sh' 'exec /usr/local/lib/erlang/bin/erl -pa /usr/local/lib/elixir/ebin "$@"' > /usr/local/bin/elixir-erl \
+    && printf '%s\n' '#!/bin/sh' 'exec /usr/local/lib/erlang/bin/erl -pa /usr/local/lib/elixir/lib/elixir/ebin "$@"' > /usr/local/bin/elixir-erl \
     && chmod 755 /usr/local/bin/elixir-erl
 ENV PATH="/usr/local/bin:${PATH}"
 
