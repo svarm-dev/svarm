@@ -6,6 +6,7 @@ defmodule Svarm.Settings.Resolve do
   """
 
   alias Svarm.Settings
+  alias Svarm.Settings.Catalog.Store, as: CatalogStore
 
   @agent_field_map %{
     "provider" => :provider,
@@ -43,17 +44,106 @@ defmodule Svarm.Settings.Resolve do
   end
 
   @doc """
-  Merge Settings tracker fields onto a workflow tracker config map.
-  Settings values win when present and non-blank.
+  Tracker config for the default board.
+
+  No catalog revision merges Settings onto the workflow map. After import,
+  the default board row wins, including over a later WORKFLOW.md kind change.
+  Secrets are read from the settings store or the recorded env name, not from
+  the catalog row.
   """
   def tracker_overlay(base) when is_map(base) do
+    case catalog_tracker() do
+      {:ok, config} -> config
+      :error -> legacy_tracker_overlay(base)
+    end
+  end
+
+  def tracker_overlay(_), do: %{}
+
+  defp legacy_tracker_overlay(base) do
     case Settings.get_raw("tracker") do
       {:ok, data} when map_size(data) > 0 -> merge_tracker(base, stringify(data))
       _ -> base
     end
   end
 
-  def tracker_overlay(_), do: %{}
+  defp catalog_tracker do
+    with revision when is_integer(revision) <- CatalogStore.latest_revision(),
+         {:ok, snapshot} <- CatalogStore.get(revision),
+         %{} = board <- Enum.find(snapshot.boards, &(&1.id == "default")) do
+      {:ok, runtime_tracker(board.tracker || %{})}
+    else
+      _ -> :error
+    end
+  end
+
+  defp runtime_tracker(tracker) when is_map(tracker) do
+    tracker = stringify(tracker)
+    kind = parse_kind(tracker["kind"], :local)
+
+    %{
+      kind: kind,
+      auth: parse_auth(tracker["auth"], :token)
+    }
+    |> copy_string(:owner, tracker)
+    |> copy_string(:repo, tracker)
+    |> copy_string(:base_url, tracker)
+    |> copy_string(:workspace, tracker)
+    |> copy_string(:project, tracker)
+    |> copy_string(:app_id, tracker)
+    |> copy_string(:installation_id, tracker)
+    |> copy_string(:private_key_path, tracker)
+    |> copy_list(:active_states, tracker)
+    |> copy_list(:terminal_states, tracker)
+    |> copy_list(:required_labels, tracker)
+    |> copy_list(:agent_assignees, tracker)
+    |> copy_list(:ignored_assignees, tracker)
+    |> copy_string_map(:column_slugs, tracker)
+    |> copy_string_map(:status_labels, tracker)
+    |> copy_string_map(:reverse_labels, tracker)
+    |> maybe_put(:api_key, catalog_api_key(tracker))
+    |> maybe_put(:private_key, catalog_private_key(kind, tracker))
+  end
+
+  defp catalog_api_key(tracker) do
+    case Settings.get_secret("tracker", "api_key") do
+      key when is_binary(key) and key != "" -> key
+      _ -> env_value(tracker["credential_env"])
+    end
+  end
+
+  defp catalog_private_key(:github, %{"auth" => "app"}) do
+    System.get_env("SVARM_GITHUB_APP_PRIVATE_KEY")
+  end
+
+  defp catalog_private_key(_, _), do: nil
+
+  defp env_value(name) when is_binary(name) do
+    if Regex.match?(~r/^[A-Z][A-Z0-9_]{0,80}$/, name), do: System.get_env(name), else: nil
+  end
+
+  defp env_value(_), do: nil
+
+  defp copy_string(map, key, tracker) do
+    maybe_put(map, key, tracker[Atom.to_string(key)])
+  end
+
+  defp copy_list(map, key, tracker) do
+    case tracker[Atom.to_string(key)] do
+      list when is_list(list) -> Map.put(map, key, Enum.map(list, &to_string/1))
+      _ -> map
+    end
+  end
+
+  defp copy_string_map(map, key, tracker) do
+    case tracker[Atom.to_string(key)] do
+      nested when is_map(nested) ->
+        Map.put(map, key, Map.new(nested, fn {k, v} -> {to_string(k), to_string(v)} end))
+
+      _ ->
+        map
+    end
+  end
 
   @doc """
   Deep-merge Settings agent overrides onto file-loaded agents.

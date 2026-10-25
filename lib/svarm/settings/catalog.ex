@@ -227,8 +227,8 @@ defmodule Svarm.Settings.Catalog do
   defp parse_board(attrs) when is_map(attrs) do
     with {:ok, id} <- id_field(attrs, "id"),
          {:ok, name} <- name_field(attrs),
-         {:ok, tracker} <- string_map(attrs, "tracker"),
-         {:ok, remote} <- string_map(attrs, "remote"),
+         {:ok, tracker} <- structured_map(attrs, "tracker"),
+         {:ok, remote} <- structured_map(attrs, "remote"),
          {:ok, enabled} <- enabled_field(attrs),
          {:ok, max_concurrent} <- optional_pos(attrs, "max_concurrent"),
          {:ok, verification} <- verification_field(attrs),
@@ -425,14 +425,51 @@ defmodule Svarm.Settings.Catalog do
     end
   end
 
-  defp string_map(attrs, key) do
+  # Tracker and remote may carry string lists and one-level string maps
+  # (labels, states). They still cannot carry atoms created from input.
+  defp structured_map(attrs, key) do
     case fetch(attrs, key) do
       :error -> {:ok, %{}}
       {:ok, nil} -> {:ok, %{}}
-      {:ok, map} when is_map(map) -> string_pairs(map)
+      {:ok, map} when is_map(map) -> structured_pairs(map)
       {:ok, _} -> {:error, :invalid_catalog}
     end
   end
+
+  defp structured_pairs(map) do
+    Enum.reduce_while(map, {:ok, %{}}, fn {key, value}, {:ok, acc} ->
+      with {:ok, key} <- public_key(key),
+           {:ok, value} <- public_value(value) do
+        {:cont, {:ok, Map.put(acc, key, value)}}
+      else
+        _ -> {:halt, {:error, :invalid_catalog}}
+      end
+    end)
+  end
+
+  defp public_key(key) when is_binary(key) do
+    if String.trim(key) != "", do: {:ok, key}, else: :error
+  end
+
+  defp public_key(key) when is_atom(key) and not is_nil(key), do: {:ok, Atom.to_string(key)}
+  defp public_key(_), do: :error
+
+  defp public_value(value) when is_binary(value), do: {:ok, value}
+
+  defp public_value(list) when is_list(list) do
+    if Enum.all?(list, &is_binary/1), do: {:ok, list}, else: :error
+  end
+
+  defp public_value(%_{}), do: :error
+
+  defp public_value(map) when is_map(map) do
+    case string_pairs(map) do
+      {:ok, pairs} -> {:ok, pairs}
+      _ -> :error
+    end
+  end
+
+  defp public_value(_), do: :error
 
   defp string_pairs(map) do
     Enum.reduce_while(map, {:ok, %{}}, fn {key, value}, {:ok, acc} ->
@@ -555,18 +592,64 @@ defmodule Svarm.Settings.Catalog do
   defp nonempty_string?(value) when is_binary(value), do: String.trim(value) != ""
   defp nonempty_string?(_), do: false
 
+  # Keys this parser accepts as atoms. Input never creates atoms.
+  @known_keys [
+    :providers,
+    :harnesses,
+    :toolchains,
+    :boards,
+    :bindings,
+    :id,
+    :name,
+    :kind,
+    :endpoint,
+    :credential_id,
+    :default_model,
+    :adapter,
+    :provider_id,
+    :command,
+    :env,
+    :default_toolchain_id,
+    :source,
+    :type,
+    :pins,
+    :version,
+    :trust,
+    :path,
+    :sha256,
+    :trusted_by,
+    :trusted_at,
+    :requirements,
+    :tracker,
+    :remote,
+    :enabled,
+    :max_concurrent,
+    :verification,
+    :first_run_at,
+    :executable,
+    :args,
+    :timeout_ms,
+    :board_id,
+    :harness_id,
+    :model_override,
+    :toolchain_id
+  ]
+
   defp fetch(map, key) when is_binary(key) do
     cond do
-      Map.has_key?(map, key) -> {:ok, Map.get(map, key)}
-      Map.has_key?(map, existing_atom(key)) -> {:ok, Map.get(map, existing_atom(key))}
-      true -> :error
+      Map.has_key?(map, key) ->
+        {:ok, Map.get(map, key)}
+
+      true ->
+        case known_atom(key) do
+          nil -> :error
+          atom -> if Map.has_key?(map, atom), do: {:ok, Map.get(map, atom)}, else: :error
+        end
     end
   end
 
-  defp existing_atom(key) do
-    String.to_existing_atom(key)
-  rescue
-    ArgumentError -> nil
+  defp known_atom(key) do
+    Enum.find(@known_keys, &(Atom.to_string(&1) == key))
   end
 
   defp to_string_if_atom(value) when is_atom(value) and not is_nil(value),

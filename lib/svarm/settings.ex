@@ -8,7 +8,8 @@ defmodule Svarm.Settings do
   """
 
   alias Svarm.Provider
-  alias Svarm.Settings.{Crypto, Resolve, Store}
+  alias Svarm.Settings.{Crypto, Import, Resolve, Store}
+  alias Svarm.Settings.Catalog.Store, as: CatalogStore
   alias Svarm.Tracker
 
   @secret_fields %{
@@ -52,6 +53,26 @@ defmodule Svarm.Settings do
   the previously stored ciphertext (so forms can omit re-entry).
   """
   def put_section(section, attrs) when is_binary(section) and is_map(attrs) do
+    if policy_section?(section) and imported?() do
+      {:error, :imported}
+    else
+      write_section(section, attrs)
+    end
+  end
+
+  @doc """
+  Copy the current tracker, agents, and provider readiness into catalog revision 1.
+
+  Returns `{:ok, :already_imported}` without reading files when a revision
+  already exists. Boot does not call this. An empty catalog leaves resolve
+  on the file and Settings overlay.
+  """
+  @spec import_legacy() :: {:ok, map() | :already_imported} | {:error, term()}
+  def import_legacy do
+    if imported?(), do: {:ok, :already_imported}, else: Import.run()
+  end
+
+  defp write_section(section, attrs) do
     attrs = stringify_keys(attrs)
     existing = store_map(section)
     data = prepare_for_store(section, attrs, existing)
@@ -61,6 +82,12 @@ defmodule Svarm.Settings do
       {:error, _} = err -> err
     end
   end
+
+  defp policy_section?("tracker"), do: true
+  defp policy_section?("agents"), do: true
+  defp policy_section?(_), do: false
+
+  defp imported?, do: is_integer(CatalogStore.latest_revision())
 
   @doc "Save provider settings. Defaults to OpenRouter when id is omitted."
   def put_provider(attrs) when is_map(attrs), do: put_provider("openrouter", attrs)

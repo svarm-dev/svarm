@@ -35,25 +35,54 @@ defmodule Svarm.Settings.Catalog.Store do
   and `bindings` lists. Each list is a full snapshot, not a patch.
   """
   @spec insert_revision(map()) :: {:ok, map()} | {:error, Catalog.error()}
-  def insert_revision(attrs) when is_map(attrs) do
+  def insert_revision(attrs) when is_map(attrs), do: commit(attrs, :append)
+
+  def insert_revision(_), do: {:error, :invalid_catalog}
+
+  @doc """
+  Insert revision 1 only when the catalog is empty.
+
+  A concurrent or repeated call returns `{:ok, :already_imported}` and writes nothing.
+  A validation error rolls back every row from that attempt.
+  """
+  @spec insert_first_revision(map()) ::
+          {:ok, map() | :already_imported} | {:error, Catalog.error()}
+  def insert_first_revision(attrs) when is_map(attrs), do: commit(attrs, :first)
+
+  def insert_first_revision(_), do: {:error, :invalid_catalog}
+
+  defp commit(attrs, mode) do
     Repo.transaction(fn ->
-      revision = next_revision()
-      now = DateTime.utc_now() |> DateTime.truncate(:second)
-
-      Repo.insert!(%Revision{revision: revision, inserted_at: now})
-
-      with {:ok, parsed} <- Catalog.parse(attrs),
-           :ok <- persist(revision, parsed),
-           :ok <- Catalog.validate_references(parsed) do
-        load(%Revision{revision: revision, inserted_at: now})
+      if mode == :first and is_integer(latest_revision()) do
+        Repo.rollback(:already_imported)
       else
-        {:error, reason} -> Repo.rollback(reason)
+        write_revision(attrs, mode)
       end
     end)
     |> normalize()
   end
 
-  def insert_revision(_), do: {:error, :invalid_catalog}
+  defp write_revision(attrs, mode) do
+    revision = next_revision()
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    case Repo.insert(%Revision{revision: revision, inserted_at: now}) do
+      {:ok, _row} ->
+        with {:ok, parsed} <- Catalog.parse(attrs),
+             :ok <- persist(revision, parsed),
+             :ok <- Catalog.validate_references(parsed) do
+          load(%Revision{revision: revision, inserted_at: now})
+        else
+          {:error, reason} -> Repo.rollback(reason)
+        end
+
+      {:error, _reason} when mode == :first ->
+        Repo.rollback(:already_imported)
+
+      {:error, reason} ->
+        Repo.rollback(reason)
+    end
+  end
 
   defp next_revision do
     (latest_revision() || 0) + 1
@@ -210,5 +239,6 @@ defmodule Svarm.Settings.Catalog.Store do
   end
 
   defp normalize({:ok, map}), do: {:ok, map}
+  defp normalize({:error, :already_imported}), do: {:ok, :already_imported}
   defp normalize({:error, reason}), do: {:error, reason}
 end
