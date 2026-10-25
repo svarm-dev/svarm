@@ -132,14 +132,12 @@ defmodule Svarm.Runner.Cli do
   end
 
   defp already_terminal?(tracker, config, task_id) do
-    function_exported?(tracker, :get_issue, 2) and terminal_issue?(tracker, config, task_id)
+    function_exported?(tracker, :get_issue, 2) and done_issue?(tracker, config, task_id)
   end
 
-  defp terminal_issue?(tracker, config, task_id) do
-    terminals = Map.get(config, :terminal_states, ["done", "failed", "review"])
-
+  defp done_issue?(tracker, config, task_id) do
     case tracker.get_issue(config, task_id) do
-      {:ok, %{status: status}} -> status in terminals
+      {:ok, %{status: "done"}} -> true
       _ -> false
     end
   end

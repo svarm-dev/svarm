@@ -119,7 +119,7 @@ defmodule Svarm.Orchestrator.RunExit do
             Logger.info("task #{task_id} has a queued follow-up; skip exit retry")
             state
 
-          fresh.status in state.terminal_states ->
+          fresh.status == "done" ->
             %{state | claimed: MapSet.delete(state.claimed, key)}
 
           true ->
