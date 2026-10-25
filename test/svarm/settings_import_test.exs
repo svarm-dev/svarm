@@ -50,6 +50,7 @@ defmodule Svarm.SettingsImportTest do
     assert {:ok, saved} = Settings.import_legacy()
     assert saved.revision == 1
     assert Enum.map(saved.boards, & &1.id) == ["default"]
+    assert Enum.find(saved.boards, &(&1.id == "default")).enabled
     assert Store.latest_revision() == 1
 
     assert {:ok, :already_imported} = Settings.import_legacy()

@@ -107,7 +107,9 @@ defmodule Svarm.SettingsCatalogTest do
 
     id = task.id
     assert String.starts_with?(id, "sva_")
-    refute Map.has_key?(task, :board_id)
+    assert task.board_id == "default"
+    assert task.external_task_id == id
+    assert task.workspace_locator == nil
 
     assert [[^id, "default", ^id]] =
              Repo.query!(

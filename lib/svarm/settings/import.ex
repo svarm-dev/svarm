@@ -6,6 +6,7 @@ defmodule Svarm.Settings.Import do
   credential ids, or nil when the secret lives only in the environment.
   """
 
+  alias Svarm.KanbanBridge
   alias Svarm.Provider.Resolve, as: ProviderResolve
   alias Svarm.Settings
   alias Svarm.Settings.Catalog.Store, as: CatalogStore
@@ -29,7 +30,14 @@ defmodule Svarm.Settings.Import do
   """
   @spec run() :: {:ok, map() | :already_imported} | {:error, term()}
   def run do
-    CatalogStore.insert_first_revision(snapshot())
+    case CatalogStore.insert_first_revision(snapshot()) do
+      {:ok, %{} = saved} ->
+        KanbanBridge.stamp_legacy_locators()
+        {:ok, saved}
+
+      other ->
+        other
+    end
   end
 
   defp snapshot do

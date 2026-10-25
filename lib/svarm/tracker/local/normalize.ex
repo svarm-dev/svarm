@@ -12,8 +12,12 @@ defmodule Svarm.Tracker.Local.Normalize do
   def from_map(map) when is_map(map) do
     %Issue{
       id: map[:id],
-      # local: source_id == id
-      source_id: map[:id],
+      # Pre-import rows copy external_task_id from id, so source_id stays the
+      # legacy workspace key. A shared external id is not the row id.
+      source_id: map[:external_task_id] || map[:id],
+      board_id: map[:board_id],
+      external_task_id: map[:external_task_id] || map[:id],
+      workspace_locator: map[:workspace_locator],
       title: map[:title],
       body: map[:body],
       type: map[:type] || "code",

@@ -41,7 +41,10 @@ defmodule Svarm.Issue do
     pending_question: nil,
     # Operator follow-up queued after settle (review/failed), shown to the next
     # spawn once then cleared (Local metadata / GitHub issue-body marker)
-    follow_up: nil
+    follow_up: nil,
+    board_id: nil,
+    external_task_id: nil,
+    workspace_locator: nil
   ]
 
   @type t :: %__MODULE__{
@@ -62,6 +65,9 @@ defmodule Svarm.Issue do
           wait_reason: String.t() | nil,
           pending_question: map() | nil,
           follow_up: String.t() | nil,
+          board_id: String.t() | nil,
+          external_task_id: String.t() | nil,
+          workspace_locator: String.t() | nil,
           tracker: atom(),
           raw: map() | nil
         }

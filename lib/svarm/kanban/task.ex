@@ -22,6 +22,7 @@ defmodule Svarm.Kanban.Task do
     field(:follow_up, :string)
     field(:board_id, :string, default: "default")
     field(:external_task_id, :string)
+    field(:workspace_locator, :string)
   end
 
   @doc """
@@ -49,7 +50,8 @@ defmodule Svarm.Kanban.Task do
       :pending_question,
       :follow_up,
       :board_id,
-      :external_task_id
+      :external_task_id,
+      :workspace_locator
     ])
     |> copy_external_task_id()
     |> Ecto.Changeset.validate_required([:id, :title, :board_id, :external_task_id])

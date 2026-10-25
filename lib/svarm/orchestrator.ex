@@ -52,7 +52,7 @@ defmodule Svarm.Orchestrator do
     Workspace
   }
 
-  alias Svarm.Orchestrator.{Dispatch, Issues, Reconcile, Resume, RunExit, Status}
+  alias Svarm.Orchestrator.{Dispatch, Issues, Reconcile, Resume, RunExit, Scope, Status}
 
   alias Svarm.Workflow.Config, as: WorkflowConfig
 
@@ -85,6 +85,8 @@ defmodule Svarm.Orchestrator do
     active_states: @default_active_states,
     terminal_states: @default_terminal_states,
     running: %{},
+    # nil until a catalog revision exists. Then %{revision, boards}.
+    catalog: nil,
     retry_attempts: %{},
     claimed: MapSet.new(),
     completed: MapSet.new(),
@@ -259,7 +261,7 @@ defmodule Svarm.Orchestrator do
 
   @impl true
   def handle_info(:tick, state) do
-    state = %{state | issue_cache: %{}}
+    state = Scope.refresh(%{state | issue_cache: %{}})
     state = Reconcile.run(state)
     state = Resume.ci(state)
     state = Resume.review(state)
@@ -302,7 +304,7 @@ defmodule Svarm.Orchestrator do
           %{state | running: running, claimed: MapSet.delete(state.claimed, task_id)}
           |> Map.update!(:last_run_entries, &Map.put(&1, task_id, entry))
 
-        Logger.warning("worker crashed for #{task_id}: #{inspect(reason)}")
+        Logger.warning("worker crashed for #{inspect(task_id)}: #{inspect(reason)}")
         Usage.ensure_attempt_row(entry)
         state = RunExit.schedule_retry(state, entry.task, {:crash, reason})
         {:noreply, state}
@@ -313,9 +315,14 @@ defmodule Svarm.Orchestrator do
   ## retry timer
 
   def handle_info({:retry, task_id}, state) do
-    {entry, retry_map} = Map.pop(state.retry_attempts, task_id)
-    state = %{state | retry_attempts: retry_map}
-    {:noreply, RunExit.do_retry(state, entry, task_id)}
+    case Map.pop(state.retry_attempts, task_id) do
+      {nil, retry_map} ->
+        {:noreply, %{state | retry_attempts: retry_map}}
+
+      {entry, retry_map} ->
+        state = %{state | retry_attempts: retry_map}
+        {:noreply, RunExit.do_retry(state, entry, task_id)}
+    end
   end
 
   ## force-terminal status patch (non-blocking retries)

@@ -41,14 +41,11 @@ defmodule Svarm.Workspace do
   def ensure(identifier, root \\ @default_root, opts \\ [])
 
   def ensure(identifier, root, opts) when is_binary(identifier) and is_list(opts) do
-    with {:ok, isolation} <- isolation_mode(Keyword.get(opts, :isolation, :path)),
-         {:ok, abs, root_abs, key} <- resolve_path(identifier, root) do
-      case isolation do
-        :path -> ensure_path(abs)
-        :worktree -> ensure_worktree(abs, root_abs, key, opts)
-        :clone -> ensure_clone(abs, root_abs, opts)
-      end
-    end
+    ensure_resolved(identifier, root, opts, &resolve_path/2)
+  end
+
+  def ensure({:locator, relative}, root, opts) when is_binary(relative) and is_list(opts) do
+    ensure_resolved(relative, root, opts, &resolve_locator/2)
   end
 
   @doc """
@@ -63,14 +60,11 @@ defmodule Svarm.Workspace do
   def cleanup(identifier, root \\ @default_root, opts \\ [])
 
   def cleanup(identifier, root, opts) when is_binary(identifier) and is_list(opts) do
-    with {:ok, isolation} <- isolation_mode(Keyword.get(opts, :isolation, :path)),
-         {:ok, abs, _root_abs, _key} <- resolve_path(identifier, root) do
-      case isolation do
-        :path -> cleanup_path(abs)
-        :worktree -> cleanup_worktree(abs, opts)
-        :clone -> cleanup_path(abs)
-      end
-    end
+    cleanup_resolved(identifier, root, opts, &resolve_path/2)
+  end
+
+  def cleanup({:locator, relative}, root, opts) when is_binary(relative) and is_list(opts) do
+    cleanup_resolved(relative, root, opts, &resolve_locator/2)
   end
 
   @doc """
@@ -94,6 +88,28 @@ defmodule Svarm.Workspace do
   defp isolation_mode(nil), do: {:ok, :path}
   defp isolation_mode(_), do: {:error, :invalid_workspace_isolation}
 
+  defp ensure_resolved(identifier, root, opts, resolver) do
+    with {:ok, isolation} <- isolation_mode(Keyword.get(opts, :isolation, :path)),
+         {:ok, abs, root_abs, key} <- resolver.(identifier, root) do
+      case isolation do
+        :path -> ensure_path(abs)
+        :worktree -> ensure_worktree(abs, root_abs, key, opts)
+        :clone -> ensure_clone(abs, root_abs, opts)
+      end
+    end
+  end
+
+  defp cleanup_resolved(identifier, root, opts, resolver) do
+    with {:ok, isolation} <- isolation_mode(Keyword.get(opts, :isolation, :path)),
+         {:ok, abs, _root_abs, _key} <- resolver.(identifier, root) do
+      case isolation do
+        :path -> cleanup_path(abs)
+        :worktree -> cleanup_worktree(abs, opts)
+        :clone -> cleanup_path(abs)
+      end
+    end
+  end
+
   defp resolve_path(identifier, root) do
     key = sanitize(identifier)
     root_abs = Path.expand(root)
@@ -105,6 +121,30 @@ defmodule Svarm.Workspace do
     else
       {:error, {:path_escape, abs, root_abs}}
     end
+  end
+
+  defp resolve_locator(relative, root) do
+    segments = String.split(relative, "/", trim: true)
+
+    cond do
+      segments == [] or Enum.any?(segments, &unsafe_segment?/1) ->
+        {:error, {:path_escape, relative, Path.expand(root)}}
+
+      true ->
+        keys = Enum.map(segments, &sanitize/1)
+        root_abs = Path.expand(root)
+        abs = keys |> Enum.reduce(root_abs, &Path.join(&2, &1)) |> Path.expand()
+
+        if String.starts_with?(abs, root_abs <> "/") do
+          {:ok, abs, root_abs, Path.join(keys)}
+        else
+          {:error, {:path_escape, abs, root_abs}}
+        end
+    end
+  end
+
+  defp unsafe_segment?(segment) do
+    segment in [".", ".."] or String.contains?(segment, "..")
   end
 
   defp ensure_path(abs) do
@@ -603,7 +643,10 @@ defmodule Svarm.Workspace do
   human-friendly while remaining unique per tracker.
   """
   def key_for_issue(issue) when is_map(issue) do
-    Map.get(issue, :source_id) || Map.get(issue, :id) || "unknown"
+    case Map.get(issue, :workspace_locator) do
+      loc when is_binary(loc) and loc != "" -> {:locator, loc}
+      _ -> Map.get(issue, :source_id) || Map.get(issue, :id) || "unknown"
+    end
   end
 
   def key_for_issue(_), do: "unknown"

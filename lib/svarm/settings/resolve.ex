@@ -60,6 +60,15 @@ defmodule Svarm.Settings.Resolve do
 
   def tracker_overlay(_), do: %{}
 
+  @doc """
+  Runtime tracker config for one catalog board map.
+
+  Same secret and kind rules as the default-board overlay. Does not choose
+  an adapter module. Call `Svarm.Tracker.Resolve.adapter_and_config/1`.
+  """
+  def tracker_config(tracker) when is_map(tracker), do: runtime_tracker(tracker)
+  def tracker_config(_), do: runtime_tracker(%{})
+
   defp legacy_tracker_overlay(base) do
     case Settings.get_raw("tracker") do
       {:ok, data} when map_size(data) > 0 -> merge_tracker(base, stringify(data))
