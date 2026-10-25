@@ -126,20 +126,18 @@ defmodule Svarm.Workspace do
   defp resolve_locator(relative, root) do
     segments = String.split(relative, "/", trim: true)
 
-    cond do
-      segments == [] or Enum.any?(segments, &unsafe_segment?/1) ->
-        {:error, {:path_escape, relative, Path.expand(root)}}
+    if segments == [] or Enum.any?(segments, &unsafe_segment?/1) do
+      {:error, {:path_escape, relative, Path.expand(root)}}
+    else
+      keys = Enum.map(segments, &sanitize/1)
+      root_abs = Path.expand(root)
+      abs = keys |> Enum.reduce(root_abs, &Path.join(&2, &1)) |> Path.expand()
 
-      true ->
-        keys = Enum.map(segments, &sanitize/1)
-        root_abs = Path.expand(root)
-        abs = keys |> Enum.reduce(root_abs, &Path.join(&2, &1)) |> Path.expand()
-
-        if String.starts_with?(abs, root_abs <> "/") do
-          {:ok, abs, root_abs, Path.join(keys)}
-        else
-          {:error, {:path_escape, abs, root_abs}}
-        end
+      if String.starts_with?(abs, root_abs <> "/") do
+        {:ok, abs, root_abs, Path.join(keys)}
+      else
+        {:error, {:path_escape, abs, root_abs}}
+      end
     end
   end
 

@@ -79,15 +79,18 @@ defmodule Svarm.Settings.Import do
     config
     |> Map.new(fn {key, value} -> {to_string(key), value} end)
     |> Map.take(@tracker_fields)
-    |> Enum.reduce(%{}, fn {key, value}, acc ->
-      case encode_value(value) do
-        {:ok, encoded} ->
-          if secret_value?(encoded), do: acc, else: Map.put(acc, key, encoded)
+    |> Enum.reduce(%{}, fn {key, value}, acc -> put_encoded(acc, key, value) end)
+  end
 
-        :drop ->
-          acc
-      end
-    end)
+  defp put_encoded(acc, key, value) do
+    case encode_value(value) do
+      {:ok, encoded} -> keep_public(acc, key, encoded)
+      :drop -> acc
+    end
+  end
+
+  defp keep_public(acc, key, encoded) do
+    if secret_value?(encoded), do: acc, else: Map.put(acc, key, encoded)
   end
 
   defp encode_value(value) when is_binary(value) and value != "", do: {:ok, value}

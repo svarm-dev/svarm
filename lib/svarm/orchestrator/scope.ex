@@ -11,20 +11,20 @@ defmodule Svarm.Orchestrator.Scope do
   alias Svarm.Settings.Catalog.Store, as: CatalogStore
 
   @doc false
-  def refresh(state) do
-    %{state | catalog: load_catalog()}
-  end
+  def refresh(state), do: state
 
   @doc false
-  def catalog?(%{catalog: %{revision: rev}}) when is_integer(rev), do: true
-  def catalog?(_), do: false
-
-  @doc "Enabled catalog boards, or `:legacy` when no revision exists."
-  def enabled_boards(%{catalog: %{boards: boards}}) when is_list(boards) do
-    Enum.filter(boards, &(&1.enabled == true))
+  def catalog?(_state) do
+    match?(%{revision: rev} when is_integer(rev), load_catalog())
   end
 
-  def enabled_boards(_), do: :legacy
+  @doc "Enabled catalog boards, or `:legacy` when no revision exists."
+  def enabled_boards(_state) do
+    case load_catalog() do
+      %{boards: boards} when is_list(boards) -> Enum.filter(boards, &(&1.enabled == true))
+      _ -> :legacy
+    end
+  end
 
   @doc false
   def run_key(state, task) do
@@ -96,7 +96,13 @@ defmodule Svarm.Orchestrator.Scope do
   def instance_cap(_), do: 3
 
   @doc false
-  def board_cap(%{catalog: %{boards: boards}}, board_id) when is_binary(board_id) do
+  def board_cap(_state, board_id) when is_binary(board_id) do
+    boards =
+      case load_catalog() do
+        %{boards: list} when is_list(list) -> list
+        _ -> []
+      end
+
     case Enum.find(boards, &(&1.id == board_id)) do
       %{max_concurrent: n} when is_integer(n) -> n
       _ -> nil

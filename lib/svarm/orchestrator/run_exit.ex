@@ -33,23 +33,7 @@ defmodule Svarm.Orchestrator.RunExit do
       |> Map.update!(:claimed, &MapSet.delete(&1, key))
       |> Map.update!(:last_run_entries, &Map.put(&1, key, entry))
 
-    case result do
-      :ok ->
-        case tracker.get_issue(config, id) do
-          {:ok, %{status: status}} ->
-            if status not in state.terminal_states do
-              tracker.update_status(config, id, "review")
-            end
-
-          _ ->
-            :ok
-        end
-
-        %{state | completed: MapSet.put(state.completed, key)}
-
-      {:error, reason} ->
-        schedule_retry(state, entry.task, reason)
-    end
+    finish_scoped(state, entry, key, id, tracker, config, result)
   end
 
   def handle(state, entry, task_id, result) do
@@ -61,6 +45,25 @@ defmodule Svarm.Orchestrator.RunExit do
       |> Map.update!(:last_run_entries, &Map.put(&1, task_id, entry))
 
     handle_result(state, task_id, result)
+  end
+
+  defp finish_scoped(state, _entry, key, id, tracker, config, :ok) do
+    maybe_force_review(tracker, config, id, state.terminal_states)
+    %{state | completed: MapSet.put(state.completed, key)}
+  end
+
+  defp finish_scoped(state, entry, _key, _id, _tracker, _config, {:error, reason}) do
+    schedule_retry(state, entry.task, reason)
+  end
+
+  defp maybe_force_review(tracker, config, id, terminal_states) do
+    case tracker.get_issue(config, id) do
+      {:ok, %{status: status}} ->
+        if status not in terminal_states, do: tracker.update_status(config, id, "review")
+
+      _ ->
+        :ok
+    end
   end
 
   @doc false
@@ -111,11 +114,16 @@ defmodule Svarm.Orchestrator.RunExit do
 
     case state.tracker.get_issue(state.tracker_config, task_id) do
       {:ok, fresh} ->
-        if queued_follow_up?(fresh) do
-          Logger.info("task #{task_id} has a queued follow-up; skip exit retry")
-          state
-        else
-          do_schedule_retry(state, task, key, reason)
+        cond do
+          queued_follow_up?(fresh) ->
+            Logger.info("task #{task_id} has a queued follow-up; skip exit retry")
+            state
+
+          fresh.status in state.terminal_states ->
+            %{state | claimed: MapSet.delete(state.claimed, key)}
+
+          true ->
+            do_schedule_retry(state, task, key, reason)
         end
 
       _ ->

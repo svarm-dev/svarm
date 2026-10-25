@@ -214,7 +214,7 @@ defmodule Svarm.OrchestratorAdmissionTest do
              end)
 
       state = :sys.get_state(Orchestrator)
-      assert state.catalog == nil
+      refute Svarm.Orchestrator.Scope.catalog?(state)
       refute Map.has_key?(state.running, {"default", task.id})
       assert File.dir?(Path.join(root, task.id))
       refute File.dir?(Path.join([root, "default", task.id]))

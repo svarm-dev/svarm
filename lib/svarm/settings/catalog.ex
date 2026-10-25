@@ -637,15 +637,14 @@ defmodule Svarm.Settings.Catalog do
 
   defp fetch(map, key) when is_binary(key) do
     cond do
-      Map.has_key?(map, key) ->
-        {:ok, Map.get(map, key)}
-
-      true ->
-        case known_atom(key) do
-          nil -> :error
-          atom -> if Map.has_key?(map, atom), do: {:ok, Map.get(map, atom)}, else: :error
-        end
+      Map.has_key?(map, key) -> {:ok, Map.get(map, key)}
+      atom = known_atom(key) -> fetch_atom(map, atom)
+      true -> :error
     end
+  end
+
+  defp fetch_atom(map, atom) do
+    if Map.has_key?(map, atom), do: {:ok, Map.get(map, atom)}, else: :error
   end
 
   defp known_atom(key) do

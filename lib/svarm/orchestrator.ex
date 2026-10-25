@@ -85,8 +85,6 @@ defmodule Svarm.Orchestrator do
     active_states: @default_active_states,
     terminal_states: @default_terminal_states,
     running: %{},
-    # nil until a catalog revision exists. Then %{revision, boards}.
-    catalog: nil,
     retry_attempts: %{},
     claimed: MapSet.new(),
     completed: MapSet.new(),

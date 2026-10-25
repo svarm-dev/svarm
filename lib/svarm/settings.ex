@@ -8,8 +8,8 @@ defmodule Svarm.Settings do
   """
 
   alias Svarm.Provider
-  alias Svarm.Settings.{Crypto, Import, Resolve, Store}
   alias Svarm.Settings.Catalog.Store, as: CatalogStore
+  alias Svarm.Settings.{Crypto, Import, Resolve, Store}
   alias Svarm.Tracker
 
   @secret_fields %{
