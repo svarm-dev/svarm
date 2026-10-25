@@ -7,6 +7,7 @@ defmodule Svarm.Orchestrator.Scope do
   `{board_id, external_task_id}`. A bare external id is not a key.
   """
 
+  alias Svarm.KanbanBridge
   alias Svarm.Settings.Catalog.Store, as: CatalogStore
 
   @doc false
@@ -42,8 +43,41 @@ defmodule Svarm.Orchestrator.Scope do
   @doc false
   def board_id(task) when is_map(task), do: Map.get(task, :board_id)
 
+  @doc """
+  Map a public task id onto the key dispatch checks.
+
+  A live run keeps the key it was admitted under. After import, a task that
+  is not running uses `{board_id, external_task_id}`. Before import the key
+  stays the task id.
+  """
+  def key_for_id(state, task_id) when is_binary(task_id) do
+    cond do
+      key = running_key(state, task_id) -> key
+      catalog?(state) -> task_key(task_id)
+      true -> task_id
+    end
+  end
+
   @doc false
   def id(task) when is_map(task), do: Map.get(task, :id)
+
+  defp running_key(state, task_id) do
+    Enum.find_value(state.running || %{}, fn
+      {key, %{task: %{id: ^task_id}}} -> key
+      _ -> nil
+    end)
+  end
+
+  defp task_key(task_id) do
+    case KanbanBridge.get_task(task_id) do
+      %{board_id: board, external_task_id: ext}
+      when is_binary(board) and is_binary(ext) ->
+        {board, ext}
+
+      _ ->
+        task_id
+    end
+  end
 
   @doc """
   Admit a new run. Caps only refuse the new admit. Nothing running is removed.

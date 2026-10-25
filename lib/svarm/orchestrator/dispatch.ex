@@ -175,7 +175,7 @@ defmodule Svarm.Orchestrator.Dispatch do
 
   defp maybe_gate_or_spawn(state, task) do
     cond do
-      budget_held_without_permit?(state, task.id) ->
+      budget_held_without_permit?(state, task) ->
         state
 
       not MapSet.member?(state.approved_once, Scope.run_key(state, task)) and
@@ -296,8 +296,9 @@ defmodule Svarm.Orchestrator.Dispatch do
     end
   end
 
-  defp budget_held_without_permit?(state, task_id) do
-    Budget.held?(task_id) and not MapSet.member?(state.overage_once || MapSet.new(), task_id)
+  defp budget_held_without_permit?(state, task) do
+    Budget.held?(task.id) and
+      not MapSet.member?(state.overage_once || MapSet.new(), Scope.run_key(state, task))
   end
 
   # PATH-only host-tool contract (agents.toml `tools` / `tools_mode`).

@@ -164,6 +164,30 @@ defmodule Svarm.OrchestratorAdmissionTest do
     end
   end
 
+  test "approval for one board does not permit the same external id on another" do
+    original = :sys.get_state(Orchestrator)
+    insert_boards([board("alpha"), board("beta")])
+    alpha = task("alpha", "EXT-1", "alpha approval")
+    beta = task("beta", "EXT-1", "beta approval")
+
+    try do
+      assert :ok = Orchestrator.mark_approved(alpha.id)
+
+      state = :sys.get_state(Orchestrator)
+      assert MapSet.member?(state.approved_once, {"alpha", "EXT-1"})
+      refute MapSet.member?(state.approved_once, {"beta", "EXT-1"})
+      refute MapSet.member?(state.approved_once, alpha.id)
+
+      assert {:ok, _} = Orchestrator.begin_approve(beta.id)
+      state = :sys.get_state(Orchestrator)
+      assert MapSet.member?(state.approved_once, {"beta", "EXT-1"})
+      assert MapSet.member?(state.claimed, {"beta", "EXT-1"})
+      refute MapSet.member?(state.claimed, beta.id)
+    after
+      :sys.replace_state(Orchestrator, fn _ -> original end)
+    end
+  end
+
   test "no catalog revision still dispatches the current single tracker" do
     root = workspace_root()
     assert Store.latest_revision() == nil

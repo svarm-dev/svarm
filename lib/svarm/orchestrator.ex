@@ -392,12 +392,17 @@ defmodule Svarm.Orchestrator do
 
   @impl true
   def handle_call({:mark_overage_approved, task_id}, _from, state) when is_binary(task_id) do
-    {:reply, :ok,
-     %{state | overage_once: MapSet.put(state.overage_once || MapSet.new(), task_id)}}
+    state = Scope.refresh(state)
+    key = Scope.key_for_id(state, task_id)
+
+    {:reply, :ok, %{state | overage_once: MapSet.put(state.overage_once || MapSet.new(), key)}}
   end
 
   def handle_call({:abort, task_id}, _from, state) when is_binary(task_id) do
-    case Map.pop(state.running, task_id) do
+    state = Scope.refresh(state)
+    key = Scope.key_for_id(state, task_id)
+
+    case Map.pop(state.running, key) do
       {nil, _} ->
         {:reply, {:error, :not_running}, state}
 
@@ -405,10 +410,10 @@ defmodule Svarm.Orchestrator do
         state = %{
           state
           | running: running,
-            claimed: MapSet.delete(state.claimed, task_id)
+            claimed: MapSet.delete(state.claimed, key)
         }
 
-        state = cancel_retry_for(state, task_id)
+        state = cancel_retry_for(state, key)
         drop_worker_monitor(entry)
 
         # Snapshot before kill. CLI/PiRPC write failed/review on port death;
@@ -428,7 +433,9 @@ defmodule Svarm.Orchestrator do
   end
 
   def handle_call({:release_completed, task_id}, _from, state) when is_binary(task_id) do
-    {:reply, :ok, %{state | completed: MapSet.delete(state.completed, task_id)}}
+    state = Scope.refresh(state)
+    key = Scope.key_for_id(state, task_id)
+    {:reply, :ok, %{state | completed: MapSet.delete(state.completed, key)}}
   end
 
   @impl true
@@ -441,19 +448,24 @@ defmodule Svarm.Orchestrator do
 
   @impl true
   def handle_call({:mark_approved, task_id}, _from, state) when is_binary(task_id) do
-    {:reply, :ok, %{state | approved_once: MapSet.put(state.approved_once, task_id)}}
+    state = Scope.refresh(state)
+    key = Scope.key_for_id(state, task_id)
+    {:reply, :ok, %{state | approved_once: MapSet.put(state.approved_once, key)}}
   end
 
   def handle_call({:begin_approve, task_id}, _from, state) when is_binary(task_id) do
+    state = Scope.refresh(state)
+    key = Scope.key_for_id(state, task_id)
+
     owned = %{
-      permit: MapSet.member?(state.approved_once, task_id),
-      claim: MapSet.member?(state.claimed, task_id)
+      permit: MapSet.member?(state.approved_once, key),
+      claim: MapSet.member?(state.claimed, key)
     }
 
     state = %{
       state
-      | approved_once: MapSet.put(state.approved_once, task_id),
-        claimed: MapSet.put(state.claimed, task_id)
+      | approved_once: MapSet.put(state.approved_once, key),
+        claimed: MapSet.put(state.claimed, key)
     }
 
     {:reply, {:ok, owned}, state}
@@ -461,16 +473,21 @@ defmodule Svarm.Orchestrator do
 
   def handle_call({:finish_approve, task_id, :ok, owned}, _from, state)
       when is_binary(task_id) and is_map(owned) do
-    claimed = if owned.claim, do: state.claimed, else: MapSet.delete(state.claimed, task_id)
+    state = Scope.refresh(state)
+    key = Scope.key_for_id(state, task_id)
+    claimed = if owned.claim, do: state.claimed, else: MapSet.delete(state.claimed, key)
     {:reply, :ok, %{state | claimed: claimed}}
   end
 
   def handle_call({:finish_approve, task_id, :error, owned}, _from, state)
       when is_binary(task_id) and is_map(owned) do
-    approved =
-      if owned.permit, do: state.approved_once, else: MapSet.delete(state.approved_once, task_id)
+    state = Scope.refresh(state)
+    key = Scope.key_for_id(state, task_id)
 
-    claimed = if owned.claim, do: state.claimed, else: MapSet.delete(state.claimed, task_id)
+    approved =
+      if owned.permit, do: state.approved_once, else: MapSet.delete(state.approved_once, key)
+
+    claimed = if owned.claim, do: state.claimed, else: MapSet.delete(state.claimed, key)
 
     {:reply, :ok, %{state | approved_once: approved, claimed: claimed}}
   end
