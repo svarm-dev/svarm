@@ -310,6 +310,45 @@ defmodule Svarm.OrchestratorAdmissionTest do
     assert_receive {:summary, "node-scoped-summary", %{run_id: "run_scoped_summary"}}
   end
 
+  test "scheduling a scoped retry keeps the board key from the run config" do
+    task = task("alpha", "EXT-SCHEDULE", "scheduled retry")
+
+    entry = %{
+      run_id: "run_scoped_schedule",
+      task: task,
+      tracker: Svarm.Tracker.Local,
+      tracker_config: %{
+        kind: :local,
+        board_id: "alpha",
+        board_concurrency_cap: 1,
+        active_states: ["todo", "in_progress"],
+        terminal_states: ["done", "failed", "review"]
+      }
+    }
+
+    state = :sys.get_state(Orchestrator)
+
+    state = %{
+      state
+      | tracker: Svarm.Tracker.Local,
+        tracker_config: %{kind: :local, board_id: "beta"},
+        claimed: MapSet.new([{"alpha", "EXT-SCHEDULE"}]),
+        last_run_entries: %{{"alpha", "EXT-SCHEDULE"} => entry}
+    }
+
+    result = RunExit.schedule_retry(state, task, :agent_exit)
+
+    try do
+      retry = Map.fetch!(result.retry_attempts, {"alpha", "EXT-SCHEDULE"})
+      assert retry.task.board_id == "alpha"
+      assert retry.tracker_config.board_id == "alpha"
+    after
+      Enum.each(result.retry_attempts, fn {_key, retry} ->
+        if is_reference(retry[:timer]), do: Process.cancel_timer(retry.timer)
+      end)
+    end
+  end
+
   test "retry refetch keeps the board key and uses the run tracker config" do
     task = task("alpha", "EXT-RETRY", "retry ticket")
 

@@ -132,11 +132,10 @@ defmodule Svarm.Orchestrator.RunExit do
   def schedule_retry(state, nil, _reason), do: state
 
   def schedule_retry(state, %{id: task_id} = task, reason) do
-    key = Scope.run_key(state, task)
-
     entry = find_run_entry(state, task_id)
     tracker = entry_tracker(state, entry || %{})
     config = entry_config(state, entry || %{})
+    key = Scope.run_key(%{state | tracker_config: config}, task)
 
     case tracker.get_issue(config, task_id) do
       {:ok, fresh} ->
