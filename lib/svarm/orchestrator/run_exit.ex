@@ -84,7 +84,7 @@ defmodule Svarm.Orchestrator.RunExit do
       {:ok, task} ->
         task = preserve_scope(task, entry)
 
-        if task.status in state.terminal_states do
+        if task.status in state.terminal_states and task.status != "failed" do
           %{state | claimed: MapSet.delete(state.claimed, task_id)}
         else
           retry_or_spawn(state, task, task_id, entry, tracker, config)
