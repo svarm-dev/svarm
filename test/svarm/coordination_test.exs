@@ -183,6 +183,69 @@ defmodule Svarm.CoordinationTest do
              "https://github.com/acme/app/pull/3"
   end
 
+  test "record_pr accepts a Forgejo pull URL" do
+    assert {:ok, row} =
+             Coordination.record_pr(
+               "task_forgejo",
+               "https://git.example.test/homelab/svarm/pulls/2"
+             )
+
+    assert row.pr_owner == "homelab"
+    assert row.pr_repo == "svarm"
+    assert row.pr_number == 2
+    assert row.pr_url == "https://git.example.test/homelab/svarm/pulls/2"
+  end
+
+  test "extract_pr_url captures a bare Forgejo pull URL on the configured code host" do
+    log = "https://git.example.test/homelab/svarm/pulls/2"
+
+    assert Coordination.extract_pr_url(
+             log,
+             git_remote: "https://git.example.test/homelab/svarm.git"
+           ) == "https://git.example.test/homelab/svarm/pulls/2"
+  end
+
+  test "extract_pr_url ignores a Forgejo pull URL on a different code host" do
+    log = "https://git.example.test/homelab/svarm/pulls/2"
+
+    assert Coordination.extract_pr_url(
+             log,
+             git_remote: "https://git.other.test/homelab/svarm.git"
+           ) == nil
+  end
+
+  test "extract_pr_url keeps GitHub ranking when a ticket line beats a later bare URL" do
+    log = """
+    **PR:** https://github.com/org/repo/pull/9 (Closes #264)
+    https://github.com/org/repo/pull/10
+    """
+
+    assert Coordination.extract_pr_url(log, source_id: "264") ==
+             "https://github.com/org/repo/pull/9"
+  end
+
+  test "extract_pr_url captures a Forgejo pull URL on a line naming a Kaneo ticket" do
+    log =
+      "**PR:** https://git.example.test/homelab/svarm/pulls/2 (branch `svarm/l1uabr5nk4vujdaftxlh009l`)"
+
+    assert Coordination.extract_pr_url(
+             log,
+             source_id: "l1uabr5nk4vujdaftxlh009l",
+             git_remote: "https://git.example.test/homelab/svarm.git"
+           ) == "https://git.example.test/homelab/svarm/pulls/2"
+  end
+
+  test "extract_pr_url ignores a changelog line that merely mentions a Forgejo pull URL" do
+    log =
+      "- **Forgejo** ([#2](https://git.example.test/homelab/svarm/pulls/2)): changelog citation"
+
+    assert Coordination.extract_pr_url(
+             log,
+             source_id: "l1uabr5nk4vujdaftxlh009l",
+             git_remote: "https://git.example.test/homelab/svarm.git"
+           ) == nil
+  end
+
   test "list_with_pr skips circuit-open by default" do
     {:ok, _} =
       Coordination.record_pr("open_pr", "https://github.com/o/r/pull/1")
