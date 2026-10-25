@@ -42,7 +42,18 @@ defmodule Svarm.Orchestrator.Status do
       budget_mode: state.budget_mode || :hard,
       last_budget_block: state.last_budget_block,
       ci_resume: state.ci_resume_caps || %{enabled: false},
-      review_resume: state.review_resume_caps || %{enabled: false}
+      review_resume: state.review_resume_caps || %{enabled: false},
+      board_ids: running_board_ids(state)
     }
+  end
+
+  defp running_board_ids(state) do
+    state.running
+    |> Enum.flat_map(fn
+      {{board_id, _ext}, _entry} when is_binary(board_id) -> [board_id]
+      {_key, %{board_id: board_id}} when is_binary(board_id) -> [board_id]
+      _ -> []
+    end)
+    |> Enum.uniq()
   end
 end

@@ -25,6 +25,7 @@ defmodule Svarm.Events do
   end
 
   def broadcast_task_updated(task) when is_map(task) do
+    task = Map.put_new(task, :board_id, nil)
     id = Map.get(task, :id)
     status = Map.get(task, :status)
 

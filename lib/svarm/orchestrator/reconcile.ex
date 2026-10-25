@@ -23,18 +23,38 @@ defmodule Svarm.Orchestrator.Reconcile do
 
   @doc false
   def sync_tracker(state) do
-    ids =
+    keys =
       (Map.keys(state.running) ++ MapSet.to_list(state.claimed) ++ Map.keys(state.retry_attempts))
       |> Enum.uniq()
 
-    state = Issues.prefetch(state, ids)
+    {legacy, scoped} = Enum.split_with(keys, &is_binary/1)
+    state = Issues.prefetch(state, legacy)
 
-    Enum.reduce(ids, state, fn task_id, acc ->
-      case Issues.lookup(acc, task_id) do
-        {:ok, issue} -> maybe_release_if_terminal(acc, task_id, issue)
-        {:error, reason} -> reconcile_get_issue_error(acc, task_id, reason)
-      end
-    end)
+    state =
+      Enum.reduce(legacy, state, fn task_id, acc ->
+        case Issues.lookup(acc, task_id) do
+          {:ok, issue} -> maybe_release_if_terminal(acc, task_id, issue)
+          {:error, reason} -> reconcile_get_issue_error(acc, task_id, reason)
+        end
+      end)
+
+    Enum.reduce(scoped, state, &sync_scoped/2)
+  end
+
+  defp sync_scoped(key, state) do
+    case Map.get(state.running, key) do
+      %{task: %{id: id}} = entry when is_binary(id) ->
+        tracker = entry[:tracker] || state.tracker
+        config = entry[:tracker_config] || state.tracker_config
+
+        case Issues.get(tracker, config, id) do
+          {:ok, issue} -> maybe_release_if_terminal(state, key, issue)
+          {:error, reason} -> reconcile_get_issue_error(state, key, reason)
+        end
+
+      _ ->
+        state
+    end
   end
 
   defp reconcile_stalls(%{stall_timeout_ms: stall} = state) when stall <= 0, do: state
@@ -50,7 +70,7 @@ defmodule Svarm.Orchestrator.Reconcile do
 
     Enum.reduce(state.running, state, fn {task_id, e}, acc ->
       if now - e.started_mono_ms > state.stall_timeout_ms do
-        Logger.warning("stall: killing worker for #{task_id}")
+        Logger.warning("stall: killing worker for #{label(task_id)}")
         kill_worker(e.pid, :stall)
         Usage.ensure_attempt_row(e)
 
@@ -69,11 +89,11 @@ defmodule Svarm.Orchestrator.Reconcile do
 
   defp reconcile_get_issue_error(acc, task_id, reason) do
     if gone_issue?(reason) do
-      Logger.info("tracker reconcile: #{task_id} missing (#{inspect(reason)}), releasing")
+      Logger.info("tracker reconcile: #{label(task_id)} missing (#{inspect(reason)}), releasing")
       release_task(acc, task_id)
     else
       Logger.warning(
-        "tracker reconcile: get_issue failed for #{task_id} (#{inspect(reason)}); keeping in-flight work"
+        "tracker reconcile: get_issue failed for #{label(task_id)} (#{inspect(reason)}); keeping in-flight work"
       )
 
       acc
@@ -88,7 +108,7 @@ defmodule Svarm.Orchestrator.Reconcile do
 
   defp maybe_release_if_terminal(acc, task_id, issue) do
     if issue.status in acc.terminal_states do
-      Logger.info("tracker reconcile: #{task_id} now terminal (#{issue.status}), stopping")
+      Logger.info("tracker reconcile: #{label(task_id)} now terminal (#{issue.status}), stopping")
       release_task(acc, task_id)
     else
       acc
@@ -123,6 +143,9 @@ defmodule Svarm.Orchestrator.Reconcile do
         %{state | running: running}
     end
   end
+
+  defp label(id) when is_binary(id), do: id
+  defp label(id), do: inspect(id)
 
   @doc false
   @spec kill_worker(pid(), term()) :: true
