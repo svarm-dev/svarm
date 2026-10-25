@@ -62,6 +62,20 @@ ENV RELEASE_TMP=/app/tmp
 ENV SVARM_CONFIG_DIR=/app/config
 ENV SVARM_TEMPLATES_DIR=/app/templates
 
+# Agent toolchain, separate from the release at /app.
+# The release `erl` has no compiler. Mixing ROOTDIR with /app makes it try
+# to boot the release and crash. PATH only; agents unset MIX_ENV themselves
+# when they need `mix test`.
+COPY --from=builder /usr/local/lib/elixir /usr/local/lib/elixir
+COPY --from=builder /usr/local/bin/elixir /usr/local/bin/elixirc /usr/local/bin/mix /usr/local/bin/iex /usr/local/bin/
+COPY --from=builder /usr/local/lib/erlang /usr/local/lib/erlang
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/local/lib/erlang/bin/erl /usr/local/lib/erlang/bin/erlc /usr/local/lib/erlang/bin/escript /usr/local/bin/ \
+    && printf '%s\n' '#!/bin/sh' 'exec /usr/local/lib/erlang/bin/erl -pa /usr/local/lib/elixir/ebin "$@"' > /usr/local/bin/elixir-erl \
+    && chmod 755 /usr/local/bin/elixir-erl
+ENV PATH="/usr/local/bin:${PATH}"
+
 # Install pi so agents can be spawned inside the container
 RUN curl -fsSL https://pi.dev/install.sh | sh
 
