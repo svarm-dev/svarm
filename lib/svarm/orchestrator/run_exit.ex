@@ -139,27 +139,24 @@ defmodule Svarm.Orchestrator.RunExit do
 
     case tracker.get_issue(config, task_id) do
       {:ok, fresh} ->
-        cond do
-          queued_follow_up?(fresh) ->
-            Logger.info("task #{task_id} has a queued follow-up; skip exit retry")
-            state
-
-          fresh.status == "done" ->
-            %{state | claimed: MapSet.delete(state.claimed, key)}
-
-          true ->
-            do_schedule_retry(
-              state,
-              preserve_scope(fresh, entry || %{}),
-              key,
-              reason,
-              entry,
-              tracker,
-              config
-            )
-        end
+        schedule_fresh_retry(state, fresh, key, reason, entry, tracker, config)
 
       _ ->
+        do_schedule_retry(state, task, key, reason, entry, tracker, config)
+    end
+  end
+
+  defp schedule_fresh_retry(state, fresh, key, reason, entry, tracker, config) do
+    cond do
+      queued_follow_up?(fresh) ->
+        Logger.info("task #{fresh.id} has a queued follow-up; skip exit retry")
+        state
+
+      fresh.status in state.terminal_states and fresh.status != "failed" ->
+        %{state | claimed: MapSet.delete(state.claimed, key)}
+
+      true ->
+        task = preserve_scope(fresh, entry || %{})
         do_schedule_retry(state, task, key, reason, entry, tracker, config)
     end
   end

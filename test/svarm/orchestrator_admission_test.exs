@@ -310,6 +310,37 @@ defmodule Svarm.OrchestratorAdmissionTest do
     assert_receive {:summary, "node-scoped-summary", %{run_id: "run_scoped_summary"}}
   end
 
+  test "a terminal review ticket does not get reopened by a retry" do
+    task = task("alpha", "EXT-REVIEW-STOP", "review stop", "review")
+    key = {"alpha", "EXT-REVIEW-STOP"}
+
+    entry = %{
+      task: task,
+      tracker: Svarm.Tracker.Local,
+      tracker_config: %{
+        kind: :local,
+        board_id: "alpha",
+        active_states: ["todo", "in_progress"],
+        terminal_states: ["done", "failed", "review"]
+      }
+    }
+
+    state = :sys.get_state(Orchestrator)
+
+    state = %{
+      state
+      | tracker_config: %{kind: :local, board_id: "beta"},
+        terminal_states: ["done", "failed", "review"],
+        claimed: MapSet.new([key]),
+        last_run_entries: %{key => entry}
+    }
+
+    result = RunExit.schedule_retry(state, task, :agent_crash)
+
+    assert Map.get(result.retry_attempts, key) == nil
+    assert KanbanBridge.get_task(task.id).status == "review"
+  end
+
   test "scheduling a scoped retry keeps the board key from the run config" do
     task = task("alpha", "EXT-SCHEDULE", "scheduled retry")
 
