@@ -62,21 +62,22 @@ ENV RELEASE_TMP=/app/tmp
 ENV SVARM_CONFIG_DIR=/app/config
 ENV SVARM_TEMPLATES_DIR=/app/templates
 
-# Agent toolchain, separate from the release at /app.
-# The release `erl` has no compiler. `erl` on PATH is the full OTP, so
-# agents must not point ROOTDIR at /app.
-# elixir's script only adds elixir/ebin. mix and iex live beside it.
+# Agent toolchain, beside the release at /app.
+# The release `erl` under /app has no compiler, so agents get the full OTP
+# below and must not point ROOTDIR at /app.
+# Copy Elixir's whole lib tree: `elixir`, `mix`, and `iex` are not enough —
+# `eex`, `ex_unit`, and `logger` live in the same directory and Mix, Phoenix,
+# and `mix test` load them. Link the front-ends the way upstream lays them
+# out, so each bin script resolves its root from its own path.
 # +fnu: the slim image has no UTF-8 locale, and Elixir warns without it.
-COPY --from=builder /usr/local/lib/elixir/lib/elixir /usr/local/lib/elixir
-COPY --from=builder /usr/local/lib/elixir/lib/mix /usr/local/lib/mix
-COPY --from=builder /usr/local/lib/elixir/lib/iex /usr/local/lib/iex
-COPY --from=builder /usr/local/bin/elixir /usr/local/bin/elixirc /usr/local/bin/mix /usr/local/bin/iex /usr/local/bin/
+COPY --from=builder /usr/local/lib/elixir /usr/local/lib/elixir
 COPY --from=builder /usr/local/lib/erlang /usr/local/lib/erlang
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/* \
-    && ln -sf /usr/local/lib/erlang/bin/erl /usr/local/lib/erlang/bin/erlc /usr/local/lib/erlang/bin/escript /usr/local/bin/
+    && for b in elixir elixirc mix iex; do ln -sf "../lib/elixir/bin/$b" "/usr/local/bin/$b"; done \
+    && for b in erl erlc escript; do ln -sf "../lib/erlang/bin/$b" "/usr/local/bin/$b"; done
 ENV PATH="/usr/local/bin:${PATH}" \
-    ELIXIR_ERL_OPTIONS="+fnu -pa /usr/local/lib/mix/ebin -pa /usr/local/lib/iex/ebin"
+    ELIXIR_ERL_OPTIONS="+fnu"
 
 # Install pi so agents can be spawned inside the container
 RUN curl -fsSL https://pi.dev/install.sh | sh
