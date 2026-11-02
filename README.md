@@ -181,6 +181,8 @@ Optional UI config after the demo: open `/setup` (same auth as `/approvals` in D
 
 Source code and API keys stay on your machines. You can run a local tracker and keep LLM traffic on whatever provider you configure. There is no Svärm cloud in the middle of that path.
 
+The **Cher dogfood board** (the instance the maintainers run daily) uses **Kaneo** for tickets and **Forgejo** for the git remote, and a human still merges.
+
 ## License
 
 Svärm is licensed under the **[Functional Source License, Version 1.1, MIT Future License](LICENSE)** ([FSL-1.1-MIT](https://fsl.software/)).

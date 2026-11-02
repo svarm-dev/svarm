@@ -61,6 +61,23 @@ defmodule Svarm.UsageTest do
       records = Usage.for_task("task_multi")
       assert Enum.count(records) == 2
     end
+
+    test "stores an integer provider cost as a float" do
+      record =
+        Usage.append(%{
+          run_id: "run_zero",
+          task_id: "task_zero",
+          source: "worker",
+          provider: "opencode-go",
+          model_id: "deepseek-v4-flash",
+          prompt_tokens: 10,
+          completion_tokens: 0,
+          provider_cost_usd: 0,
+          estimated: false
+        })
+
+      assert record.provider_cost_usd == 0.0
+    end
   end
 
   describe "cost_usd/4" do

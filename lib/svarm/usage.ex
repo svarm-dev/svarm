@@ -83,7 +83,13 @@ defmodule Svarm.Usage do
       prompt_tokens: Map.get(attrs, :prompt_tokens),
       completion_tokens: Map.get(attrs, :completion_tokens),
       estimated: Map.get(attrs, :estimated, false),
-      provider_cost_usd: Map.get(attrs, :provider_cost_usd)
+      provider_cost_usd: coerce_cost(Map.get(attrs, :provider_cost_usd))
     }
   end
+
+  # Ecto :float rejects an integer. Pi reports a zero bill as `0`.
+  # nil stays "not reported", not a fake zero.
+  defp coerce_cost(n) when is_integer(n), do: n * 1.0
+  defp coerce_cost(n) when is_float(n), do: n
+  defp coerce_cost(_), do: nil
 end
