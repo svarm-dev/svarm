@@ -124,20 +124,25 @@ defmodule Svarm.Runner.Cli do
   defp write_exit_status(tracker, config, task_id, exit_code) do
     status = if exit_code == 0, do: "review", else: "failed"
 
-    if already_terminal?(tracker, config, task_id) do
+    if settled?(tracker, config, task_id) do
       :ok
     else
       tracker.update_status(config, task_id, status)
     end
   end
 
-  defp already_terminal?(tracker, config, task_id) do
-    function_exported?(tracker, :get_issue, 2) and done_issue?(tracker, config, task_id)
+  # Reconcile kills the worker once a human moves the card, but a late exit can
+  # still land here. Never rewrite a status the tracker already settled: `done`
+  # after a merge, `review` after a review, or `failed` after escalation.
+  defp settled?(tracker, config, task_id) do
+    function_exported?(tracker, :get_issue, 2) and terminal_issue?(tracker, config, task_id)
   end
 
-  defp done_issue?(tracker, config, task_id) do
+  defp terminal_issue?(tracker, config, task_id) do
+    terminal = Map.get(config, :terminal_states) || Tracker.Resolve.default_terminal_states()
+
     case tracker.get_issue(config, task_id) do
-      {:ok, %{status: "done"}} -> true
+      {:ok, %{status: status}} when is_binary(status) -> status in terminal
       _ -> false
     end
   end

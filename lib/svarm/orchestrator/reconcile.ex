@@ -11,7 +11,7 @@ defmodule Svarm.Orchestrator.Reconcile do
   require Logger
 
   alias Svarm.AgentRunner
-  alias Svarm.Orchestrator.{Issues, RunExit}
+  alias Svarm.Orchestrator.{Issues, RunExit, Scope}
   alias Svarm.Usage
 
   @doc false
@@ -41,21 +41,60 @@ defmodule Svarm.Orchestrator.Reconcile do
     Enum.reduce(scoped, state, &sync_scoped/2)
   end
 
-  defp sync_scoped(key, state) do
-    case Map.get(state.running, key) do
-      %{task: %{id: id}} = entry when is_binary(id) ->
-        tracker = entry[:tracker] || state.tracker
-        config = entry[:tracker_config] || state.tracker_config
-
-        case Issues.get(tracker, config, id) do
+  defp sync_scoped({board_id, external} = key, state) when is_binary(external) do
+    case scoped_tracker(state, key, board_id, external) do
+      {:ok, tracker, config, issue_id} ->
+        case Issues.get(tracker, config, issue_id) do
           {:ok, issue} -> maybe_release_if_terminal(state, key, issue)
           {:error, reason} -> reconcile_get_issue_error(state, key, reason)
         end
 
-      _ ->
+      :error ->
         state
     end
   end
+
+  defp sync_scoped(_key, state), do: state
+
+  # A scoped key still has to be reconciled when its run is neither running nor
+  # retrying: a human can close the ticket while it sits claimed, or during a
+  # retry backoff. Prefer the run's own tracker, then the retry entry's, then
+  # the board's catalog binding. Ids come from the entry or the task row because
+  # the key only carries the external id, which is not always the id an adapter
+  # reads back.
+  defp scoped_tracker(state, key, board_id, external) do
+    cond do
+      entry = Map.get(state.running, key) ->
+        run_tracker(state, entry, external)
+
+      entry = Map.get(state.retry_attempts, key) ->
+        retry_tracker(state, entry, external)
+
+      true ->
+        claim_tracker(state, board_id, external)
+    end
+  end
+
+  defp run_tracker(state, %{task: task} = entry, external) do
+    {:ok, entry[:tracker] || state.tracker, entry[:tracker_config] || state.tracker_config,
+     entry_task_id(task) || external}
+  end
+
+  defp retry_tracker(state, entry, external) do
+    id = Map.get(entry, :issue_id) || entry_task_id(Map.get(entry, :task)) || external
+
+    {:ok, entry[:tracker] || state.tracker, entry[:tracker_config] || state.tracker_config, id}
+  end
+
+  defp claim_tracker(state, board_id, external) do
+    with {:ok, tracker, config} <- Scope.tracker_for(state, board_id),
+         {:ok, issue_id} <- Scope.issue_id_for(board_id, external) do
+      {:ok, tracker, config, issue_id}
+    end
+  end
+
+  defp entry_task_id(%{} = task), do: Map.get(task, :id)
+  defp entry_task_id(_), do: nil
 
   defp reconcile_stalls(%{stall_timeout_ms: stall} = state) when stall <= 0, do: state
 

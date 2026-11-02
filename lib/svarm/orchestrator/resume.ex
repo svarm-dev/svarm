@@ -25,7 +25,7 @@ defmodule Svarm.Orchestrator.Resume do
     Tracker
   }
 
-  alias Svarm.Orchestrator.{Issues, Status}
+  alias Svarm.Orchestrator.{Issues, Scope, Status}
   alias Svarm.Tracker.GitHub.Checks
   alias Svarm.Tracker.GitHub.Reviews
 
@@ -74,11 +74,18 @@ defmodule Svarm.Orchestrator.Resume do
     end
   end
 
+  # In-flight work sits under the scoped run key after import, so probing with
+  # the public task id alone would read a live run as idle and reopen it.
+  defp in_flight?(state, task_id) do
+    key = Scope.key_for_id(state, task_id)
+    Map.has_key?(state.running, key) or MapSet.member?(state.claimed, key)
+  end
+
   defp maybe_ci_poll_one(state, coord, caps) do
     task_id = coord.task_id
 
     cond do
-      Map.has_key?(state.running, task_id) or MapSet.member?(state.claimed, task_id) ->
+      in_flight?(state, task_id) ->
         state
 
       not pr_matches_tracker?(coord, state.tracker_config) ->
@@ -371,7 +378,7 @@ defmodule Svarm.Orchestrator.Resume do
     task_id = coord.task_id
 
     cond do
-      Map.has_key?(state.running, task_id) or MapSet.member?(state.claimed, task_id) ->
+      in_flight?(state, task_id) ->
         {state, false}
 
       not pr_matches_tracker?(coord, state.tracker_config) ->

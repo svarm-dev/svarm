@@ -9,6 +9,8 @@ defmodule Svarm.Orchestrator.Scope do
 
   alias Svarm.KanbanBridge
   alias Svarm.Settings.Catalog.Store, as: CatalogStore
+  alias Svarm.Settings.Resolve, as: SettingsResolve
+  alias Svarm.Tracker.Resolve, as: TrackerResolve
 
   @doc false
   def refresh(state), do: state
@@ -72,6 +74,70 @@ defmodule Svarm.Orchestrator.Scope do
     end)
   end
 
+  @doc """
+  Tracker adapter and config for one board id.
+
+  The board the tick is working on reuses the state as-is. Another enabled
+  catalog board is resolved the way dispatch resolves it, so reconcile can
+  query a board that is not the current tick's board.
+  """
+  def tracker_for(state, board_id) when is_binary(board_id) do
+    if Map.get(state.tracker_config || %{}, :board_id) == board_id do
+      {:ok, state.tracker, state.tracker_config}
+    else
+      with {:ok, board} <- catalog_board(board_id) do
+        {adapter, config} = board_tracker(state, board)
+        {:ok, adapter, config}
+      end
+    end
+  end
+
+  @doc false
+  def board_tracker(state, board) when is_map(board) do
+    base = SettingsResolve.tracker_config(board.tracker || %{})
+
+    {adapter, config} =
+      TrackerResolve.adapter_and_config(
+        config: base,
+        active_states: state.active_states,
+        terminal_states: state.terminal_states
+      )
+
+    config =
+      config
+      |> Map.put(:board_id, board.id)
+      |> Map.put(:board_concurrency_cap, board.max_concurrent)
+
+    {adapter, config}
+  end
+
+  @doc """
+  Tracker-facing id for a scoped key whose run is neither running nor retrying.
+
+  The key carries the external id, which is not always the id an adapter reads
+  back (`Local` rows are keyed by their own id), so resolve the row once.
+  """
+  def issue_id_for(board_id, external_id)
+      when is_binary(board_id) and is_binary(external_id) do
+    case KanbanBridge.get_by_external(board_id, external_id) do
+      %{id: id} when is_binary(id) -> {:ok, id}
+      _ -> :error
+    end
+  end
+
+  defp catalog_board(board_id) do
+    case load_catalog() do
+      %{boards: boards} when is_list(boards) ->
+        case Enum.find(boards, &(&1.id == board_id)) do
+          nil -> :error
+          board -> {:ok, board}
+        end
+
+      _ ->
+        :error
+    end
+  end
+
   defp legacy_running_key(state, task) do
     Enum.find_value(state.running || %{}, fn
       {key, %{task: %{id: id}}} when is_binary(key) and id == task.id -> key
@@ -111,15 +177,9 @@ defmodule Svarm.Orchestrator.Scope do
     do: cap
 
   def board_cap(_state, board_id) when is_binary(board_id) do
-    case load_catalog() do
-      %{boards: boards} when is_list(boards) ->
-        case Enum.find(boards, &(&1.id == board_id)) do
-          %{max_concurrent: n} when is_integer(n) -> n
-          _ -> nil
-        end
-
-      _ ->
-        nil
+    case catalog_board(board_id) do
+      {:ok, %{max_concurrent: n}} when is_integer(n) -> n
+      _ -> nil
     end
   end
 

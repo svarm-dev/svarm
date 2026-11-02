@@ -22,8 +22,6 @@ defmodule Svarm.Orchestrator.Dispatch do
   }
 
   alias Svarm.Orchestrator.{Issues, Scope, Status}
-  alias Svarm.Settings.Resolve, as: SettingsResolve
-  alias Svarm.Tracker.Resolve, as: TrackerResolve
 
   @doc false
   def valid_preflight?(%{agents: agents, workflow: nil}), do: map_size(agents) > 0
@@ -56,20 +54,7 @@ defmodule Svarm.Orchestrator.Dispatch do
   end
 
   defp put_board_tracker(state, board) do
-    base = SettingsResolve.tracker_config(board.tracker || %{})
-
-    {adapter, config} =
-      TrackerResolve.adapter_and_config(
-        config: base,
-        active_states: state.active_states,
-        terminal_states: state.terminal_states
-      )
-
-    config =
-      config
-      |> Map.put(:board_id, board.id)
-      |> Map.put(:board_concurrency_cap, board.max_concurrent)
-
+    {adapter, config} = Scope.board_tracker(state, board)
     %{state | tracker: adapter, tracker_config: config}
   end
 

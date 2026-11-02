@@ -22,7 +22,7 @@ defmodule Svarm.Orchestrator.Status do
       |> Enum.uniq()
 
     running_started =
-      Map.new(state.running, fn {id, entry} -> {id, entry.started_mono_ms} end)
+      Map.new(state.running, fn {_key, entry} -> {task_id(entry), entry.started_mono_ms} end)
 
     %{
       poll_interval_ms: state.poll_interval_ms,
@@ -32,8 +32,8 @@ defmodule Svarm.Orchestrator.Status do
       claimed: MapSet.size(state.claimed),
       retrying: map_size(state.retry_attempts),
       completed: MapSet.size(state.completed),
-      running_ids: Map.keys(state.running),
-      retry_ids: Map.keys(state.retry_attempts),
+      running_ids: Enum.map(state.running, fn {_key, entry} -> task_id(entry) end),
+      retry_ids: Enum.map(state.retry_attempts, fn {_key, entry} -> task_id(entry) end),
       active_assignees: active_assignees,
       active_agent_count: length(active_assignees),
       running_started: running_started,
@@ -46,6 +46,19 @@ defmodule Svarm.Orchestrator.Status do
       board_ids: running_board_ids(state)
     }
   end
+
+  # Board-facing ids are public task ids, never the scoped run keys: the board
+  # matches cards by id, and after import the keys are {board_id, external_id}.
+  defp task_id(entry) do
+    Map.get(entry, :issue_id) || row_id(Map.get(entry, :task)) ||
+      binary_id(Map.get(entry, :identifier))
+  end
+
+  defp row_id(%{} = task), do: Map.get(task, :id)
+  defp row_id(_), do: nil
+
+  defp binary_id(id) when is_binary(id), do: id
+  defp binary_id(_), do: nil
 
   defp running_board_ids(state) do
     state.running
