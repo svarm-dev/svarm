@@ -220,13 +220,18 @@ defmodule Svarm.Orchestrator.RunExit do
   end
 
   # Best-effort: the PR this run opened, not the first pull link in the log.
-  # Bound to tracker owner/repo when known (confused-deputy guard).
+  # Bound to tracker owner/repo when known (confused-deputy guard), and to the
+  # workspace code host so Forgejo/Gitea pull URLs are accepted only from it.
   defp maybe_capture_pr(state, task_id) when is_binary(task_id) do
     log = Svarm.RunLog.get(task_id)
+    git = Map.get(state, :workspace_git) || %{}
 
     opts =
       tracker_repo_opts(state.tracker_config) ++
-        [source_id: task_source_id(state, task_id)]
+        [
+          source_id: task_source_id(state, task_id),
+          workspace_git_remote: git[:remote]
+        ]
 
     case Coordination.extract_pr_url(log, opts) do
       url when is_binary(url) ->

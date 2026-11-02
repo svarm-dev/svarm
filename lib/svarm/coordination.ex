@@ -59,7 +59,9 @@ defmodule Svarm.Coordination do
     :attempts
   ]
 
-  @pr_url_re ~r{https://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)}i
+  # GitHub uses `/pull/<n>`; Forgejo/Gitea use `/pulls/<n>`. The configured
+  # code host is checked separately so a GitHub URL cannot steer a Forgejo run.
+  @pr_url_re ~r{https://([^/\s]+)/([^/\s]+)/([^/\s]+)/(?:pull|pulls)/(\d+)}i
   # GitHub closing keywords, optional colon: "Closes #264", "Fixes: #264".
   @closing_re ~r/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+#(\d+)\b/i
   @score_ticket 2
@@ -122,13 +124,15 @@ defmodule Svarm.Coordination do
   - `:owner` / `:repo` — when set (tracker config), reject PRs whose
     owner/repo do not match (case-insensitive). Prevents agent log
     decoy URLs from steering Checks polls to other repos.
+  - `:host` / `:git_remote` / `:workspace_git_remote` — when set, reject
+    URLs on another code host.
   """
   @spec record_pr(String.t(), map() | String.t(), keyword()) ::
           {:ok, t()} | {:error, :invalid_pr | :repo_mismatch | Ecto.Changeset.t()}
   def record_pr(task_id, pr_or_attrs, opts \\ [])
 
   def record_pr(task_id, pr_url, opts) when is_binary(task_id) and is_binary(pr_url) do
-    case parse_pr_url(pr_url) do
+    case parse_pr_url(pr_url, opts) do
       {:ok, fields} ->
         with :ok <- match_repo_or_error(fields, opts), do: upsert(task_id, fields)
 
@@ -138,7 +142,7 @@ defmodule Svarm.Coordination do
   end
 
   def record_pr(task_id, attrs, opts) when is_binary(task_id) and is_map(attrs) do
-    fields = attrs |> normalize_attrs() |> merge_parsed_pr_url()
+    fields = attrs |> normalize_attrs() |> merge_parsed_pr_url(opts)
 
     with :ok <- require_pr_fields(fields),
          :ok <- match_repo_or_error(fields, opts) do
@@ -146,14 +150,15 @@ defmodule Svarm.Coordination do
     end
   end
 
-  defp merge_parsed_pr_url(%{pr_url: url} = fields) when is_binary(url) and url != "" do
-    case parse_pr_url(url) do
+  defp merge_parsed_pr_url(%{pr_url: url} = fields, opts)
+       when is_binary(url) and url != "" do
+    case parse_pr_url(url, opts) do
       {:ok, parsed} -> Map.merge(fields, parsed)
       :error -> fields
     end
   end
 
-  defp merge_parsed_pr_url(fields), do: fields
+  defp merge_parsed_pr_url(fields, _opts), do: fields
 
   defp require_pr_fields(%{pr_owner: o, pr_repo: r, pr_number: n})
        when is_binary(o) and is_binary(r) and is_integer(n),
@@ -190,18 +195,31 @@ defmodule Svarm.Coordination do
 
   defp eq_ignore?(_, _), do: false
 
-  @doc "Parse a GitHub PR URL into owner/repo/number + url."
-  @spec parse_pr_url(String.t()) :: {:ok, map()} | :error
-  def parse_pr_url(url) when is_binary(url) do
+  @doc """
+  Parse a pull request URL into owner/repo/number + url.
+
+  Accepts GitHub `/pull/<n>` and Forgejo/Gitea `/pulls/<n>` paths. Options:
+  - `:host` — when set, reject URLs on other hosts
+  - `:git_remote` / `:workspace_git_remote` — derive the allowed host from the
+    configured code remote
+  """
+  @spec parse_pr_url(String.t(), keyword()) :: {:ok, map()} | :error
+  def parse_pr_url(url, opts \\ [])
+
+  def parse_pr_url(url, opts) when is_binary(url) and is_list(opts) do
     case Regex.run(@pr_url_re, url) do
-      [full, owner, repo, number] ->
-        {:ok,
-         %{
-           pr_url: full,
-           pr_owner: owner,
-           pr_repo: repo,
-           pr_number: String.to_integer(number)
-         }}
+      [full, host, owner, repo, number] ->
+        if allowed_host?(host, opts) do
+          {:ok,
+           %{
+             pr_url: full,
+             pr_owner: owner,
+             pr_repo: repo,
+             pr_number: String.to_integer(number)
+           }}
+        else
+          :error
+        end
 
       _ ->
         :error
@@ -222,6 +240,9 @@ defmodule Svarm.Coordination do
   Options:
   - `:source_id` — tracker issue number (`Issue.source_id`)
   - `:owner` / `:repo` — when set, drop URLs for other repositories
+  - `:host` / `:git_remote` / `:workspace_git_remote` — the code host to accept.
+    Without one, only `github.com` counts. `workspace.git_remote` hosts are
+    exact matches, so a Forgejo run ignores GitHub pull links in the same log.
   """
   @spec extract_pr_url(String.t() | nil, keyword()) :: String.t() | nil
   def extract_pr_url(text, opts \\ [])
@@ -257,15 +278,68 @@ defmodule Svarm.Coordination do
   end
 
   defp line_pr_urls(line, opts) do
+    host = extraction_host(opts)
+
     @pr_url_re
     |> Regex.scan(line)
     |> Enum.flat_map(fn
-      [full, owner, repo, _number] ->
-        if allowed_repo?(%{pr_owner: owner, pr_repo: repo}, opts), do: [full], else: []
+      [full, url_host, owner, repo, _number] ->
+        fields = %{pr_owner: owner, pr_repo: repo}
+
+        if normalize_host(url_host) == host and allowed_repo?(fields, opts) do
+          [full]
+        else
+          []
+        end
 
       _ ->
         []
     end)
+  end
+
+  # Extraction defaults to GitHub. A configured code remote replaces (not
+  # extends) that allow-list; Forgejo and GitHub runs should not capture each
+  # other's pull links from the same transcript.
+  defp extraction_host(opts), do: configured_host(opts) || "github.com"
+
+  defp allowed_host?(url_host, opts) do
+    case configured_host(opts) do
+      nil -> true
+      host -> normalize_host(url_host) == host
+    end
+  end
+
+  defp configured_host(opts) do
+    cond do
+      host = present_option(opts, :host) -> normalize_host(host)
+      remote = present_option(opts, :git_remote) -> normalize_host(remote)
+      remote = present_option(opts, :workspace_git_remote) -> normalize_host(remote)
+      true -> nil
+    end
+  end
+
+  defp present_option(opts, key) do
+    case Keyword.get(opts, key) do
+      value when is_binary(value) and value != "" -> value
+      _ -> nil
+    end
+  end
+
+  # Handles URL remotes (`https://host/org/repo.git`), SSH remotes
+  # (`ssh://git@host/org/repo.git`), and scp-style (`git@host:org/repo.git`).
+  # Ports are ignored so a Forgejo PR URL on `:3000` still matches its remote.
+  defp normalize_host(host) when is_binary(host) do
+    host
+    |> String.trim()
+    |> String.downcase()
+    |> String.split("://", parts: 2)
+    |> List.last()
+    |> String.split("/", parts: 2)
+    |> List.first()
+    |> String.split("@")
+    |> List.last()
+    |> String.split(":", parts: 2)
+    |> List.first()
   end
 
   defp bare_pr_line?(line, [url]), do: String.trim(line) == url
