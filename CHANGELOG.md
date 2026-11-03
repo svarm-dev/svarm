@@ -7,10 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Run stop reason on the issue** ([#274](https://github.com/svarm-dev/svarm/issues/274), [#300](https://github.com/svarm-dev/svarm/pull/300)): a run that ends in a terminal tracker status posts one comment on the GitHub issue naming why it stopped, in the same words as the board chip. `Svarm.StopReason` is the single table behind both surfaces, so an operator-configured terminal status such as `blocked` reads the same on the card and the ticket. One comment per run through the existing run-summary marker, and the body is redacted before the marker is appended. A rejected comment is logged and never fails the run. Local and Kaneo do not pretend to have comments.
+- **Settings catalog and board-scoped admission** ([#295](https://github.com/svarm-dev/svarm/pull/295)): a versioned settings catalog plus board-scoped in-flight keys, groundwork for running more than one board in one process. Tasks gain `board_id`, `external_task_id`, and a unique `(board_id, external_task_id)` index, so the same external ticket on two boards gets separate rows, workspaces, approvals, and retries. `Settings.import_legacy/0` writes the current tracker, agents, and provider readiness as catalog revision 1 and does not write a second time; boot does not call it, so an existing install stays on the legacy single-tracker path until an operator imports.
+
+### Changed
+
+- **Receipts and dashboard name unmeasured spend** ([#280](https://github.com/svarm-dev/svarm/issues/280)): spend without a measured cost reads as unmeasured instead of as zero, on the receipt and on the dashboard, and the per-agent merge rate counts partial tasks and unmeasured runs on their own denominator. CLI usage is recorded before `run_finished` so the console snapshot is not empty, and a reconcile kill that finds the ticket already terminal writes a gap row instead of dropping the run's spend.
+
 ### Fixed
 
 - **Approve cannot be undone by a concurrent poll**: the one-shot permit is recorded before the card moves to `todo`, and that id is claimed until the move finishes. A poll cannot re-hold it. A failed move rolls the permit back.
 - **Mid-run answer waits for the runner** ([#273](https://github.com/svarm-dev/svarm/issues/273)): `AgentQuestion.answer/2` holds a matching answer until the PiRPC worker parks the same `request_id`, instead of returning `:no_runner`. A second answer is `:already_answered`. The hold ends at the question `deadline_at`, on cancel, or on `clear/1`. The board says the answer was queued and does not say "Answer sent" until the reply is injected.
+- **A zero provider bill no longer fails the ledger write** ([#284](https://github.com/svarm-dev/svarm/issues/284)): Pi reports a zero bill as integer `0`, and the ledger column is a float, so the insert raised after the run had already settled and the orchestrator retried. Integers are coerced at the single ledger entry point; `nil` still means unreported.
+- **Forgejo and Gitea pull request URLs**: PR detection accepts `/pulls/<n>` as well as GitHub's `/pull/<n>`, and a URL on another code host is rejected, so a GitHub link in a Forgejo run's log cannot steer Checks or review polling at the wrong repo.
+- **Docker agents can run Mix**: the runtime image shipped `git`, `curl`, `gh`, and Pi but no `mix`, so a workspace `mix test` failed and Pi tried to boot the release `erl`. The runtime stage now carries Elixir's full lib tree and OTP, with `elixir`, `elixirc`, `mix`, `iex`, `erl`, `erlc`, and `escript` on `PATH`, so EEx, ExUnit, and Logger load and native deps such as exqlite compile.
+- **A late agent exit no longer rewrites a settled ticket** ([#295](https://github.com/svarm-dev/svarm/pull/295)): reconcile kills the worker once a human moves the card, but the CLI exit could still land after that and turn `done` into `failed`. The exit now reads the ticket first and leaves a terminal status alone. A retry whose fresh read finds the ticket already terminal, or carrying a queued follow-up, releases the claim instead of scheduling another attempt.
+
+### Dependencies
+
+- `req_llm` 1.26.0 → 1.29.0 ([#272](https://github.com/svarm-dev/svarm/pull/272), [#281](https://github.com/svarm-dev/svarm/pull/281), [#297](https://github.com/svarm-dev/svarm/pull/297)): 1.29.0 fixes a critical WebSocket TLS advisory (EEF-CVE-2026-107685) that left provider API keys and OAuth tokens readable by an on-path attacker. The bump also lifts `jsv` 0.26.1 → 0.26.2, `llm_db`, `splode`, and `nimble_options`.
+- Hex patch group ([#296](https://github.com/svarm-dev/svarm/pull/296)): `phoenix` 1.8.16, `phoenix_live_view` 1.2.13, `phoenix_pubsub` 2.4.1, `phoenix_html` 4.4.0 (attribute-injection fix, CVE-2026-117645), `bandit` 1.14.1 (clears 14 advisories, two high), `esbuild` 0.10.1, `tailwind` 0.5.2, `plug_crypto` 2.2.1, `thousand_island` 1.6.0, `websock_adapter` 0.7.0, `elixir_make` 0.10.1
+- `ecto_sqlite3` 0.25.0 → 0.26.0, which pulls `exqlite` 0.43.0: check constraints through `Ecto.Migration.constraint/3`, modifiers in `CREATE TABLE`, and cross-database foreign keys now raise.
+- daisyUI v5.7.47 → v5.7.50 ([#282](https://github.com/svarm-dev/svarm/pull/282))
 
 ## [0.1.7] - 2026-10-07
 
