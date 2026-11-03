@@ -88,6 +88,14 @@ defmodule Svarm.BoardWaitReasonTest do
     assert Board.wait_reason_label(:budget_overage) == "Over budget"
   end
 
+  test "wait_reason blocked and no_change_needed classify and label from the stop table" do
+    assert Board.wait_reason(%{status: "blocked", id: "t_blocked"}) == :blocked
+    assert Board.wait_reason_label(:blocked) == "Blocked"
+
+    assert Board.wait_reason(%{status: "no_change_needed", id: "t_ncn"}) == :no_change_needed
+    assert Board.wait_reason_label(:no_change_needed) == "No change needed"
+  end
+
   test "attach_coordination overlays wait fields from coordination" do
     task =
       KanbanBridge.create_task(%{title: "github-shaped", status: "in_progress", assignee: "demo"})

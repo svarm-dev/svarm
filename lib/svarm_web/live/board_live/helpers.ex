@@ -102,9 +102,9 @@ defmodule SvarmWeb.BoardLive.Helpers do
 
   def review_badge(task) do
     case Board.wait_reason(task) do
-      :changes_requested -> {"Changes requested", "badge-warning"}
-      :ci_circuit -> {"CI retries exhausted", "badge-error"}
-      _ -> {"Needs review", "badge-warning"}
+      :changes_requested -> {Board.wait_reason_label(:changes_requested), "badge-warning"}
+      :ci_circuit -> {Board.wait_reason_label(:ci_circuit), "badge-error"}
+      _ -> {Board.wait_reason_label(:review), "badge-warning"}
     end
   end
 

@@ -55,7 +55,7 @@ defmodule Svarm.Orchestrator.RunExit do
             state
 
           task.status in state.terminal_states ->
-            post_run_summary(state, id, :ok)
+            post_run_summary(state, id, :ok, task.status)
             %{state | completed: MapSet.put(state.completed, key)}
 
           true ->
@@ -63,12 +63,12 @@ defmodule Svarm.Orchestrator.RunExit do
             # stick would otherwise leave the ticket active under a `completed`
             # key that a restart clears.
             force_terminal(state, key, id, "review", 1)
-            post_run_summary(state, id, :ok)
+            post_run_summary(state, id, :ok, "review")
             %{state | completed: MapSet.put(state.completed, key)}
         end
 
       _ ->
-        post_run_summary(state, id, :ok)
+        post_run_summary(state, id, :ok, nil)
         %{state | completed: MapSet.put(state.completed, key)}
     end
   end
@@ -123,7 +123,7 @@ defmodule Svarm.Orchestrator.RunExit do
   end
 
   @doc false
-  def post_run_summary(state, task_id, result) do
+  def post_run_summary(state, task_id, result, status) do
     entry = find_run_entry(state, task_id)
 
     if entry do
@@ -135,7 +135,7 @@ defmodule Svarm.Orchestrator.RunExit do
       }
 
       maybe_capture_pr(summary_state, task_id)
-      build_and_post(summary_state, task_id, result, entry)
+      build_and_post(summary_state, task_id, result, entry, status)
     end
 
     :ok
@@ -182,7 +182,7 @@ defmodule Svarm.Orchestrator.RunExit do
     if next > state.max_retries do
       Logger.error("task #{label(key)} exhausted #{state.max_retries} retries → human escalation")
       tracker.update_status(config, task_id, "failed")
-      post_run_summary(state, task_id, {:error, reason})
+      post_run_summary(state, task_id, {:error, reason}, "failed")
       %{state | claimed: MapSet.delete(state.claimed, key)}
     else
       case tracker.update_status(config, task_id, "todo") do
@@ -290,7 +290,7 @@ defmodule Svarm.Orchestrator.RunExit do
 
           task.status in state.terminal_states ->
             Logger.info("task #{task_id} succeeded")
-            post_run_summary(state, task_id, :ok)
+            post_run_summary(state, task_id, :ok, task.status)
             %{state | completed: MapSet.put(state.completed, task_id)}
 
           true ->
@@ -301,13 +301,13 @@ defmodule Svarm.Orchestrator.RunExit do
             Logger.warning("task #{task_id} exited ok but status=#{task.status}; forcing review")
 
             force_terminal(state, task_id, task_id, "review", 1)
-            post_run_summary(state, task_id, :ok)
+            post_run_summary(state, task_id, :ok, "review")
             %{state | completed: MapSet.put(state.completed, task_id)}
         end
 
       {:error, _} ->
         Logger.info("task #{task_id} succeeded (issue gone from tracker)")
-        post_run_summary(state, task_id, :ok)
+        post_run_summary(state, task_id, :ok, nil)
         %{state | completed: MapSet.put(state.completed, task_id)}
     end
   end
@@ -414,7 +414,7 @@ defmodule Svarm.Orchestrator.RunExit do
     end
   end
 
-  defp build_and_post(state, task_id, result, entry) do
+  defp build_and_post(state, task_id, result, entry, status) do
     task = entry.task
     assignee = task.assignee || "default"
     agent = Map.get(state.agents, assignee, %{})
@@ -427,6 +427,7 @@ defmodule Svarm.Orchestrator.RunExit do
       task_id: task_id,
       task: task,
       result: result,
+      stop_reason: Svarm.StopReason.for_status(status),
       duration_ms: System.monotonic_time(:millisecond) - entry.started_mono_ms,
       agent_name: agent[:display_name] || assignee,
       agent_role: blank_to_nil(agent[:role]),
