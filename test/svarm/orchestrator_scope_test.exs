@@ -437,7 +437,6 @@ defmodule Svarm.OrchestratorScopeTest do
         stall_timeout_ms: 45 * 60_000,
         max_retries: 0,
         max_retry_backoff_ms: 60_000,
-        last_run_entries: %{},
         agents: %{},
         workspace_root: System.tmp_dir!(),
         workspace_isolation: :path
