@@ -2007,6 +2007,13 @@ defmodule SvarmWeb.BoardLiveTest do
   end
 
   test "run_finished restreams card so cost badge appears", %{conn: conn} do
+    # A running card already renders the `>= $0.00` lower bound, and the live
+    # orchestrator can dispatch this active ticket mid-test. Park dispatch so
+    # the "no cost yet" precondition is real instead of a scheduling race.
+    Svarm.Test.OrchestratorEnv.restore_on_exit()
+    Application.put_env(:svarm, :orchestrator_max_concurrent, 0)
+    _ = Svarm.Orchestrator.reload_config()
+
     KanbanBridge.delete_all_tasks()
     Svarm.Repo.delete_all("usage_records")
 
