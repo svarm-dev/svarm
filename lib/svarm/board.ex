@@ -416,7 +416,8 @@ defmodule Svarm.Board do
   Why this task is waiting — human gates first, then agent activity.
 
   Returns `:approval | :budget_overage | :ci_circuit | :changes_requested |
-  :review | :agent_question | :running | :failed | nil`.
+  :review | :agent_question | :running | :failed | :blocked |
+  :no_change_needed | nil`.
 
   `:budget_overage` is a human hold after a spend cap (hold mode). It wins over
   a generic `pending_approval` gate so the board can show **Over budget**.
@@ -451,7 +452,7 @@ defmodule Svarm.Board do
   end
 
   defp wait_reason_status(%{status: "failed"}), do: :failed
-  defp wait_reason_status(_), do: nil
+  defp wait_reason_status(task), do: Svarm.StopReason.for_status(map_get(task, :status))
 
   # Prefer preloaded field from list_tasks/get_task; fall back to one query.
   # The open flag is the circuit for every review card. A resume count at the
@@ -519,10 +520,13 @@ defmodule Svarm.Board do
   def wait_reason_label(:budget_overage), do: "Over budget"
   def wait_reason_label(:ci_circuit), do: "CI retries exhausted"
   def wait_reason_label(:changes_requested), do: "Changes requested"
-  def wait_reason_label(:review), do: "Needs review"
+  # Stop reasons share one wording table with the tracker comment.
+  def wait_reason_label(:review), do: Svarm.StopReason.text(:review)
+  def wait_reason_label(:failed), do: Svarm.StopReason.text(:failed)
+  def wait_reason_label(:blocked), do: Svarm.StopReason.text(:blocked)
+  def wait_reason_label(:no_change_needed), do: Svarm.StopReason.text(:no_change_needed)
   def wait_reason_label(:agent_question), do: "Waiting for answer"
   def wait_reason_label(:running), do: "Running"
-  def wait_reason_label(:failed), do: "Failed"
   def wait_reason_label(_), do: nil
 
   @doc "Pending mid-run question payload from the task map, or nil."

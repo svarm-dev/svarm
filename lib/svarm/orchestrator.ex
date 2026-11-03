@@ -646,8 +646,12 @@ defmodule Svarm.Orchestrator do
         # do not post a run-summary (that is retry-exhaustion only).
         state
 
+      {:ok, issue} ->
+        RunExit.post_run_summary(state, task_id, :ok, issue.status)
+        %{state | completed: MapSet.put(state.completed, key)}
+
       _ ->
-        RunExit.post_run_summary(state, task_id, :ok)
+        RunExit.post_run_summary(state, task_id, :ok, nil)
         %{state | completed: MapSet.put(state.completed, key)}
     end
   end

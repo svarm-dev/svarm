@@ -114,8 +114,12 @@ defmodule Svarm.Tracker do
   Linear: comment via GraphQL, Jira: ADF comment, Local: no-op).
 
   The summary map contains tracker-agnostic data:
-    %{run_id, task_id, result, duration_ms, agent_name, agent_role,
+    %{run_id, task_id, result, stop_reason, duration_ms, agent_name, agent_role,
       adapter, model, provider, cost, branch, exit_code}
+
+  `stop_reason` is the terminal status mapped through `Svarm.StopReason`
+  (`:review`, `:failed`, …), or `nil` when the run ended for no human reason.
+  Adapters render its text; they do not invent their own wording.
 
   Returns `:ok` on success (idempotent — repeat calls with same
   run_id must be safe). Returns `{:error, reason}` on failure.

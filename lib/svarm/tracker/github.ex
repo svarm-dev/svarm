@@ -488,7 +488,7 @@ defmodule Svarm.Tracker.GitHub do
       Logger.debug("github: comment already exists for run #{run_id}")
       :ok
     else
-      body = build_comment(summary) <> "\n\n" <> marker
+      body = Svarm.Redact.text(build_comment(summary)) <> "\n\n" <> marker
       url = "#{@base_url}/repos/#{owner}/#{repo}/issues/#{issue_number}/comments"
 
       case req_mod(config).post(url, json: %{body: body}, headers: headers(config)) do
@@ -775,14 +775,27 @@ defmodule Svarm.Tracker.GitHub do
     status = if success?, do: "finished", else: "failed"
 
     header = build_header(summary, status, cost, success?)
+    stop = stop_line(summary)
     meta_rows = build_meta_rows(summary)
     review = if success?, do: review_line(summary), else: nil
     footer = build_console_link(summary)
 
-    lines = [header, "", meta_rows, ""]
+    lines = [header, ""]
+    lines = if stop, do: lines ++ [stop, ""], else: lines
+    lines = lines ++ [meta_rows, ""]
     lines = if review, do: lines ++ [review, ""], else: lines
     lines = if footer, do: lines ++ [footer], else: lines
     Enum.join(lines, "\n")
+  end
+
+  # Wording is shared with the board chip (`Svarm.StopReason`). A live card can
+  # still show "Changes requested" or "CI retries exhausted", chosen by card
+  # state rather than by this comment.
+  defp stop_line(summary) do
+    case Svarm.StopReason.text(summary[:stop_reason]) do
+      nil -> nil
+      text -> "**Stopped:** #{text}."
+    end
   end
 
   defp build_header(summary, status, cost, success?) do

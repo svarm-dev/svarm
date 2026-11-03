@@ -207,6 +207,12 @@ defmodule Svarm.Tracker.LocalTest do
     assert :ok = Local.post_run_summary(@config, "sva_x", %{run_id: "r1", result: :ok})
   end
 
+  test "post_run_summary drops a stop reason without pretending to comment" do
+    summary = %{run_id: "r2", result: {:error, :agent_exit}, stop_reason: :failed}
+    assert :ok = Local.post_run_summary(@config, "sva_y", summary)
+    assert :ok = Local.post_run_summary(@config, "sva_y", Map.put(summary, :stop_reason, :review))
+  end
+
   defp with_kb_calls(fun) when is_function(fun, 0) do
     parent = self()
     handler_id = "local-kb-calls-#{System.unique_integer([:positive])}"

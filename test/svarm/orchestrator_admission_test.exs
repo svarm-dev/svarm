@@ -307,7 +307,9 @@ defmodule Svarm.OrchestratorAdmissionTest do
 
     assert MapSet.member?(result.completed, key)
     assert_receive {:status, "node-scoped-summary", "review"}
-    assert_receive {:summary, "node-scoped-summary", %{run_id: "run_scoped_summary"}}
+
+    assert_receive {:summary, "node-scoped-summary",
+                    %{run_id: "run_scoped_summary", stop_reason: :review}}
   end
 
   test "a terminal review ticket does not get reopened by a retry" do
