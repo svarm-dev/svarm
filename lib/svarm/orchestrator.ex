@@ -325,8 +325,8 @@ defmodule Svarm.Orchestrator do
 
   ## force-terminal status patch (non-blocking retries)
 
-  def handle_info({:force_terminal_retry, task_id, status, attempt}, state) do
-    RunExit.force_terminal(state, task_id, status, attempt)
+  def handle_info({:force_terminal_retry, key, task_id, status, attempt}, state) do
+    RunExit.force_terminal(state, key, task_id, status, attempt)
     {:noreply, state}
   end
 

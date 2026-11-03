@@ -156,19 +156,26 @@ defmodule Svarm.Orchestrator.Dispatch do
   end
 
   defp dependency_met?(dep_id, acc) do
-    case acc.running[dep_id] do
-      nil ->
-        case Issues.lookup(acc, dep_id) do
-          {:ok, dep} -> dep.status in acc.terminal_states
-          # Batch/transient tracker errors must not look like "dep is gone".
-          # Missing issues still fail-open (`_ -> true`) as before.
-          {:error, {:tracker_error, _}} -> false
-          _ -> true
-        end
-
-      _ ->
-        false
+    if running_task?(acc, dep_id) do
+      false
+    else
+      case Issues.lookup(acc, dep_id) do
+        {:ok, dep} -> dep.status in acc.terminal_states
+        # Batch/transient tracker errors must not look like "dep is gone".
+        # Missing issues still fail-open (`_ -> true`) as before.
+        {:error, {:tracker_error, _}} -> false
+        _ -> true
+      end
     end
+  end
+
+  # After import, in-flight work is keyed by {board_id, external_id}, so a bare
+  # dep id lookup misses and a dependent could be admitted under a live parent.
+  defp running_task?(state, task_id) do
+    running = state.running || %{}
+
+    Map.has_key?(running, task_id) or
+      Enum.any?(running, fn {_key, entry} -> Map.get(entry.task, :id) == task_id end)
   end
 
   defp maybe_gate_or_spawn(state, task) do

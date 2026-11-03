@@ -11,7 +11,7 @@ defmodule Svarm.OrchestratorScopeTest do
   use ExUnit.Case, async: false
 
   alias Svarm.{Coordination, KanbanBridge}
-  alias Svarm.Orchestrator.{Reconcile, Resume, Scope, Status}
+  alias Svarm.Orchestrator.{Dispatch, Reconcile, Resume, RunExit, Scope, Status}
   alias Svarm.Settings.Catalog.Store
 
   defmodule TerminalTracker do
@@ -21,6 +21,42 @@ defmodule Svarm.OrchestratorScopeTest do
     end
 
     def update_status(_config, _id, _status), do: :ok
+  end
+
+  # Retry path: get_issue / update_attempts / update_status are all the retry
+  # scheduler needs from an adapter.
+  defmodule RetryTracker do
+    def get_issue(_config, id) do
+      notify({:lookup, id})
+      {:ok, %{id: id, status: "todo", attempts: 0}}
+    end
+
+    def update_attempts(_config, id, n) do
+      notify({:attempts, id, n})
+      :ok
+    end
+
+    def update_status(_config, id, status) do
+      notify({:status, id, status})
+      :ok
+    end
+
+    defp notify(message) do
+      if pid = Application.get_env(:svarm, :orchestrator_scope_test_pid), do: send(pid, message)
+      :ok
+    end
+  end
+
+  # Reports the status a run left behind, so force-terminal can be exercised.
+  defmodule StuckTracker do
+    def get_issue(%{current: current}, id), do: {:ok, %{id: id, status: current}}
+
+    def update_status(config, id, status) do
+      send(config.owner, {:status, id, status})
+      :ok
+    end
+
+    def post_run_summary(_config, _id, _summary), do: :ok
   end
 
   defmodule ReviewTracker do
@@ -209,6 +245,172 @@ defmodule Svarm.OrchestratorScopeTest do
     end
   end
 
+  describe "stall retry" do
+    test "a scoped stall keeps {board_id, external_id} so dispatch cannot re-admit the ticket" do
+      key = {"alpha", "EXT-STALL"}
+      pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      state =
+        base_state(%{
+          # A later tick is dispatching a different board: the run key must come
+          # from the stalled entry, not from this config.
+          tracker_config: %{kind: :local, board_id: "beta"},
+          stall_timeout_ms: 1_000,
+          max_retries: 3,
+          max_retry_backoff_ms: 60_000,
+          running: %{
+            key => %{
+              task: %{id: "sva_stalled", board_id: "alpha", external_task_id: "EXT-STALL"},
+              pid: pid,
+              board_id: "alpha",
+              tracker: RetryTracker,
+              tracker_config: %{owner: self(), board_id: "alpha"},
+              started_mono_ms: System.monotonic_time(:millisecond) - 5_000
+            }
+          },
+          claimed: MapSet.new([key])
+        })
+
+      result = Reconcile.run(state)
+
+      assert Map.has_key?(result.retry_attempts, key)
+      refute Map.has_key?(result.retry_attempts, "sva_stalled")
+      refute Map.has_key?(result.running, key)
+
+      Enum.each(result.retry_attempts, fn {_key, retry} ->
+        if is_reference(retry[:timer]), do: Process.cancel_timer(retry.timer)
+      end)
+
+      assert_received {:attempts, "sva_stalled", 1}
+    end
+  end
+
+  describe "force terminal" do
+    test "a scoped success retries the review patch instead of writing once" do
+      key = {"alpha", "EXT-1"}
+
+      entry = %{
+        task: %{
+          id: "sva_row",
+          board_id: "alpha",
+          external_task_id: "EXT-1",
+          assignee: "demo",
+          title: "scoped run",
+          body: "body",
+          attempts: 1
+        },
+        tracker: StuckTracker,
+        tracker_config: %{owner: self(), current: "in_progress"},
+        board_id: "alpha",
+        run_id: "run_scoped_1",
+        started_mono_ms: System.monotonic_time(:millisecond)
+      }
+
+      state = base_state(%{last_run_entries: %{key => entry}})
+
+      assert %{completed: completed} = RunExit.handle(state, entry, key, :ok)
+      assert MapSet.member?(completed, key)
+
+      assert_receive {:status, "sva_row", "review"}
+      assert_receive {:force_terminal_retry, ^key, "sva_row", "review", 2}, 2_000
+    end
+
+    test "a terminal card is not patched again" do
+      key = {"alpha", "EXT-2"}
+
+      entry = %{
+        task: %{
+          id: "sva_done",
+          board_id: "alpha",
+          external_task_id: "EXT-2",
+          assignee: "demo",
+          title: "scoped run",
+          body: "body",
+          attempts: 1
+        },
+        tracker: StuckTracker,
+        tracker_config: %{owner: self(), current: "review"},
+        board_id: "alpha",
+        run_id: "run_scoped_2",
+        started_mono_ms: System.monotonic_time(:millisecond)
+      }
+
+      state = base_state(%{last_run_entries: %{key => entry}})
+
+      assert %{completed: completed} = RunExit.handle(state, entry, key, :ok)
+      refute MapSet.member?(completed, "sva_done")
+      assert MapSet.member?(completed, key)
+      refute_received {:status, _, _}
+      refute_received {:force_terminal_retry, _, _, _, _}
+    end
+  end
+
+  describe "dependencies" do
+    test "a dependent is not admitted while its parent runs under a scoped key" do
+      root = workspace_root()
+
+      insert_boards([
+        %{
+          "id" => "alpha",
+          "name" => "alpha",
+          "enabled" => true,
+          "tracker" => %{"kind" => "local"}
+        }
+      ])
+
+      parent =
+        KanbanBridge.create_task(%{
+          id: "sva_parent",
+          title: "parent",
+          status: "review",
+          assignee: "demo",
+          board_id: "alpha",
+          external_task_id: "EXT-P"
+        })
+
+      child =
+        KanbanBridge.create_task(%{
+          id: "sva_child",
+          title: "child",
+          status: "todo",
+          assignee: "demo",
+          board_id: "alpha",
+          external_task_id: "EXT-C",
+          depends_on: [parent.id]
+        })
+
+      parent_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      state =
+        base_state(%{
+          running: %{
+            {"alpha", "EXT-P"} => %{
+              task: %{id: parent.id, board_id: "alpha", external_task_id: "EXT-P"},
+              pid: parent_pid,
+              board_id: "alpha",
+              started_mono_ms: System.monotonic_time(:millisecond)
+            }
+          },
+          claimed: MapSet.new([{"alpha", "EXT-P"}]),
+          agents: Map.put(%{}, "demo", demo_agent()),
+          approval: %{mode: :off, trusted_assignees: MapSet.new()},
+          budget_caps: %{},
+          budget_mode: :hard,
+          workspace_root: root,
+          workspace_isolation: :path,
+          max_concurrent: 4
+        })
+
+      result = Dispatch.run(state)
+
+      refute Map.has_key?(result.running, {"alpha", "EXT-C"})
+      refute MapSet.member?(result.claimed, {"alpha", "EXT-C"})
+      refute File.dir?(Path.join([root, "alpha", child.id]))
+
+      Process.exit(parent_pid, :kill)
+    end
+  end
+
   defp base_state(overrides) do
     Map.merge(
       %{
@@ -231,10 +433,37 @@ defmodule Svarm.OrchestratorScopeTest do
         ci_resume_caps: %{enabled: false},
         review_resume_caps: %{enabled: false},
         active_states: ["todo", "in_progress"],
-        terminal_states: ["done", "failed", "review"]
+        terminal_states: ["done", "failed", "review"],
+        stall_timeout_ms: 45 * 60_000,
+        max_retries: 0,
+        max_retry_backoff_ms: 60_000,
+        last_run_entries: %{},
+        agents: %{},
+        workspace_root: System.tmp_dir!(),
+        workspace_isolation: :path
       },
       overrides
     )
+  end
+
+  defp demo_agent do
+    %{
+      command: "sleep",
+      args: ["30"],
+      env: %{},
+      adapter: "cli",
+      display_name: "Demo",
+      name: "demo",
+      tools: [],
+      tools_mode: :warn
+    }
+  end
+
+  defp workspace_root do
+    root = Path.join(System.tmp_dir!(), "svarm-scope-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(root)
+    on_exit(fn -> File.rm_rf(root) end)
+    root
   end
 
   defp insert_boards(boards) do

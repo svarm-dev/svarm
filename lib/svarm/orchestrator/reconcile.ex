@@ -107,16 +107,21 @@ defmodule Svarm.Orchestrator.Reconcile do
   defp reconcile_stalls(state) do
     now = System.monotonic_time(:millisecond)
 
-    Enum.reduce(state.running, state, fn {task_id, e}, acc ->
+    Enum.reduce(state.running, state, fn {key, e}, acc ->
       if now - e.started_mono_ms > state.stall_timeout_ms do
-        Logger.warning("stall: killing worker for #{label(task_id)}")
+        Logger.warning("stall: killing worker for #{label(key)}")
         kill_worker(e.pid, :stall)
         Usage.ensure_attempt_row(e)
 
         acc = %{
           acc
-          | running: Map.delete(acc.running, task_id),
-            claimed: MapSet.delete(acc.claimed, task_id)
+          | running: Map.delete(acc.running, key),
+            claimed: MapSet.delete(acc.claimed, key),
+            # schedule_retry derives the run key from this entry's board
+            # config. Without it a scoped run falls back to the current tick's
+            # board — or to a bare id — and dispatch can admit the ticket again
+            # while the retry timer is armed.
+            last_run_entries: Map.put(acc.last_run_entries, key, e)
         }
 
         RunExit.schedule_retry(acc, e.task, :stall)

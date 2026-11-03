@@ -59,7 +59,10 @@ defmodule Svarm.Orchestrator.RunExit do
             %{state | completed: MapSet.put(state.completed, key)}
 
           true ->
-            tracker.update_status(config, id, "review")
+            # Same retry loop as the legacy path: a GitHub label that does not
+            # stick would otherwise leave the ticket active under a `completed`
+            # key that a restart clears.
+            force_terminal(state, key, id, "review", 1)
             post_run_summary(state, id, :ok)
             %{state | completed: MapSet.put(state.completed, key)}
         end
@@ -97,15 +100,25 @@ defmodule Svarm.Orchestrator.RunExit do
   end
 
   @doc false
-  def force_terminal(state, task_id, status, attempt) do
-    state.tracker.update_status(state.tracker_config, task_id, status)
+  def force_terminal(state, key, task_id, status, attempt) do
+    {tracker, config} = tracker_for_key(state, key)
+    tracker.update_status(config, task_id, status)
 
-    case force_terminal_check(state, task_id) do
+    case force_terminal_check(tracker, config, state.terminal_states, task_id) do
       :ok ->
         :ok
 
       :retry ->
-        schedule_force_terminal_retry(task_id, status, attempt)
+        schedule_force_terminal_retry(key, task_id, status, attempt)
+    end
+  end
+
+  # A scoped run patches status on its own board's tracker, not whichever board
+  # the current tick happens to be dispatching.
+  defp tracker_for_key(state, key) do
+    case Map.get(state.last_run_entries || %{}, key) || Map.get(state.running || %{}, key) do
+      nil -> {state.tracker, state.tracker_config}
+      entry -> {entry_tracker(state, entry), entry_config(state, entry)}
     end
   end
 
@@ -287,7 +300,7 @@ defmodule Svarm.Orchestrator.RunExit do
             # Retries use send_after — never Process.sleep on this GenServer.
             Logger.warning("task #{task_id} exited ok but status=#{task.status}; forcing review")
 
-            force_terminal(state, task_id, "review", 1)
+            force_terminal(state, task_id, task_id, "review", 1)
             post_run_summary(state, task_id, :ok)
             %{state | completed: MapSet.put(state.completed, task_id)}
         end
@@ -322,26 +335,32 @@ defmodule Svarm.Orchestrator.RunExit do
 
   defp queued_follow_up?(_), do: false
 
-  defp force_terminal_check(state, task_id) do
-    case state.tracker.get_issue(state.tracker_config, task_id) do
+  defp force_terminal_check(tracker, config, terminal_states, task_id) do
+    case tracker.get_issue(config, task_id) do
       {:ok, t} ->
-        if t.status in state.terminal_states, do: :ok, else: :retry
+        if t.status in terminal_states, do: :ok, else: :retry
 
       _ ->
         :retry
     end
   end
 
-  defp schedule_force_terminal_retry(task_id, status, attempt)
+  defp schedule_force_terminal_retry(key, task_id, status, attempt)
        when attempt < @force_terminal_max_attempts do
     delay = @force_terminal_backoff_ms * attempt
-    Process.send_after(self(), {:force_terminal_retry, task_id, status, attempt + 1}, delay)
+
+    Process.send_after(
+      self(),
+      {:force_terminal_retry, key, task_id, status, attempt + 1},
+      delay
+    )
+
     :ok
   end
 
-  defp schedule_force_terminal_retry(task_id, _status, attempt) do
+  defp schedule_force_terminal_retry(key, _task_id, _status, attempt) do
     Logger.warning(
-      "task #{task_id}: status still non-terminal after #{attempt} tries (session skip via completed)"
+      "task #{label(key)}: status still non-terminal after #{attempt} tries (session skip via completed)"
     )
 
     :ok
