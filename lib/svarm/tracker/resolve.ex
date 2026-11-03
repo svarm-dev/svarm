@@ -29,6 +29,9 @@ defmodule Svarm.Tracker.Resolve do
   @default_active_states ["todo", "in_progress"]
   @default_terminal_states ["done", "failed", "review"]
 
+  @doc "Default statuses a tracker treats as terminal."
+  def default_terminal_states, do: @default_terminal_states
+
   # When an adapter does not export capabilities/0, CI/review poll (same as
   # today's non-Local test doubles). Local declares `[]` to opt out.
   @undeclared_capabilities [:ci_poll, :review_poll]

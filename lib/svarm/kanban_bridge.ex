@@ -29,7 +29,10 @@ defmodule Svarm.KanbanBridge do
     :tenant,
     :wait_reason,
     :pending_question,
-    :follow_up
+    :follow_up,
+    :board_id,
+    :external_task_id,
+    :workspace_locator
   ]
 
   def create_task(attrs), do: GenServer.call(__MODULE__, {:create, attrs})
@@ -65,7 +68,32 @@ defmodule Svarm.KanbanBridge do
     GenServer.call(__MODULE__, {:list, filters, opts})
   end
 
-  def fetch_eligible(active_states), do: GenServer.call(__MODULE__, {:eligible, active_states})
+  def fetch_eligible(active_states, opts \\ []) when is_list(active_states) and is_list(opts) do
+    GenServer.call(__MODULE__, {:eligible, active_states, opts})
+  end
+
+  @doc """
+  Insert or update the task row for one board's external id.
+
+  The string primary key is kept. A second board with the same external id
+  gets its own row. Existing ids are not rewritten.
+  """
+  def upsert_external(board_id, external_task_id, attrs)
+      when is_binary(board_id) and is_binary(external_task_id) and is_map(attrs) do
+    GenServer.call(__MODULE__, {:upsert_external, board_id, external_task_id, attrs})
+  end
+
+  @doc "Read one task by board and external id."
+  def get_by_external(board_id, external_task_id)
+      when is_binary(board_id) and is_binary(external_task_id) do
+    GenServer.call(__MODULE__, {:get_external, board_id, external_task_id})
+  end
+
+  @doc "Lock pre-import workspace keys. Does not move directories."
+  def stamp_legacy_locators do
+    GenServer.call(__MODULE__, :stamp_legacy_locators)
+  end
+
   def update_status(id, status), do: GenServer.call(__MODULE__, {:update, id, :status, status})
 
   def update_attempts(id, attempts),
@@ -183,16 +211,79 @@ defmodule Svarm.KanbanBridge do
     {:reply, tasks, state}
   end
 
-  def handle_call({:eligible, active_states}, _from, state) do
-    tasks =
+  def handle_call({:eligible, active_states, opts}, _from, state) do
+    board_id = Keyword.get(opts, :board_id)
+
+    query =
       from(t in Task,
         where: t.status in ^active_states,
         order_by: [asc: t.priority, asc: t.created_at, asc: t.id]
       )
+
+    query =
+      if is_binary(board_id) and board_id != "" do
+        from(t in query, where: t.board_id == ^board_id)
+      else
+        query
+      end
+
+    tasks =
+      query
       |> Repo.all()
       |> Enum.map(&task_to_map/1)
 
     {:reply, tasks, state}
+  end
+
+  def handle_call({:get_external, board_id, external_id}, _from, state) do
+    task =
+      case Repo.get_by(Task, board_id: board_id, external_task_id: external_id) do
+        nil -> nil
+        row -> task_to_map(row)
+      end
+
+    {:reply, task, state}
+  end
+
+  def handle_call({:upsert_external, board_id, external_id, attrs}, _from, state) do
+    attrs = pick_attrs(attrs)
+    now = System.system_time(:second)
+
+    saved =
+      case Repo.get_by(Task, board_id: board_id, external_task_id: external_id) do
+        nil ->
+          id = fresh_id(Map.get(attrs, :id))
+
+          %Task{id: id, created_at: now}
+          |> Task.changeset(
+            Map.merge(attrs, %{id: id, board_id: board_id, external_task_id: external_id})
+          )
+          |> Repo.insert!()
+
+        existing ->
+          existing
+          |> Task.changeset(
+            attrs
+            |> Map.drop([:id])
+            |> Map.merge(%{board_id: board_id, external_task_id: external_id})
+          )
+          |> Repo.update!()
+      end
+
+    map = task_to_map(saved)
+    Events.broadcast_task_updated(map)
+    {:reply, map, state}
+  end
+
+  def handle_call(:stamp_legacy_locators, _from, state) do
+    {count, _} =
+      from(t in Task,
+        where: is_nil(t.workspace_locator),
+        update: [set: [workspace_locator: t.id]]
+      )
+      |> Repo.update_all([])
+
+    {:reply, count, state}
   end
 
   def handle_call({:update, id, field, value}, _from, state) do
@@ -296,9 +387,34 @@ defmodule Svarm.KanbanBridge do
       tenant: t.tenant,
       wait_reason: t.wait_reason,
       pending_question: t.pending_question,
-      follow_up: t.follow_up
+      follow_up: t.follow_up,
+      board_id: t.board_id,
+      external_task_id: t.external_task_id,
+      workspace_locator: t.workspace_locator
     }
   end
+
+  defp pick_attrs(attrs) do
+    [:title, :body, :status, :assignee, :attempts, :workspace_locator, :type, :priority, :id]
+    |> Enum.reduce(%{}, fn key, acc ->
+      case attr_get(attrs, key) do
+        nil -> acc
+        val -> Map.put(acc, key, val)
+      end
+    end)
+  end
+
+  defp attr_get(attrs, key) do
+    Map.get(attrs, key) || Map.get(attrs, Atom.to_string(key))
+  end
+
+  defp fresh_id(id) when is_binary(id) and id != "" do
+    if Repo.get(Task, id), do: new_task_id(), else: id
+  end
+
+  defp fresh_id(_), do: new_task_id()
+
+  defp new_task_id, do: "sva_" <> Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
 
   defp normalize_pending_question(attrs) when is_map(attrs) do
     prompt = map_get(attrs, :prompt)

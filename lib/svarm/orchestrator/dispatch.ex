@@ -16,10 +16,12 @@ defmodule Svarm.Orchestrator.Dispatch do
     Budget,
     Coordination,
     Events,
-    Toolchain
+    KanbanBridge,
+    Toolchain,
+    Workspace
   }
 
-  alias Svarm.Orchestrator.{Issues, Status}
+  alias Svarm.Orchestrator.{Issues, Scope, Status}
 
   @doc false
   def valid_preflight?(%{agents: agents, workflow: nil}), do: map_size(agents) > 0
@@ -36,6 +38,27 @@ defmodule Svarm.Orchestrator.Dispatch do
   def run(state) do
     state = maybe_release_budget_holds(state)
 
+    case Scope.enabled_boards(state) do
+      :legacy ->
+        dispatch_tracker(state)
+
+      boards ->
+        Enum.reduce(boards, state, fn board, acc ->
+          original = {acc.tracker, acc.tracker_config}
+          acc = put_board_tracker(acc, board)
+          acc = dispatch_tracker(acc)
+          {tracker, config} = original
+          %{acc | tracker: tracker, tracker_config: config}
+        end)
+    end
+  end
+
+  defp put_board_tracker(state, board) do
+    {adapter, config} = Scope.board_tracker(state, board)
+    %{state | tracker: adapter, tracker_config: config}
+  end
+
+  defp dispatch_tracker(state) do
     case state.tracker.list_eligible(state.tracker_config) do
       {:ok, candidates} ->
         dep_ids =
@@ -45,7 +68,10 @@ defmodule Svarm.Orchestrator.Dispatch do
           |> Enum.uniq()
 
         state = Issues.prefetch(state, dep_ids)
-        Enum.reduce_while(candidates, state, &dispatch_candidate/2)
+
+        Enum.reduce(candidates, state, fn task, acc ->
+          process_candidate(acc, prepare_task(acc, task))
+        end)
 
       {:error, reason} ->
         Logger.warning("list_eligible failed: #{inspect(reason)}")
@@ -53,11 +79,42 @@ defmodule Svarm.Orchestrator.Dispatch do
     end
   end
 
-  defp dispatch_candidate(task, acc) do
-    if slots_full?(acc), do: {:halt, acc}, else: process_candidate(acc, task)
+  defp prepare_task(%{tracker_config: %{board_id: board_id}} = state, task)
+       when is_binary(board_id) do
+    external = Scope.external_id(task)
+    task = %{task | board_id: board_id, external_task_id: external}
+    sync_task_row(state, task)
   end
 
-  defp slots_full?(%{running: running, max_concurrent: mc}), do: map_size(running) >= mc
+  defp prepare_task(_state, task), do: task
+
+  defp sync_task_row(state, task) do
+    locator = workspace_locator(state, task)
+
+    KanbanBridge.upsert_external(task.board_id, task.external_task_id, %{
+      id: task.id,
+      title: task.title || "untitled",
+      status: task.status || "todo",
+      assignee: task.assignee,
+      body: task.body,
+      attempts: task.attempts || 0,
+      workspace_locator: locator
+    })
+
+    %{task | workspace_locator: locator}
+  end
+
+  defp workspace_locator(_state, %{workspace_locator: loc}) when is_binary(loc) and loc != "",
+    do: loc
+
+  defp workspace_locator(state, %{board_id: "default"} = task) do
+    case Workspace.existing_legacy_locator(task, state.workspace_root) do
+      {:ok, locator} -> locator
+      :error -> "default/#{task.id}"
+    end
+  end
+
+  defp workspace_locator(_state, %{board_id: board_id, id: id}), do: "#{board_id}/#{id}"
 
   # Eligibility is checked in two layers:
   # 1. Adapter level (Eligibility.eligible?): tracker-specific rules
@@ -67,24 +124,28 @@ defmodule Svarm.Orchestrator.Dispatch do
   # This ensures the orchestrator never dispatches an issue that's already
   # in flight, even if the adapter missed it.
   defp process_candidate(acc, task) do
+    key = Scope.run_key(acc, task)
+
     cond do
-      Map.has_key?(acc.running, task.id) or
-        MapSet.member?(acc.claimed, task.id) or
-        Map.has_key?(acc.retry_attempts, task.id) or
-          MapSet.member?(acc.completed, task.id) ->
-        {:cont, acc}
+      not Scope.admit?(acc, task) ->
+        acc
+
+      MapSet.member?(acc.claimed, key) or
+        Map.has_key?(acc.retry_attempts, key) or
+          MapSet.member?(acc.completed, key) ->
+        acc
 
       task.status in acc.terminal_states ->
-        {:cont, acc}
+        acc
 
       task.status == Approval.pending_status() ->
-        {:cont, acc}
+        acc
 
       not dependencies_met?(task, acc) ->
-        {:cont, acc}
+        acc
 
       true ->
-        {:cont, maybe_gate_or_spawn(acc, task)}
+        maybe_gate_or_spawn(acc, task)
     end
   end
 
@@ -95,27 +156,34 @@ defmodule Svarm.Orchestrator.Dispatch do
   end
 
   defp dependency_met?(dep_id, acc) do
-    case acc.running[dep_id] do
-      nil ->
-        case Issues.lookup(acc, dep_id) do
-          {:ok, dep} -> dep.status in acc.terminal_states
-          # Batch/transient tracker errors must not look like "dep is gone".
-          # Missing issues still fail-open (`_ -> true`) as before.
-          {:error, {:tracker_error, _}} -> false
-          _ -> true
-        end
-
-      _ ->
-        false
+    if running_task?(acc, dep_id) do
+      false
+    else
+      case Issues.lookup(acc, dep_id) do
+        {:ok, dep} -> dep.status in acc.terminal_states
+        # Batch/transient tracker errors must not look like "dep is gone".
+        # Missing issues still fail-open (`_ -> true`) as before.
+        {:error, {:tracker_error, _}} -> false
+        _ -> true
+      end
     end
+  end
+
+  # After import, in-flight work is keyed by {board_id, external_id}, so a bare
+  # dep id lookup misses and a dependent could be admitted under a live parent.
+  defp running_task?(state, task_id) do
+    running = state.running || %{}
+
+    Map.has_key?(running, task_id) or
+      Enum.any?(running, fn {_key, entry} -> Map.get(entry.task, :id) == task_id end)
   end
 
   defp maybe_gate_or_spawn(state, task) do
     cond do
-      budget_held_without_permit?(state, task.id) ->
+      budget_held_without_permit?(state, task) ->
         state
 
-      not MapSet.member?(state.approved_once, task.id) and
+      not MapSet.member?(state.approved_once, Scope.run_key(state, task)) and
           Approval.required?(state.approval, task, state.agents) ->
         hold_for_approval(state, task)
 
@@ -157,7 +225,7 @@ defmodule Svarm.Orchestrator.Dispatch do
 
   @doc false
   def maybe_budget_or_spawn(state, task) do
-    if MapSet.member?(state.overage_once || MapSet.new(), task.id) do
+    if MapSet.member?(state.overage_once || MapSet.new(), Scope.run_key(state, task)) do
       maybe_toolchain_or_spawn(state, task)
     else
       case Budget.check(task.id, state.budget_caps || %{}) do
@@ -233,8 +301,9 @@ defmodule Svarm.Orchestrator.Dispatch do
     end
   end
 
-  defp budget_held_without_permit?(state, task_id) do
-    Budget.held?(task_id) and not MapSet.member?(state.overage_once || MapSet.new(), task_id)
+  defp budget_held_without_permit?(state, task) do
+    Budget.held?(task.id) and
+      not MapSet.member?(state.overage_once || MapSet.new(), Scope.run_key(state, task))
   end
 
   # PATH-only host-tool contract (agents.toml `tools` / `tools_mode`).
@@ -289,6 +358,7 @@ defmodule Svarm.Orchestrator.Dispatch do
     ]
 
     parent = self()
+    run_key = Scope.run_key(state, task)
 
     agent_config = AgentRunner.resolve!(task.assignee, state.agents)
     runner = AgentRunner.resolve_adapter(agent_config[:adapter])
@@ -299,7 +369,7 @@ defmodule Svarm.Orchestrator.Dispatch do
 
     case Task.Supervisor.start_child(task_supervisor(state), fn ->
            result = runner.run(task, AgentRunner.resolve!(task.assignee, state.agents), opts)
-           send(parent, {:run_exit, task.id, result})
+           send(parent, {:run_exit, run_key, result})
            result
          end) do
       {:ok, pid} ->
@@ -310,13 +380,13 @@ defmodule Svarm.Orchestrator.Dispatch do
         # tracker copy cannot remove it from this spawn's prompt.
         state = %{
           state
-          | approved_once: MapSet.delete(state.approved_once, task.id),
-            overage_once: MapSet.delete(state.overage_once || MapSet.new(), task.id)
+          | approved_once: MapSet.delete(state.approved_once, run_key),
+            overage_once: MapSet.delete(state.overage_once || MapSet.new(), run_key)
         }
 
         state = maybe_clear_follow_up(state, task)
         Budget.clear_hold(task.id)
-        register_spawned_worker(state, task, pid, run_id)
+        register_spawned_worker(state, task, pid, run_id, run_key)
 
       {:error, reason} ->
         # Do not crash the poll loop. Keep existing claims and one-shot permits
@@ -347,7 +417,7 @@ defmodule Svarm.Orchestrator.Dispatch do
 
   defp maybe_clear_follow_up(state, _task), do: state
 
-  defp register_spawned_worker(state, task, pid, run_id) do
+  defp register_spawned_worker(state, task, pid, run_id, run_key) do
     mref = Process.monitor(pid)
     state.tracker.update_status(state.tracker_config, task.id, "in_progress")
 
@@ -358,15 +428,18 @@ defmodule Svarm.Orchestrator.Dispatch do
     %{
       state
       | running:
-          Map.put(state.running, task.id, %{
+          Map.put(state.running, run_key, %{
             task: task,
             pid: pid,
             mref: mref,
             run_id: run_id,
+            board_id: task.board_id,
+            tracker: state.tracker,
+            tracker_config: state.tracker_config,
             started_mono_ms: System.monotonic_time(:millisecond),
             started_at: System.system_time(:second)
           }),
-        claimed: MapSet.put(state.claimed, task.id)
+        claimed: MapSet.put(state.claimed, run_key)
     }
   end
 

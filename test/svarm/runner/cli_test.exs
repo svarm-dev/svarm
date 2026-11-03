@@ -16,6 +16,17 @@ defmodule Svarm.Runner.CliTest do
     end
   end
 
+  # Reports the status the tracker already holds, so a late exit can be tested
+  # against settled cards (review / failed / done).
+  defmodule SettledTracker do
+    def get_issue(%{current: current}, id), do: {:ok, %{id: id, status: current}}
+
+    def update_status(config, id, status) do
+      Agent.update(config.statuses, &[{id, status} | &1])
+      :ok
+    end
+  end
+
   setup do
     {:ok, statuses} = Agent.start_link(fn -> [] end)
 
@@ -389,6 +400,77 @@ defmodule Svarm.Runner.CliTest do
     assert_agent_line(id, "skill pack missing")
     # Workspace has no agent run.log — spawn never happened
     refute File.exists?(Path.join([root, id, "run.log"]))
+  end
+
+  describe "late exit status guard" do
+    test "does not rewrite a card a human already moved to review", %{
+      workspace_root: root,
+      statuses: statuses
+    } do
+      id = "sva_cli_settled_review"
+
+      opts =
+        root
+        |> run_opts(statuses)
+        |> Keyword.put(:tracker, SettledTracker)
+        |> Keyword.put(:tracker_config, %{statuses: statuses, current: "review"})
+
+      assert :ok = Cli.run(task(id), agent_config("ok"), opts)
+      assert :ok = wait_for_agent_line(id, "fake-cli: ok")
+      assert Agent.get(statuses, & &1) == []
+    end
+
+    test "does not rewrite a card that already failed", %{
+      workspace_root: root,
+      statuses: statuses
+    } do
+      id = "sva_cli_settled_failed"
+
+      opts =
+        root
+        |> run_opts(statuses)
+        |> Keyword.put(:tracker, SettledTracker)
+        |> Keyword.put(:tracker_config, %{statuses: statuses, current: "failed"})
+
+      assert {:error, {:agent_exit, 1, _out}} = Cli.run(task(id), agent_config("fail"), opts)
+      assert :ok = wait_for_agent_line(id, "fake-cli: fail")
+      assert Agent.get(statuses, & &1) == []
+    end
+
+    test "honours the configured terminal states", %{workspace_root: root, statuses: statuses} do
+      id = "sva_cli_settled_custom"
+
+      opts =
+        root
+        |> run_opts(statuses)
+        |> Keyword.put(:tracker, SettledTracker)
+        |> Keyword.put(
+          :tracker_config,
+          %{statuses: statuses, current: "cancelled", terminal_states: ["cancelled"]}
+        )
+
+      assert {:error, {:agent_exit, 1, _out}} = Cli.run(task(id), agent_config("fail"), opts)
+      assert :ok = wait_for_agent_line(id, "fake-cli: fail")
+      assert Agent.get(statuses, & &1) == []
+    end
+
+    test "an active card still moves to review", %{workspace_root: root, statuses: statuses} do
+      id = "sva_cli_active"
+
+      opts =
+        root
+        |> run_opts(statuses)
+        |> Keyword.put(:tracker, SettledTracker)
+        |> Keyword.put(:tracker_config, %{statuses: statuses, current: "in_progress"})
+
+      assert :ok = Cli.run(task(id), agent_config("ok"), opts)
+      assert last_status(statuses, id) == "review"
+    end
+  end
+
+  defp wait_for_agent_line(id, pattern) do
+    assert_agent_line(id, pattern)
+    :ok
   end
 
   defp wait_os_pidfile(path, timeout_ms \\ 2_000) do

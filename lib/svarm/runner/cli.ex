@@ -108,14 +108,42 @@ defmodule Svarm.Runner.Cli do
     Events.broadcast_run_finished(task.id, exit_code)
 
     # Success → review (human PR gate). Agents never mark done/merge.
-    status = if exit_code == 0, do: "review", else: "failed"
-    tracker.update_status(tracker_config, task.id, status)
+    # A tracker that is already terminal keeps that status. Reconcile kills
+    # the worker after a human moves the ticket, and a late exit must not
+    # rewrite `done` to `failed`.
+    write_exit_status(tracker, tracker_config, task.id, exit_code)
 
     if exit_code == 0 do
       :ok
     else
       Logger.warning("agent #{assignee} exited #{exit_code} for task #{task.id}")
       {:error, {:agent_exit, exit_code, out}}
+    end
+  end
+
+  defp write_exit_status(tracker, config, task_id, exit_code) do
+    status = if exit_code == 0, do: "review", else: "failed"
+
+    if settled?(tracker, config, task_id) do
+      :ok
+    else
+      tracker.update_status(config, task_id, status)
+    end
+  end
+
+  # Reconcile kills the worker once a human moves the card, but a late exit can
+  # still land here. Never rewrite a status the tracker already settled: `done`
+  # after a merge, `review` after a review, or `failed` after escalation.
+  defp settled?(tracker, config, task_id) do
+    function_exported?(tracker, :get_issue, 2) and terminal_issue?(tracker, config, task_id)
+  end
+
+  defp terminal_issue?(tracker, config, task_id) do
+    terminal = Map.get(config, :terminal_states) || Tracker.Resolve.default_terminal_states()
+
+    case tracker.get_issue(config, task_id) do
+      {:ok, %{status: status}} when is_binary(status) -> status in terminal
+      _ -> false
     end
   end
 

@@ -14,7 +14,8 @@ defmodule Svarm.Tracker.Local do
     active_states = Map.get(config, :active_states, ["todo", "in_progress"])
 
     candidates =
-      KanbanBridge.fetch_eligible(active_states)
+      active_states
+      |> KanbanBridge.fetch_eligible(board_opts(config))
       |> Normalize.from_maps()
       |> Enum.filter(&Eligibility.eligible?(&1, config))
 
@@ -98,4 +99,11 @@ defmodule Svarm.Tracker.Local do
 
   @impl true
   def capabilities, do: []
+
+  defp board_opts(config) do
+    case Map.get(config, :board_id) do
+      id when is_binary(id) and id != "" -> [board_id: id]
+      _ -> []
+    end
+  end
 end

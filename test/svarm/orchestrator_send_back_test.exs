@@ -2,6 +2,7 @@ defmodule Svarm.OrchestratorSendBackTest do
   use ExUnit.Case, async: false
 
   alias Svarm.{Coordination, KanbanBridge, Orchestrator, Repo}
+  alias Svarm.Settings.Catalog.Store
   alias Svarm.Workflow.Env
 
   defmodule PatchFailTracker do
@@ -22,6 +23,7 @@ defmodule Svarm.OrchestratorSendBackTest do
   setup do
     KanbanBridge.delete_all_tasks()
     Repo.delete_all(Coordination)
+    clear_catalog()
 
     original = :sys.get_state(Orchestrator)
 
@@ -41,6 +43,8 @@ defmodule Svarm.OrchestratorSendBackTest do
       if Process.whereis(Orchestrator) do
         :sys.replace_state(Orchestrator, fn _ -> original end)
       end
+
+      clear_catalog()
     end)
 
     :ok
@@ -91,6 +95,33 @@ defmodule Svarm.OrchestratorSendBackTest do
     refute MapSet.member?(state.completed, task.id)
     # Gated assignees re-enter pending_approval on the next poll.
     refute MapSet.member?(state.approved_once, task.id)
+  end
+
+  test "send_back clears board-scoped completion and approval keys" do
+    task = put_review_changes_requested()
+
+    assert {:ok, _} =
+             Store.insert_revision(%{
+               "boards" => [
+                 %{"id" => "default", "name" => "default", "enabled" => true}
+               ]
+             })
+
+    key = {"default", task.id}
+
+    :sys.replace_state(Orchestrator, fn state ->
+      %{
+        state
+        | completed: MapSet.put(state.completed, key),
+          approved_once: MapSet.put(state.approved_once, key)
+      }
+    end)
+
+    assert Orchestrator.send_back(task.id) == :ok
+
+    state = :sys.get_state(Orchestrator)
+    refute MapSet.member?(state.completed, key)
+    refute MapSet.member?(state.approved_once, key)
   end
 
   test "send_back removes approved_once so gated assignees re-enter pending_approval" do
@@ -173,5 +204,18 @@ defmodule Svarm.OrchestratorSendBackTest do
 
     assert Env.env_bool("SVARM_REVIEW_RESUME_ENABLED", false) == false
     assert Svarm.ReviewResume.load_caps(nil).enabled == false
+  end
+
+  defp clear_catalog do
+    for table <- [
+          "catalog_board_bindings",
+          "catalog_boards",
+          "catalog_harness_profiles",
+          "catalog_toolchain_profiles",
+          "catalog_provider_profiles",
+          "catalog_revisions"
+        ] do
+      Repo.query!("DELETE FROM #{table}")
+    end
   end
 end

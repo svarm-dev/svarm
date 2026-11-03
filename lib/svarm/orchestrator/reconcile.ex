@@ -11,7 +11,7 @@ defmodule Svarm.Orchestrator.Reconcile do
   require Logger
 
   alias Svarm.AgentRunner
-  alias Svarm.Orchestrator.{Issues, RunExit}
+  alias Svarm.Orchestrator.{Issues, RunExit, Scope}
   alias Svarm.Usage
 
   @doc false
@@ -23,19 +23,78 @@ defmodule Svarm.Orchestrator.Reconcile do
 
   @doc false
   def sync_tracker(state) do
-    ids =
+    keys =
       (Map.keys(state.running) ++ MapSet.to_list(state.claimed) ++ Map.keys(state.retry_attempts))
       |> Enum.uniq()
 
-    state = Issues.prefetch(state, ids)
+    {legacy, scoped} = Enum.split_with(keys, &is_binary/1)
+    state = Issues.prefetch(state, legacy)
 
-    Enum.reduce(ids, state, fn task_id, acc ->
-      case Issues.lookup(acc, task_id) do
-        {:ok, issue} -> maybe_release_if_terminal(acc, task_id, issue)
-        {:error, reason} -> reconcile_get_issue_error(acc, task_id, reason)
-      end
-    end)
+    state =
+      Enum.reduce(legacy, state, fn task_id, acc ->
+        case Issues.lookup(acc, task_id) do
+          {:ok, issue} -> maybe_release_if_terminal(acc, task_id, issue)
+          {:error, reason} -> reconcile_get_issue_error(acc, task_id, reason)
+        end
+      end)
+
+    Enum.reduce(scoped, state, &sync_scoped/2)
   end
+
+  defp sync_scoped({board_id, external} = key, state) when is_binary(external) do
+    case scoped_tracker(state, key, board_id, external) do
+      {:ok, tracker, config, issue_id} ->
+        case Issues.get(tracker, config, issue_id) do
+          {:ok, issue} -> maybe_release_if_terminal(state, key, issue)
+          {:error, reason} -> reconcile_get_issue_error(state, key, reason)
+        end
+
+      :error ->
+        state
+    end
+  end
+
+  defp sync_scoped(_key, state), do: state
+
+  # A scoped key still has to be reconciled when its run is neither running nor
+  # retrying: a human can close the ticket while it sits claimed, or during a
+  # retry backoff. Prefer the run's own tracker, then the retry entry's, then
+  # the board's catalog binding. Ids come from the entry or the task row because
+  # the key only carries the external id, which is not always the id an adapter
+  # reads back.
+  defp scoped_tracker(state, key, board_id, external) do
+    cond do
+      entry = Map.get(state.running, key) ->
+        run_tracker(state, entry, external)
+
+      entry = Map.get(state.retry_attempts, key) ->
+        retry_tracker(state, entry, external)
+
+      true ->
+        claim_tracker(state, board_id, external)
+    end
+  end
+
+  defp run_tracker(state, %{task: task} = entry, external) do
+    {:ok, entry[:tracker] || state.tracker, entry[:tracker_config] || state.tracker_config,
+     entry_task_id(task) || external}
+  end
+
+  defp retry_tracker(state, entry, external) do
+    id = Map.get(entry, :issue_id) || entry_task_id(Map.get(entry, :task)) || external
+
+    {:ok, entry[:tracker] || state.tracker, entry[:tracker_config] || state.tracker_config, id}
+  end
+
+  defp claim_tracker(state, board_id, external) do
+    with {:ok, tracker, config} <- Scope.tracker_for(state, board_id),
+         {:ok, issue_id} <- Scope.issue_id_for(board_id, external) do
+      {:ok, tracker, config, issue_id}
+    end
+  end
+
+  defp entry_task_id(%{} = task), do: Map.get(task, :id)
+  defp entry_task_id(_), do: nil
 
   defp reconcile_stalls(%{stall_timeout_ms: stall} = state) when stall <= 0, do: state
 
@@ -48,16 +107,21 @@ defmodule Svarm.Orchestrator.Reconcile do
   defp reconcile_stalls(state) do
     now = System.monotonic_time(:millisecond)
 
-    Enum.reduce(state.running, state, fn {task_id, e}, acc ->
+    Enum.reduce(state.running, state, fn {key, e}, acc ->
       if now - e.started_mono_ms > state.stall_timeout_ms do
-        Logger.warning("stall: killing worker for #{task_id}")
+        Logger.warning("stall: killing worker for #{label(key)}")
         kill_worker(e.pid, :stall)
         Usage.ensure_attempt_row(e)
 
         acc = %{
           acc
-          | running: Map.delete(acc.running, task_id),
-            claimed: MapSet.delete(acc.claimed, task_id)
+          | running: Map.delete(acc.running, key),
+            claimed: MapSet.delete(acc.claimed, key),
+            # schedule_retry derives the run key from this entry's board
+            # config. Without it a scoped run falls back to the current tick's
+            # board — or to a bare id — and dispatch can admit the ticket again
+            # while the retry timer is armed.
+            last_run_entries: Map.put(acc.last_run_entries, key, e)
         }
 
         RunExit.schedule_retry(acc, e.task, :stall)
@@ -69,11 +133,11 @@ defmodule Svarm.Orchestrator.Reconcile do
 
   defp reconcile_get_issue_error(acc, task_id, reason) do
     if gone_issue?(reason) do
-      Logger.info("tracker reconcile: #{task_id} missing (#{inspect(reason)}), releasing")
+      Logger.info("tracker reconcile: #{label(task_id)} missing (#{inspect(reason)}), releasing")
       release_task(acc, task_id)
     else
       Logger.warning(
-        "tracker reconcile: get_issue failed for #{task_id} (#{inspect(reason)}); keeping in-flight work"
+        "tracker reconcile: get_issue failed for #{label(task_id)} (#{inspect(reason)}); keeping in-flight work"
       )
 
       acc
@@ -88,7 +152,7 @@ defmodule Svarm.Orchestrator.Reconcile do
 
   defp maybe_release_if_terminal(acc, task_id, issue) do
     if issue.status in acc.terminal_states do
-      Logger.info("tracker reconcile: #{task_id} now terminal (#{issue.status}), stopping")
+      Logger.info("tracker reconcile: #{label(task_id)} now terminal (#{issue.status}), stopping")
       release_task(acc, task_id)
     else
       acc
@@ -123,6 +187,9 @@ defmodule Svarm.Orchestrator.Reconcile do
         %{state | running: running}
     end
   end
+
+  defp label(id) when is_binary(id), do: id
+  defp label(id), do: inspect(id)
 
   @doc false
   @spec kill_worker(pid(), term()) :: true
