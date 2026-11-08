@@ -28,7 +28,7 @@ defmodule Svarm.OrchestratorTest do
         handler_id,
         [:svarm, :kanban_bridge, :call],
         fn _event, meas, meta, _cfg ->
-          send(parent, {:kb_call, meta[:op], meas[:n] || 1})
+          send(parent, {:kb_call, meta[:op], meas[:n] || 1, meta})
         end,
         nil
       )
@@ -43,10 +43,22 @@ defmodule Svarm.OrchestratorTest do
 
   defp drain_kb_calls(acc) do
     receive do
-      {:kb_call, op, n} -> drain_kb_calls([{op, n} | acc])
+      {:kb_call, op, n, meta} -> drain_kb_calls([{op, n, meta} | acc])
     after
       0 -> Enum.reverse(acc)
     end
+  end
+
+  # Only calls that touch `ids`. Stray reads for other work (retry timers,
+  # periodic ticks, resume polls) land in the same global telemetry window
+  # and must not count against this test's claim.
+  defp calls_for(calls, ids) when is_list(ids) do
+    id_set = MapSet.new(ids)
+
+    Enum.filter(calls, fn {_op, _n, meta} ->
+      touched = MapSet.new([meta[:id] | meta[:ids] || []])
+      not MapSet.disjoint?(touched, id_set)
+    end)
   end
 
   defp drain_http_gets(acc) do
@@ -1995,33 +2007,31 @@ defmodule Svarm.OrchestratorTest do
           })
         end
 
+      ids = Enum.map(tasks, & &1.id)
       original = :sys.get_state(Orchestrator)
       {running, claimed} = put_running(%{}, tasks)
 
-      :sys.replace_state(Orchestrator, fn state ->
-        Map.merge(state, local_dispatch_state(state, %{running: running, claimed: claimed}))
-      end)
+      state =
+        Map.merge(original, local_dispatch_state(original, %{running: running, claimed: claimed}))
 
       try do
-        {calls, _} =
-          with_kb_calls(fn ->
-            send(Orchestrator, :tick)
-            flush_orchestrator()
-          end)
+        # Reconcile directly instead of through the shared mailbox: the
+        # measurement then covers exactly this reconcile, not whatever else
+        # the orchestrator had queued (periodic ticks, retry timers) while
+        # the telemetry window was open.
+        {calls, reconciled} = with_kb_calls(fn -> Orchestrator.Reconcile.run(state) end)
 
-        get_calls = for {:get, _} <- calls, do: :get
-        get_many = for {:get_many, n} <- calls, do: n
+        scoped = calls_for(calls, ids)
+        get_calls = for {:get, _, _} <- scoped, do: :get
+        get_many = for {:get_many, n, _} <- scoped, do: n
         assert get_calls == []
         assert get_many == [3]
 
-        state = :sys.get_state(Orchestrator)
-
         Enum.each(tasks, fn task ->
-          assert Map.has_key?(state.running, task.id)
+          assert Map.has_key?(reconciled.running, task.id)
         end)
       after
         stop_running_workers(running)
-        :sys.replace_state(Orchestrator, fn _ -> original end)
       end
     end
 
@@ -2168,8 +2178,9 @@ defmodule Svarm.OrchestratorTest do
             flush_orchestrator()
           end)
 
-        get_count = Enum.count(calls, fn {op, _} -> op == :get end)
-        get_many_count = Enum.count(calls, fn {op, _} -> op == :get_many end)
+        scoped = calls_for(calls, [task.id | Enum.map(deps, & &1.id)])
+        get_count = Enum.count(scoped, fn {op, _, _} -> op == :get end)
+        get_many_count = Enum.count(scoped, fn {op, _, _} -> op == :get_many end)
         assert get_many_count >= 1
         assert get_count + get_many_count < 3
 
