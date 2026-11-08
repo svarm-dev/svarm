@@ -23,6 +23,17 @@ defmodule Svarm.Runner.VerificationTest do
 
       assert {:ok, %{exit_code: 7}} = Verification.run(recipe, tmp_dir)
     end
+
+    test "a workspace-relative executable resolves inside the working directory", %{
+      tmp_dir: tmp_dir
+    } do
+      script = Path.join(tmp_dir, "verify.sh")
+      File.write!(script, "#!/bin/sh\nexit 3\n")
+      File.chmod!(script, 0o755)
+
+      assert {:ok, %{command: ["./verify.sh"], exit_code: 3}} =
+               Verification.run(["./verify.sh"], tmp_dir)
+    end
   end
 
   describe "run/3 does not invent an exit code" do

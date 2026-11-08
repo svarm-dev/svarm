@@ -32,6 +32,9 @@ defmodule Svarm.Runner.Verification do
   @doc """
   Execute `recipe` (argv list) in `cd` and record the recipe's own exit code.
 
+  The executable resolves like execvp with `cd` as the working directory: a
+  bare name is looked up on PATH, a name with a slash resolves inside `cd`.
+
   Options:
   - `:timeout_ms` — abort and kill the recipe process tree after this idle
     timeout (default `#{@default_timeout_ms}`).
@@ -62,7 +65,7 @@ defmodule Svarm.Runner.Verification do
     # status from the port machinery (e.g. `erl_child_setup` exits 2 when the
     # working directory is missing) and be recorded as the recipe's own code.
     with true <- File.dir?(cd),
-         executable when is_binary(executable) <- System.find_executable(cmd) do
+         executable when is_binary(executable) <- resolve_executable(cmd, cd) do
       port_opts =
         [:binary, :exit_status, :stderr_to_stdout, {:args, args}, {:cd, cd}, {:line, 65_000}]
         |> Runner.maybe_add_env(%{})
@@ -70,6 +73,17 @@ defmodule Svarm.Runner.Verification do
       drain_recipe(executable, recipe, port_opts, timeout_ms)
     else
       _ -> {:error, :spawn_failed}
+    end
+  end
+
+  # Executable lookup follows execvp with the recipe's working directory: a
+  # bare name resolves on PATH, a name with a slash resolves inside `cd`.
+  # Never resolves slash names against the BEAM's own working directory.
+  defp resolve_executable(cmd, cd) do
+    if String.contains?(cmd, "/") do
+      cmd |> Path.expand(cd) |> System.find_executable()
+    else
+      System.find_executable(cmd)
     end
   end
 
