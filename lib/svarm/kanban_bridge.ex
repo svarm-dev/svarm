@@ -38,7 +38,7 @@ defmodule Svarm.KanbanBridge do
   def create_task(attrs), do: GenServer.call(__MODULE__, {:create, attrs})
 
   def get_task(id) do
-    emit_call(:get, 1)
+    emit_call(:get, 1, %{id: id})
     GenServer.call(__MODULE__, {:get, id})
   end
 
@@ -50,7 +50,7 @@ defmodule Svarm.KanbanBridge do
   """
   @spec get_tasks([String.t()]) :: %{String.t() => map()}
   def get_tasks(ids) when is_list(ids) do
-    emit_call(:get_many, length(ids))
+    emit_call(:get_many, length(ids), %{ids: ids})
     GenServer.call(__MODULE__, {:get_many, ids})
   end
 
@@ -368,8 +368,8 @@ defmodule Svarm.KanbanBridge do
 
   # -- helpers --
 
-  defp emit_call(op, n) do
-    :telemetry.execute([:svarm, :kanban_bridge, :call], %{count: 1, n: n}, %{op: op})
+  defp emit_call(op, n, meta) do
+    :telemetry.execute([:svarm, :kanban_bridge, :call], %{count: 1, n: n}, Map.put(meta, :op, op))
   end
 
   defp task_to_map(%Task{} = t) do
