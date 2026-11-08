@@ -755,8 +755,11 @@ defmodule Svarm.OrchestratorTest do
         # copy is cleared exactly once the first worker started.
         assert wait_until(fn -> KanbanBridge.get_task(task.id).follow_up == nil end)
 
-        # The spawn really happened (agent exited → terminal status).
-        assert KanbanBridge.get_task(task.id).status in ["review", "failed", "done"]
+        # The spawn really happened (agent exited → terminal status); poll,
+        # the run may still be finishing when the note clears.
+        assert wait_until(fn ->
+                 KanbanBridge.get_task(task.id).status in ["review", "failed", "done"]
+               end)
       after
         :sys.replace_state(Orchestrator, fn _ -> original end)
       end
